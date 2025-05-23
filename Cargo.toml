@@ -8,7 +8,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ratatui = "0.26"
+ratatui = "0.29"
 crossterm = "0.27"
 gix = { version = "0.63", features = ["blocking-network-client", "worktree-mutation"] }
 chrono = "0.4"
