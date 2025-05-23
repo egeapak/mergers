@@ -101,6 +101,8 @@ pub struct WorkItemFields {
     pub iteration_path: Option<String>,
     #[serde(rename = "System.Description", default)]
     pub description: Option<String>,
+    #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
+    pub repro_steps: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

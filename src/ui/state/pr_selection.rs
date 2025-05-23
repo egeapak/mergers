@@ -103,10 +103,15 @@ impl PullRequestSelectionState {
         if let Some(pr_index) = self.table_state.selected() {
             if let Some(pr) = app.pull_requests.get(pr_index) {
                 if pr.work_items.is_empty() {
-                    let no_items = Paragraph::new("No work items associated with this pull request.")
-                        .style(Style::default().fg(Color::Gray))
-                        .block(Block::default().borders(Borders::ALL).title("Work Item Details"))
-                        .alignment(Alignment::Center);
+                    let no_items =
+                        Paragraph::new("No work items associated with this pull request.")
+                            .style(Style::default().fg(Color::Gray))
+                            .block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title("Work Item Details"),
+                            )
+                            .alignment(Alignment::Center);
                     f.render_widget(no_items, area);
                     return;
                 }
@@ -130,12 +135,22 @@ impl PullRequestSelectionState {
 
                     // Render header
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let work_item_type = work_item.fields.work_item_type.as_deref().unwrap_or("Unknown");
-                    let assigned_to = work_item.fields.assigned_to
+                    let work_item_type = work_item
+                        .fields
+                        .work_item_type
+                        .as_deref()
+                        .unwrap_or("Unknown");
+                    let assigned_to = work_item
+                        .fields
+                        .assigned_to
                         .as_ref()
                         .map(|user| user.display_name.as_str())
                         .unwrap_or("Unassigned");
-                    let iteration_path = work_item.fields.iteration_path.as_deref().unwrap_or("Unknown");
+                    let iteration_path = work_item
+                        .fields
+                        .iteration_path
+                        .as_deref()
+                        .unwrap_or("Unknown");
                     let title = work_item.fields.title.as_deref().unwrap_or("No title");
 
                     // Get colors for type and state
@@ -149,62 +164,112 @@ impl PullRequestSelectionState {
 
                     let state_color = get_state_color(state);
 
-                    // Create header content with spans for different colors
+                    // Create header content with spans for different colors and proper alignment
                     use ratatui::text::{Line, Span};
                     let header_lines = vec![
                         Line::from(vec![
                             Span::styled(
-                                work_item_type,
-                                Style::default().fg(type_color).add_modifier(Modifier::BOLD)
+                                format!("{:<11}", work_item_type), // Fixed width for type
+                                Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(
-                                format!(" #{} ", work_item.id),
-                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                                format!(" #{:<6} ", work_item.id), // Fixed width for ID
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
                             ),
                             Span::styled(
                                 title,
-                                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
                             ),
                         ]),
                         Line::from(vec![
                             Span::styled(
-                                format!("State: {}", state),
-                                Style::default().fg(state_color)
+                                "●",
+                                Style::default()
+                                    .fg(state_color)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!(" {:<15}", state), // Fixed width for state
+                                Style::default().fg(state_color),
                             ),
                             Span::styled(
                                 format!(" | Iteration: {}", iteration_path),
-                                Style::default().fg(Color::Gray)
+                                Style::default().fg(Color::Gray),
                             ),
                             Span::styled(
                                 format!(" | Assigned: {}", assigned_to),
-                                Style::default().fg(Color::Yellow)
+                                Style::default().fg(Color::Yellow),
                             ),
                         ]),
                     ];
 
-                    let header_widget = Paragraph::new(header_lines)
-                        .block(Block::default()
-                            .borders(Borders::ALL)
-                            .title(format!("Work Item ({}/{})", work_item_index + 1, pr.work_items.len())));
+                    let header_widget = Paragraph::new(header_lines).block(
+                        Block::default().borders(Borders::ALL).title(format!(
+                            "Work Item ({}/{})",
+                            work_item_index + 1,
+                            pr.work_items.len()
+                        )),
+                    );
 
                     f.render_widget(header_widget, chunks[0]);
 
-                    // Render description
-                    let description_content = if let Some(description) = &work_item.fields.description {
-                        if !description.is_empty() {
-                            description.clone()
-                        } else {
-                            "No description available.".to_string()
+                    // Render description - use repro steps for bugs, description for others
+                    let (description_content, description_title) = match work_item_type
+                        .to_lowercase()
+                        .as_str()
+                    {
+                        "bug" => {
+                            let content = if let Some(repro_steps) = &work_item.fields.repro_steps {
+                                if !repro_steps.is_empty() {
+                                    repro_steps.clone()
+                                } else if let Some(description) = &work_item.fields.description {
+                                    if !description.is_empty() {
+                                        description.clone()
+                                    } else {
+                                        "No reproduction steps available.".to_string()
+                                    }
+                                } else {
+                                    "No reproduction steps available.".to_string()
+                                }
+                            } else if let Some(description) = &work_item.fields.description {
+                                if !description.is_empty() {
+                                    description.clone()
+                                } else {
+                                    "No reproduction steps available.".to_string()
+                                }
+                            } else {
+                                "No reproduction steps available.".to_string()
+                            };
+                            (
+                                content,
+                                "Reproduction Steps (use ←/→ to navigate work items)",
+                            )
                         }
-                    } else {
-                        "No description available.".to_string()
+                        _ => {
+                            let content = if let Some(description) = &work_item.fields.description {
+                                if !description.is_empty() {
+                                    description.clone()
+                                } else {
+                                    "No description available.".to_string()
+                                }
+                            } else {
+                                "No description available.".to_string()
+                            };
+                            (content, "Description (use ←/→ to navigate work items)")
+                        }
                     };
 
                     let description_widget = Paragraph::new(description_content)
                         .style(Style::default().fg(Color::White))
-                        .block(Block::default()
-                            .borders(Borders::ALL)
-                            .title("Description (use ←/→ to navigate work items)"))
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title(description_title),
+                        )
                         .wrap(ratatui::widgets::Wrap { trim: true });
 
                     f.render_widget(description_widget, chunks[1]);
@@ -213,7 +278,11 @@ impl PullRequestSelectionState {
         } else {
             let no_selection = Paragraph::new("No pull request selected.")
                 .style(Style::default().fg(Color::Gray))
-                .block(Block::default().borders(Borders::ALL).title("Work Item Details"))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Work Item Details"),
+                )
                 .alignment(Alignment::Center);
             f.render_widget(no_selection, area);
         }
@@ -228,10 +297,15 @@ impl AppState for PullRequestSelectionState {
 
         // Handle empty PR list
         if app.pull_requests.is_empty() {
-            let empty_message = Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().borders(Borders::ALL).title("No Pull Requests"))
-                .alignment(Alignment::Center);
+            let empty_message =
+                Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
+                    .style(Style::default().fg(Color::Yellow))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("No Pull Requests"),
+                    )
+                    .alignment(Alignment::Center);
             f.render_widget(empty_message, f.area());
             return;
         }
@@ -239,11 +313,14 @@ impl AppState for PullRequestSelectionState {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([
-                Constraint::Percentage(50), // Top half for PR table
-                Constraint::Percentage(40), // Bottom half for work item details
-                Constraint::Length(3)       // Help section
-            ].as_ref())
+            .constraints(
+                [
+                    Constraint::Percentage(50), // Top half for PR table
+                    Constraint::Percentage(40), // Bottom half for work item details
+                    Constraint::Length(3),      // Help section
+                ]
+                .as_ref(),
+            )
             .split(f.area());
         // Create table headers
         let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
@@ -290,7 +367,7 @@ impl AppState for PullRequestSelectionState {
 
                 let cells = vec![
                     Cell::from(selected).style(Style::default().fg(Color::Green)),
-                    Cell::from(format!("{}", pr_with_wi.pr.id))
+                    Cell::from(format!("{:<6}", pr_with_wi.pr.id)) // Left-aligned with fixed width
                         .style(Style::default().fg(Color::Cyan)),
                     Cell::from(date),
                     Cell::from(pr_with_wi.pr.title.clone()),
@@ -307,12 +384,12 @@ impl AppState for PullRequestSelectionState {
         let table = Table::new(
             rows,
             vec![
-                Constraint::Length(3),
-                Constraint::Length(7),
-                Constraint::Length(12),
-                Constraint::Percentage(30),
-                Constraint::Percentage(20),
-                Constraint::Percentage(25),
+                Constraint::Length(3),      // Selection checkbox
+                Constraint::Length(8),      // PR # (fixed width)
+                Constraint::Length(12),     // Date
+                Constraint::Percentage(30), // Title
+                Constraint::Percentage(20), // Author
+                Constraint::Percentage(25), // Work Items
             ],
         )
         .header(header)
@@ -378,7 +455,7 @@ impl AppState for PullRequestSelectionState {
                             } else {
                                 0
                             };
-                            
+
                             if let Some(work_item) = pr.work_items.get(work_item_index) {
                                 // Open only the currently displayed work item
                                 app.open_work_items_in_browser(&[work_item.clone()]);

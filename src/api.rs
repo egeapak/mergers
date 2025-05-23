@@ -101,7 +101,7 @@ impl AzureDevOpsClient {
         let ids_param = work_item_ids.join(",");
         
         let batch_url = format!(
-            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description&api-version=7.0",
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps&api-version=7.0",
             self.organization, self.project, ids_param
         );
 
