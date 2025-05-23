@@ -1,5 +1,4 @@
 use crate::{
-    models::PullRequestWithWorkItems,
     ui::App,
     ui::state::{AppState, StateChange, VersionInputState},
 };

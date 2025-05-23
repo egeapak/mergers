@@ -1,17 +1,10 @@
-use chrono::DateTime;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
-    Frame, Terminal,
+    Terminal,
     backend::Backend,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState},
 };
 use state::{AppState, PullRequestSelectionState, StateChange};
-use std::{io, process::Command};
 
-use crate::models::{PullRequestWithWorkItems, WorkItem};
 
 mod app;
 pub mod state;

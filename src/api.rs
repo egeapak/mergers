@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use base64;
 use reqwest::{Client, header::HeaderMap};
 use serde::Deserialize;
 use std::time::Duration;

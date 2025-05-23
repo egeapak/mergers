@@ -10,7 +10,7 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf
     let repo_path = temp_dir.path().to_path_buf();
 
     let output = Command::new("git")
-        .args(&[
+        .args([
             "clone",
             "--depth",
             "1",
@@ -45,7 +45,7 @@ pub fn create_worktree(
     // Check if worktree already exists and remove it
     let list_output = Command::new("git")
         .current_dir(base_repo_path)
-        .args(&["worktree", "list", "--porcelain"])
+        .args(["worktree", "list", "--porcelain"])
         .output()
         .context("Failed to list worktrees")?;
 
@@ -60,14 +60,14 @@ pub fn create_worktree(
     if worktree_list.contains(&worktree_name) {
         let remove_output = Command::new("git")
             .current_dir(base_repo_path)
-            .args(&["worktree", "remove", "--force", &worktree_name])
+            .args(["worktree", "remove", "--force", &worktree_name])
             .output()
             .context("Failed to remove existing worktree")?;
 
         if !remove_output.status.success() {
             let prune_output = Command::new("git")
                 .current_dir(base_repo_path)
-                .args(&["worktree", "prune"])
+                .args(["worktree", "prune"])
                 .output()?;
 
             if !prune_output.status.success() {
@@ -87,7 +87,7 @@ pub fn create_worktree(
 
     let fetch_output = Command::new("git")
         .current_dir(base_repo_path)
-        .args(&["fetch", "origin", target_branch])
+        .args(["fetch", "origin", target_branch])
         .output()
         .context("Failed to fetch target branch")?;
 
@@ -100,7 +100,7 @@ pub fn create_worktree(
 
     let create_output = Command::new("git")
         .current_dir(base_repo_path)
-        .args(&[
+        .args([
             "worktree",
             "add",
             worktree_path.to_str().unwrap(),
@@ -139,7 +139,7 @@ pub fn setup_repository(
 
             let verify_output = Command::new("git")
                 .current_dir(repo_path)
-                .args(&["rev-parse", "--git-dir"])
+                .args(["rev-parse", "--git-dir"])
                 .output()
                 .context("Failed to verify git repository")?;
 
@@ -166,7 +166,7 @@ pub enum CherryPickResult {
 pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPickResult> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["cherry-pick", commit_id])
+        .args(["cherry-pick", commit_id])
         .output()
         .context("Failed to execute cherry-pick command")?;
 
@@ -179,7 +179,7 @@ pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPic
     if stderr.contains("conflict") || stderr.contains("CONFLICT") {
         let status_output = Command::new("git")
             .current_dir(repo_path)
-            .args(&["diff", "--name-only", "--diff-filter=U"])
+            .args(["diff", "--name-only", "--diff-filter=U"])
             .output()?;
 
         let conflicted_files: Vec<String> = String::from_utf8_lossy(&status_output.stdout)
@@ -196,7 +196,7 @@ pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPic
 pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["checkout", "-b", branch_name])
+        .args(["checkout", "-b", branch_name])
         .output()
         .context("Failed to create and checkout branch")?;
 
@@ -214,7 +214,7 @@ pub fn fetch_commits(repo_path: &Path, commits: &[String]) -> Result<()> {
     for commit_id in commits {
         let output = Command::new("git")
             .current_dir(repo_path)
-            .args(&["fetch", "--depth=1", "origin", commit_id])
+            .args(["fetch", "--depth=1", "origin", commit_id])
             .output()?;
 
         if !output.status.success() {
@@ -227,7 +227,7 @@ pub fn fetch_commits(repo_path: &Path, commits: &[String]) -> Result<()> {
 pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["ls-files", "-u"])
+        .args(["ls-files", "-u"])
         .output()?;
 
     Ok(output.stdout.is_empty())
@@ -236,7 +236,7 @@ pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
 pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["cherry-pick", "--continue"])
+        .args(["cherry-pick", "--continue"])
         .output()?;
 
     if !output.status.success() {
@@ -252,7 +252,7 @@ pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
 pub fn abort_cherry_pick(repo_path: &Path) -> Result<()> {
     Command::new("git")
         .current_dir(repo_path)
-        .args(&["cherry-pick", "--abort"])
+        .args(["cherry-pick", "--abort"])
         .output()?;
 
     Ok(())
