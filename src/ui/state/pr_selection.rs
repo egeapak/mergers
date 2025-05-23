@@ -1,6 +1,4 @@
 use crate::{
-    api,
-    models::PullRequestWithWorkItems,
     ui::App,
     ui::state::{AppState, StateChange, VersionInputState},
 };
@@ -16,20 +14,18 @@ use ratatui::{
 
 pub struct PullRequestSelectionState {
     table_state: TableState,
-    loading: bool,
-    loaded: bool,
-    prs_fetched: bool,
 }
 
 impl PullRequestSelectionState {
     pub fn new() -> Self {
-        let mut table_state = TableState::default();
-        table_state.select(Some(0));
         Self {
-            table_state,
-            loading: false,
-            loaded: false,
-            prs_fetched: false,
+            table_state: TableState::default(),
+        }
+    }
+
+    fn initialize_selection(&mut self, app: &App) {
+        if !app.pull_requests.is_empty() && self.table_state.selected().is_none() {
+            self.table_state.select(Some(0));
         }
     }
 
@@ -75,77 +71,22 @@ impl PullRequestSelectionState {
         }
     }
 
-    async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<(), String> {
-        // Fetch pull requests
-        let prs = match app.client.fetch_pull_requests(&app.dev_branch).await {
-            Ok(prs) => prs,
-            Err(e) => return Err(format!("Failed to fetch pull requests: {}", e)),
-        };
 
-        let filtered_prs = api::filter_prs_without_merged_tag(prs);
-
-        if filtered_prs.is_empty() {
-            return Err("No pull requests found without merged tags.".to_string());
-        }
-
-        // Fetch work items for each PR
-        let mut pr_with_work_items = Vec::new();
-        for pr in filtered_prs {
-            let work_items = app.client
-                .fetch_work_items_for_pr(pr.id)
-                .await
-                .unwrap_or_default();
-            pr_with_work_items.push(PullRequestWithWorkItems {
-                pr,
-                work_items,
-                selected: false,
-            });
-        }
-
-        app.pull_requests = pr_with_work_items;
-        
-        // Select first item if we have PRs
-        if !app.pull_requests.is_empty() {
-            self.table_state.select(Some(0));
-        }
-
-        Ok(())
-    }
-
-    async fn fetch_commit_info(&mut self, app: &mut App) -> Result<(), String> {
-        for pr_with_wi in &mut app.pull_requests {
-            if pr_with_wi.pr.last_merge_commit.is_none() {
-                match app.client.fetch_pr_commit(pr_with_wi.pr.id).await {
-                    Ok(commit_info) => {
-                        pr_with_wi.pr.last_merge_commit = Some(commit_info);
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "Failed to fetch commit for PR #{}: {}",
-                            pr_with_wi.pr.id, e
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]
 impl AppState for PullRequestSelectionState {
     fn ui(&mut self, f: &mut Frame, app: &App) {
-        if self.loading {
-            let message = if !self.prs_fetched {
-                "Fetching pull requests..."
-            } else {
-                "Fetching commit information..."
-            };
-            let loading = Paragraph::new(message)
+        // Initialize selection if not already set
+        self.initialize_selection(app);
+
+        // Handle empty PR list
+        if app.pull_requests.is_empty() {
+            let empty_message = Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
                 .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().borders(Borders::ALL).title("Loading"))
+                .block(Block::default().borders(Borders::ALL).title("No Pull Requests"))
                 .alignment(Alignment::Center);
-            f.render_widget(loading, f.area());
+            f.render_widget(empty_message, f.area());
             return;
         }
 
@@ -244,35 +185,6 @@ impl AppState for PullRequestSelectionState {
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        // Fetch PRs on first render if not loaded
-        if !self.loaded && code == KeyCode::Null {
-            self.loading = true;
-            self.loaded = true;
-            return StateChange::Keep;
-        }
-
-        // If loading, fetch the data
-        if self.loading && code == KeyCode::Null {
-            if !self.prs_fetched {
-                // First fetch pull requests
-                if let Err(e) = self.fetch_pull_requests(app).await {
-                    self.loading = false;
-                    app.error_message = Some(e);
-                    return StateChange::Change(Box::new(super::ErrorState::new()));
-                }
-                self.prs_fetched = true;
-                return StateChange::Keep;
-            } else {
-                // Then fetch commit info
-                self.loading = false;
-                if let Err(e) = self.fetch_commit_info(app).await {
-                    app.error_message = Some(e);
-                    return StateChange::Change(Box::new(super::ErrorState::new()));
-                }
-                return StateChange::Keep;
-            }
-        }
-
         match code {
             KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Up => {

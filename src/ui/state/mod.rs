@@ -1,6 +1,7 @@
 mod cherry_pick;
 mod completion;
 mod conflict_resolution;
+mod data_loading;
 mod error;
 mod pr_selection;
 mod setup_repo;
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 pub use cherry_pick::CherryPickState;
 pub use completion::CompletionState;
 pub use conflict_resolution::ConflictResolutionState;
+pub use data_loading::DataLoadingState;
 pub use error::ErrorState;
 pub use pr_selection::PullRequestSelectionState;
 pub use setup_repo::SetupRepoState;
