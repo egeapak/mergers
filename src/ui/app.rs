@@ -1,24 +1,25 @@
-use chrono::DateTime;
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use ratatui::{
-    Frame, Terminal,
-    backend::Backend,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState},
+use crate::{
+    api::AzureDevOpsClient,
+    models::{CherryPickItem, PullRequestWithWorkItems},
 };
-use std::{io, process::Command};
-
-use crate::models::{PullRequestWithWorkItems, WorkItem};
-
-use super::state::{AppState, choose::ChooseState};
+use std::process::Command;
 
 pub struct App {
-    pub state: Option<Box<dyn AppState>>,
+    pub pull_requests: Vec<PullRequestWithWorkItems>,
     pub organization: String,
     pub project: String,
     pub repository: String,
+    pub dev_branch: String,
+    pub target_branch: String,
+    pub local_repo: Option<String>,
+    pub client: AzureDevOpsClient,
+
+    // Runtime state
+    pub version: Option<String>,
+    pub repo_path: Option<std::path::PathBuf>,
+    pub cherry_pick_items: Vec<CherryPickItem>,
+    pub current_cherry_pick_index: usize,
+    pub error_message: Option<String>,
 }
 
 impl App {
@@ -27,29 +28,63 @@ impl App {
         organization: String,
         project: String,
         repository: String,
+        dev_branch: String,
+        target_branch: String,
+        local_repo: Option<String>,
+        client: AzureDevOpsClient,
     ) -> Self {
-        let state = Box::new(ChooseState::new(pull_requests));
         Self {
-            state: Some(state),
+            pull_requests,
             organization,
             project,
             repository,
+            dev_branch,
+            target_branch,
+            local_repo,
+            client,
+            version: None,
+            repo_path: None,
+            cherry_pick_items: Vec::new(),
+            current_cherry_pick_index: 0,
+            error_message: None,
         }
     }
 
-    pub fn draw(&mut self, f: &mut Frame) {
-        let mut state = self.state.take().unwrap();
-        state.ui(f, &self);
-        self.state = Some(state);
+    pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
+        self.pull_requests.iter().filter(|pr| pr.selected).collect()
     }
 
-    pub fn process_key(&mut self, key: KeyEvent) -> Option<Vec<usize>> {
-        let mut state = self.state.take().unwrap();
-        match state.process_key(key.code, self) {
-            super::state::StateChange::Keep => self.state = Some(state),
-            super::state::StateChange::Change(app_state) => self.state = Some(app_state),
-            super::state::StateChange::Exit => return Some(vec![]),
-        };
-        None
+    pub fn open_pr_in_browser(&self, pr_id: i32) {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
+            self.organization, self.project, self.repository, pr_id
+        );
+
+        #[cfg(target_os = "macos")]
+        let _ = Command::new("open").arg(&url).spawn();
+
+        #[cfg(target_os = "linux")]
+        let _ = Command::new("xdg-open").arg(&url).spawn();
+
+        #[cfg(target_os = "windows")]
+        let _ = Command::new("cmd").args(&["/C", "start", &url]).spawn();
+    }
+
+    pub fn open_work_items_in_browser(&self, work_items: &[crate::models::WorkItem]) {
+        for wi in work_items {
+            let url = format!(
+                "https://dev.azure.com/{}/{}/_workitems/edit/{}",
+                self.organization, self.project, wi.id
+            );
+
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(&url).spawn();
+
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&url).spawn();
+
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("cmd").args(&["/C", "start", &url]).spawn();
+        }
     }
 }

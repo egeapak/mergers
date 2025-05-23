@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use dialoguer::Confirm;
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -8,11 +7,6 @@ use uuid::Uuid;
 
 pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<PathBuf> {
     let temp_dir = std::env::temp_dir().join(format!("azure-pr-cherry-pick-{}", Uuid::new_v4()));
-
-    println!(
-        "Shallow cloning repository from {} to {:?}...",
-        ssh_url, temp_dir
-    );
 
     let output = Command::new("git")
         .args(&[
@@ -36,7 +30,6 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<PathBuf>
         );
     }
 
-    println!("Clone completed successfully!");
     Ok(temp_dir)
 }
 
@@ -47,8 +40,6 @@ pub fn create_worktree(
 ) -> Result<PathBuf> {
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
-
-    println!("Creating git worktree at {:?}...", worktree_path);
 
     // Check if worktree already exists and remove it
     let list_output = Command::new("git")
@@ -66,9 +57,6 @@ pub fn create_worktree(
 
     let worktree_list = String::from_utf8_lossy(&list_output.stdout);
     if worktree_list.contains(&worktree_name) {
-        println!("Removing existing worktree: {}", worktree_name);
-
-        // Remove the worktree
         let remove_output = Command::new("git")
             .current_dir(base_repo_path)
             .args(&["worktree", "remove", "--force", &worktree_name])
@@ -76,17 +64,13 @@ pub fn create_worktree(
             .context("Failed to remove existing worktree")?;
 
         if !remove_output.status.success() {
-            // If removal failed, try to prune and remove directory manually
             let prune_output = Command::new("git")
                 .current_dir(base_repo_path)
                 .args(&["worktree", "prune"])
                 .output()?;
 
             if !prune_output.status.success() {
-                println!(
-                    "Warning: worktree prune failed: {}",
-                    String::from_utf8_lossy(&prune_output.stderr)
-                );
+                // Just continue
             }
 
             if worktree_path.exists() {
@@ -96,12 +80,10 @@ pub fn create_worktree(
         }
     }
 
-    // Ensure the directory doesn't exist
     if worktree_path.exists() {
         std::fs::remove_dir_all(&worktree_path).context("Failed to remove existing directory")?;
     }
 
-    // Fetch the latest target branch
     let fetch_output = Command::new("git")
         .current_dir(base_repo_path)
         .args(&["fetch", "origin", target_branch])
@@ -115,7 +97,6 @@ pub fn create_worktree(
         );
     }
 
-    // Create worktree
     let create_output = Command::new("git")
         .current_dir(base_repo_path)
         .args(&[
@@ -134,7 +115,6 @@ pub fn create_worktree(
         );
     }
 
-    println!("Worktree created successfully!");
     Ok(worktree_path)
 }
 
@@ -146,13 +126,11 @@ pub fn setup_repository(
 ) -> Result<PathBuf> {
     match local_repo {
         Some(repo_path) => {
-            // Use existing repository with worktree
             let repo_path = Path::new(repo_path);
             if !repo_path.exists() {
                 anyhow::bail!("Local repository path does not exist: {:?}", repo_path);
             }
 
-            // Verify it's a valid git repository
             let verify_output = Command::new("git")
                 .current_dir(repo_path)
                 .args(&["rev-parse", "--git-dir"])
@@ -163,230 +141,109 @@ pub fn setup_repository(
                 anyhow::bail!("Not a valid git repository: {:?}", repo_path);
             }
 
-            // Create worktree
             create_worktree(repo_path, target_branch, version)
         }
-        None => {
-            // Clone repository
-            shallow_clone_repo(ssh_url, target_branch)
-        }
+        None => shallow_clone_repo(ssh_url, target_branch),
     }
 }
 
-pub fn cherry_pick_commits(
-    repo_path: &Path,
-    commits: Vec<String>,
-    version: &str,
-    target_branch: &str,
-    is_local_repo: bool,
-) -> Result<()> {
-    let branch_name = format!("patch/{}-{}", target_branch, version);
+pub enum CherryPickResult {
+    Success,
+    Conflict(Vec<String>), // List of conflicted files
+    Failed(String),
+}
 
-    // Only fetch commits if we're working with a cloned repo
-    if !is_local_repo {
-        println!("Fetching required commits...");
-        for commit_id in &commits {
-            let output = Command::new("git")
-                .current_dir(repo_path)
-                .args(&["fetch", "--depth=1", "origin", commit_id])
-                .output()?;
+pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPickResult> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(&["cherry-pick", commit_id])
+        .output()
+        .context("Failed to execute cherry-pick command")?;
 
-            if !output.status.success() {
-                println!(
-                    "Warning: Could not fetch commit {}: {}",
-                    commit_id,
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-        }
+    if output.status.success() {
+        return Ok(CherryPickResult::Success);
     }
 
-    // Create and checkout new branch
-    let checkout_output = Command::new("git")
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if stderr.contains("conflict") || stderr.contains("CONFLICT") {
+        let status_output = Command::new("git")
+            .current_dir(repo_path)
+            .args(&["diff", "--name-only", "--diff-filter=U"])
+            .output()?;
+
+        let conflicted_files: Vec<String> = String::from_utf8_lossy(&status_output.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+
+        Ok(CherryPickResult::Conflict(conflicted_files))
+    } else {
+        Ok(CherryPickResult::Failed(stderr.to_string()))
+    }
+}
+
+pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
+    let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["checkout", "-B", &branch_name])
+        .args(&["checkout", "-b", branch_name])
         .output()
         .context("Failed to create and checkout branch")?;
 
-    if !checkout_output.status.success() {
+    if !output.status.success() {
         anyhow::bail!(
             "Failed to create branch: {}",
-            String::from_utf8_lossy(&checkout_output.stderr)
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
-    println!("Created and checked out branch: {}", branch_name);
+    Ok(())
+}
 
-    // Cherry-pick each commit
-    for (idx, commit_id) in commits.iter().enumerate() {
-        println!(
-            "\n[{}/{}] Cherry-picking commit: {}",
-            idx + 1,
-            commits.len(),
-            commit_id
-        );
-
+pub fn fetch_commits(repo_path: &Path, commits: &[String]) -> Result<()> {
+    for commit_id in commits {
         let output = Command::new("git")
             .current_dir(repo_path)
-            .args(&["cherry-pick", commit_id])
-            .output()
-            .context("Failed to execute cherry-pick command")?;
+            .args(&["fetch", "--depth=1", "origin", commit_id])
+            .output()?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-
-            // Check if it's a conflict
-            if stderr.contains("conflict") || stderr.contains("CONFLICT") {
-                println!(
-                    "\n⚠️  Conflict detected while cherry-picking commit: {}",
-                    commit_id
-                );
-                println!("Please resolve the conflicts manually in another terminal.");
-
-                // Show the conflicted files
-                let status_output = Command::new("git")
-                    .current_dir(repo_path)
-                    .args(&["status", "--short"])
-                    .output()?;
-
-                if status_output.status.success() {
-                    println!("\nConflicted files:");
-                    print!("{}", String::from_utf8_lossy(&status_output.stdout));
-                }
-
-                println!("\nRepository path: {:?}", repo_path);
-
-                // Wait for user to resolve conflicts
-                loop {
-                    let response = dialoguer::Confirm::new()
-                        .with_prompt("Have you resolved all conflicts and are ready to continue?")
-                        .default(false)
-                        .interact()?;
-
-                    if response {
-                        // Check if conflicts are actually resolved
-                        let status_output = Command::new("git")
-                            .current_dir(repo_path)
-                            .args(&["diff", "--check"])
-                            .output()?;
-
-                        let diff_cached_output = Command::new("git")
-                            .current_dir(repo_path)
-                            .args(&["diff", "--cached", "--check"])
-                            .output()?;
-
-                        // Check for unmerged paths
-                        let ls_files_output = Command::new("git")
-                            .current_dir(repo_path)
-                            .args(&["ls-files", "-u"])
-                            .output()?;
-
-                        if !ls_files_output.stdout.is_empty() {
-                            println!(
-                                "\n❌ There are still unmerged files. Please resolve all conflicts before continuing."
-                            );
-                            continue;
-                        }
-
-                        // Continue the cherry-pick
-                        let continue_output = Command::new("git")
-                            .current_dir(repo_path)
-                            .args(&["cherry-pick", "--continue"])
-                            .output()?;
-
-                        if continue_output.status.success() {
-                            println!(
-                                "✅ Cherry-pick completed successfully for commit: {}",
-                                commit_id
-                            );
-                            break;
-                        } else {
-                            println!(
-                                "\n❌ Failed to continue cherry-pick: {}",
-                                String::from_utf8_lossy(&continue_output.stderr)
-                            );
-
-                            let abort_response = dialoguer::Confirm::new()
-                                .with_prompt(
-                                    "Do you want to abort this cherry-pick and skip this commit?",
-                                )
-                                .default(false)
-                                .interact()?;
-
-                            if abort_response {
-                                Command::new("git")
-                                    .current_dir(repo_path)
-                                    .args(&["cherry-pick", "--abort"])
-                                    .output()?;
-                                println!("⏭️  Skipped commit: {}", commit_id);
-                                break;
-                            }
-                        }
-                    } else {
-                        let abort_response = dialoguer::Confirm::new()
-                            .with_prompt(
-                                "Do you want to abort this cherry-pick and skip this commit?",
-                            )
-                            .default(false)
-                            .interact()?;
-
-                        if abort_response {
-                            Command::new("git")
-                                .current_dir(repo_path)
-                                .args(&["cherry-pick", "--abort"])
-                                .output()?;
-                            println!("⏭️  Skipped commit: {}", commit_id);
-                            break;
-                        }
-                    }
-                }
-            } else {
-                // Non-conflict error
-                eprintln!(
-                    "\n❌ Cherry-pick failed for commit {}: {}",
-                    commit_id, stderr
-                );
-
-                // Check if we're in the middle of a cherry-pick
-                let status_output = Command::new("git")
-                    .current_dir(repo_path)
-                    .args(&["status"])
-                    .output()?;
-
-                let status_str = String::from_utf8_lossy(&status_output.stdout);
-                if status_str.contains("cherry-pick") {
-                    // Abort the failed cherry-pick
-                    Command::new("git")
-                        .current_dir(repo_path)
-                        .args(&["cherry-pick", "--abort"])
-                        .output()?;
-                }
-
-                let continue_response = dialoguer::Confirm::new()
-                    .with_prompt("Do you want to continue with the remaining commits?")
-                    .default(true)
-                    .interact()?;
-
-                if !continue_response {
-                    anyhow::bail!("Cherry-pick process aborted by user");
-                }
-            }
-        } else {
-            println!("✅ Successfully cherry-picked commit: {}", commit_id);
+            // Just continue, commit might already be available
         }
     }
+    Ok(())
+}
 
-    // Show final status
-    println!("\n🏁 Cherry-pick process completed!");
-    let log_output = Command::new("git")
+pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
+    let output = Command::new("git")
         .current_dir(repo_path)
-        .args(&["log", "--oneline", "-5"])
+        .args(&["ls-files", "-u"])
         .output()?;
 
-    if log_output.status.success() {
-        println!("\nRecent commits on branch {}:", branch_name);
-        print!("{}", String::from_utf8_lossy(&log_output.stdout));
+    Ok(output.stdout.is_empty())
+}
+
+pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(&["cherry-pick", "--continue"])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to continue cherry-pick: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
+
+    Ok(())
+}
+
+pub fn abort_cherry_pick(repo_path: &Path) -> Result<()> {
+    Command::new("git")
+        .current_dir(repo_path)
+        .args(&["cherry-pick", "--abort"])
+        .output()?;
 
     Ok(())
 }

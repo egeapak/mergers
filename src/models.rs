@@ -105,3 +105,21 @@ pub struct PullRequestWithWorkItems {
     pub work_items: Vec<WorkItem>,
     pub selected: bool,
 }
+
+#[derive(Debug, Clone)]
+pub enum CherryPickStatus {
+    Pending,
+    InProgress,
+    Success,
+    Conflict,
+    Failed(String),
+    Skipped,
+}
+
+#[derive(Debug, Clone)]
+pub struct CherryPickItem {
+    pub commit_id: String,
+    pub pr_id: i32,
+    pub pr_title: String,
+    pub status: CherryPickStatus,
+}

@@ -1,11 +1,23 @@
+mod cherry_pick;
+mod completion;
+mod conflict_resolution;
+mod error;
+mod pr_selection;
+mod setup_repo;
+mod version_input;
+
+use async_trait::async_trait;
+pub use cherry_pick::CherryPickState;
+pub use completion::CompletionState;
+pub use conflict_resolution::ConflictResolutionState;
+pub use error::ErrorState;
+pub use pr_selection::PullRequestSelectionState;
+pub use setup_repo::SetupRepoState;
+pub use version_input::VersionInputState;
+
+use crate::ui::App;
 use crossterm::event::KeyCode;
 use ratatui::Frame;
-
-use super::app::App;
-
-pub mod choose;
-
-pub trait InitialState: AppState {}
 
 pub enum StateChange {
     Keep,
@@ -13,7 +25,8 @@ pub enum StateChange {
     Exit,
 }
 
+#[async_trait]
 pub trait AppState {
     fn ui(&mut self, f: &mut Frame, app: &App);
-    fn process_key(&mut self, code: KeyCode, app: &App) -> StateChange;
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange;
 }

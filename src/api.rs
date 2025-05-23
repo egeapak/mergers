@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemRef};
 
+#[derive(Clone)]
 pub struct AzureDevOpsClient {
     client: Client,
     organization: String,
