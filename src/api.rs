@@ -92,16 +92,41 @@ impl AzureDevOpsClient {
 
         let work_item_refs: WorkItemsResponse = response.json().await?;
 
-        let mut work_items = Vec::new();
-        for wi_ref in work_item_refs.value {
-            let wi_url = format!("{}?api-version=7.0", wi_ref.url);
-            let wi_response = self.client.get(&wi_url).send().await?;
-            if let Ok(work_item) = wi_response.json::<WorkItem>().await {
-                work_items.push(work_item);
-            }
+        if work_item_refs.value.is_empty() {
+            return Ok(Vec::new());
         }
 
-        Ok(work_items)
+        // Use batch API to get work items with specific fields
+        let work_item_ids: Vec<String> = work_item_refs.value.iter().map(|wi| wi.id.clone()).collect();
+        let ids_param = work_item_ids.join(",");
+        
+        let batch_url = format!(
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description&api-version=7.0",
+            self.organization, self.project, ids_param
+        );
+
+        let batch_response = self.client.get(&batch_url).send().await?;
+        
+        if !batch_response.status().is_success() {
+            // Fallback to basic fetch
+            let mut work_items = Vec::new();
+            for wi_ref in work_item_refs.value {
+                let wi_url = format!("{}?api-version=7.0", wi_ref.url);
+                let wi_response = self.client.get(&wi_url).send().await?;
+                if let Ok(work_item) = wi_response.json::<WorkItem>().await {
+                    work_items.push(work_item);
+                }
+            }
+            return Ok(work_items);
+        }
+
+        #[derive(Deserialize)]
+        struct BatchWorkItemsResponse {
+            value: Vec<WorkItem>,
+        }
+
+        let batch_result: BatchWorkItemsResponse = batch_response.json().await?;
+        Ok(batch_result.value)
     }
 
     pub async fn fetch_repo_details(&self) -> Result<RepoDetails> {

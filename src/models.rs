@@ -91,6 +91,16 @@ pub struct WorkItemFields {
     pub title: Option<String>,
     #[serde(rename = "System.State")]
     pub state: Option<String>,
+    #[serde(rename = "System.WorkItemType", default)]
+    pub work_item_type: Option<String>,
+    #[serde(rename = "System.AssignedTo", default)]
+    pub assigned_to: Option<CreatedBy>,
+    #[serde(rename = "System.AreaPath", default)]
+    pub area_path: Option<String>,
+    #[serde(rename = "System.IterationPath", default)]
+    pub iteration_path: Option<String>,
+    #[serde(rename = "System.Description", default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

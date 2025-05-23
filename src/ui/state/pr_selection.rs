@@ -14,12 +14,14 @@ use ratatui::{
 
 pub struct PullRequestSelectionState {
     table_state: TableState,
+    work_item_index: usize,
 }
 
 impl PullRequestSelectionState {
     pub fn new() -> Self {
         Self {
             table_state: TableState::default(),
+            work_item_index: 0,
         }
     }
 
@@ -44,6 +46,7 @@ impl PullRequestSelectionState {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.work_item_index = 0; // Reset work item selection when PR changes
     }
 
     fn previous(&mut self, app: &App) {
@@ -61,6 +64,7 @@ impl PullRequestSelectionState {
             None => 0,
         };
         self.table_state.select(Some(i));
+        self.work_item_index = 0; // Reset work item selection when PR changes
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
@@ -71,7 +75,149 @@ impl PullRequestSelectionState {
         }
     }
 
+    fn next_work_item(&mut self, app: &App) {
+        if let Some(pr_index) = self.table_state.selected() {
+            if let Some(pr) = app.pull_requests.get(pr_index) {
+                if !pr.work_items.is_empty() {
+                    self.work_item_index = (self.work_item_index + 1) % pr.work_items.len();
+                }
+            }
+        }
+    }
 
+    fn previous_work_item(&mut self, app: &App) {
+        if let Some(pr_index) = self.table_state.selected() {
+            if let Some(pr) = app.pull_requests.get(pr_index) {
+                if !pr.work_items.is_empty() {
+                    if self.work_item_index == 0 {
+                        self.work_item_index = pr.work_items.len() - 1;
+                    } else {
+                        self.work_item_index -= 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_work_item_details(&self, f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+        if let Some(pr_index) = self.table_state.selected() {
+            if let Some(pr) = app.pull_requests.get(pr_index) {
+                if pr.work_items.is_empty() {
+                    let no_items = Paragraph::new("No work items associated with this pull request.")
+                        .style(Style::default().fg(Color::Gray))
+                        .block(Block::default().borders(Borders::ALL).title("Work Item Details"))
+                        .alignment(Alignment::Center);
+                    f.render_widget(no_items, area);
+                    return;
+                }
+
+                // Ensure work_item_index is within bounds
+                let work_item_index = if self.work_item_index < pr.work_items.len() {
+                    self.work_item_index
+                } else {
+                    0
+                };
+
+                if let Some(work_item) = pr.work_items.get(work_item_index) {
+                    // Create layout for header and content
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(4), // Header (2 lines + borders)
+                            Constraint::Min(0),    // Description content
+                        ])
+                        .split(area);
+
+                    // Render header
+                    let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
+                    let work_item_type = work_item.fields.work_item_type.as_deref().unwrap_or("Unknown");
+                    let assigned_to = work_item.fields.assigned_to
+                        .as_ref()
+                        .map(|user| user.display_name.as_str())
+                        .unwrap_or("Unassigned");
+                    let iteration_path = work_item.fields.iteration_path.as_deref().unwrap_or("Unknown");
+                    let title = work_item.fields.title.as_deref().unwrap_or("No title");
+
+                    // Get colors for type and state
+                    let type_color = match work_item_type.to_lowercase().as_str() {
+                        "task" => Color::Yellow,
+                        "bug" => Color::Red,
+                        "user story" => Color::Blue,
+                        "feature" => Color::Green,
+                        _ => Color::White,
+                    };
+
+                    let state_color = get_state_color(state);
+
+                    // Create header content with spans for different colors
+                    use ratatui::text::{Line, Span};
+                    let header_lines = vec![
+                        Line::from(vec![
+                            Span::styled(
+                                work_item_type,
+                                Style::default().fg(type_color).add_modifier(Modifier::BOLD)
+                            ),
+                            Span::styled(
+                                format!(" #{} ", work_item.id),
+                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                            ),
+                            Span::styled(
+                                title,
+                                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                            ),
+                        ]),
+                        Line::from(vec![
+                            Span::styled(
+                                format!("State: {}", state),
+                                Style::default().fg(state_color)
+                            ),
+                            Span::styled(
+                                format!(" | Iteration: {}", iteration_path),
+                                Style::default().fg(Color::Gray)
+                            ),
+                            Span::styled(
+                                format!(" | Assigned: {}", assigned_to),
+                                Style::default().fg(Color::Yellow)
+                            ),
+                        ]),
+                    ];
+
+                    let header_widget = Paragraph::new(header_lines)
+                        .block(Block::default()
+                            .borders(Borders::ALL)
+                            .title(format!("Work Item ({}/{})", work_item_index + 1, pr.work_items.len())));
+
+                    f.render_widget(header_widget, chunks[0]);
+
+                    // Render description
+                    let description_content = if let Some(description) = &work_item.fields.description {
+                        if !description.is_empty() {
+                            description.clone()
+                        } else {
+                            "No description available.".to_string()
+                        }
+                    } else {
+                        "No description available.".to_string()
+                    };
+
+                    let description_widget = Paragraph::new(description_content)
+                        .style(Style::default().fg(Color::White))
+                        .block(Block::default()
+                            .borders(Borders::ALL)
+                            .title("Description (use ←/→ to navigate work items)"))
+                        .wrap(ratatui::widgets::Wrap { trim: true });
+
+                    f.render_widget(description_widget, chunks[1]);
+                }
+            }
+        } else {
+            let no_selection = Paragraph::new("No pull request selected.")
+                .style(Style::default().fg(Color::Gray))
+                .block(Block::default().borders(Borders::ALL).title("Work Item Details"))
+                .alignment(Alignment::Center);
+            f.render_widget(no_selection, area);
+        }
+    }
 }
 
 #[async_trait]
@@ -93,7 +239,11 @@ impl AppState for PullRequestSelectionState {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([Constraint::Min(0), Constraint::Length(3)].as_ref())
+            .constraints([
+                Constraint::Percentage(50), // Top half for PR table
+                Constraint::Percentage(40), // Bottom half for work item details
+                Constraint::Length(3)       // Help section
+            ].as_ref())
             .split(f.area());
         // Create table headers
         let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
@@ -176,12 +326,15 @@ impl AppState for PullRequestSelectionState {
 
         f.render_stateful_widget(table, chunks[0], &mut self.table_state);
 
+        // Render work item details
+        self.render_work_item_details(f, app, chunks[1]);
+
         let help = List::new(vec![
-            ListItem::new("↑/↓: Navigate | Space: Toggle selection | Enter: Confirm | p: Open PR | w: Open Work Items | q: Quit"),
+            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | q: Quit"),
         ])
         .block(Block::default().borders(Borders::ALL).title("Help"));
 
-        f.render_widget(help, chunks[1]);
+        f.render_widget(help, chunks[2]);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
@@ -193,6 +346,14 @@ impl AppState for PullRequestSelectionState {
             }
             KeyCode::Down => {
                 self.next(app);
+                StateChange::Keep
+            }
+            KeyCode::Left => {
+                self.previous_work_item(app);
+                StateChange::Keep
+            }
+            KeyCode::Right => {
+                self.next_work_item(app);
                 StateChange::Keep
             }
             KeyCode::Char(' ') => {
@@ -208,9 +369,21 @@ impl AppState for PullRequestSelectionState {
                 StateChange::Keep
             }
             KeyCode::Char('w') => {
-                if let Some(i) = self.table_state.selected() {
-                    if let Some(pr) = app.pull_requests.get(i) {
-                        app.open_work_items_in_browser(&pr.work_items);
+                if let Some(pr_index) = self.table_state.selected() {
+                    if let Some(pr) = app.pull_requests.get(pr_index) {
+                        if !pr.work_items.is_empty() {
+                            // Ensure work_item_index is within bounds
+                            let work_item_index = if self.work_item_index < pr.work_items.len() {
+                                self.work_item_index
+                            } else {
+                                0
+                            };
+                            
+                            if let Some(work_item) = pr.work_items.get(work_item_index) {
+                                // Open only the currently displayed work item
+                                app.open_work_items_in_browser(&[work_item.clone()]);
+                            }
+                        }
                     }
                 }
                 StateChange::Keep
