@@ -3,10 +3,11 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use uuid::Uuid;
+use tempfile::TempDir;
 
-pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<PathBuf> {
-    let temp_dir = std::env::temp_dir().join(format!("azure-pr-cherry-pick-{}", Uuid::new_v4()));
+pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf, TempDir)> {
+    let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
+    let repo_path = temp_dir.path().to_path_buf();
 
     let output = Command::new("git")
         .args(&[
@@ -18,7 +19,7 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<PathBuf>
             target_branch,
             "--no-tags",
             ssh_url,
-            temp_dir.to_str().unwrap(),
+            repo_path.to_str().unwrap(),
         ])
         .output()
         .context("Failed to clone repository")?;
@@ -30,7 +31,7 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<PathBuf>
         );
     }
 
-    Ok(temp_dir)
+    Ok((repo_path, temp_dir))
 }
 
 pub fn create_worktree(
@@ -118,12 +119,17 @@ pub fn create_worktree(
     Ok(worktree_path)
 }
 
+pub enum RepositorySetup {
+    Local(PathBuf),
+    Clone(PathBuf, TempDir),
+}
+
 pub fn setup_repository(
     local_repo: Option<&str>,
     ssh_url: &str,
     target_branch: &str,
     version: &str,
-) -> Result<PathBuf> {
+) -> Result<RepositorySetup> {
     match local_repo {
         Some(repo_path) => {
             let repo_path = Path::new(repo_path);
@@ -141,9 +147,13 @@ pub fn setup_repository(
                 anyhow::bail!("Not a valid git repository: {:?}", repo_path);
             }
 
-            create_worktree(repo_path, target_branch, version)
+            let worktree_path = create_worktree(repo_path, target_branch, version)?;
+            Ok(RepositorySetup::Local(worktree_path))
         }
-        None => shallow_clone_repo(ssh_url, target_branch),
+        None => {
+            let (repo_path, temp_dir) = shallow_clone_repo(ssh_url, target_branch)?;
+            Ok(RepositorySetup::Clone(repo_path, temp_dir))
+        }
     }
 }
 

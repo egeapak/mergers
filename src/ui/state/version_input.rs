@@ -25,7 +25,7 @@ impl VersionInputState {
 
 #[async_trait]
 impl AppState for VersionInputState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+    fn ui(&mut self, f: &mut Frame, _app: &App) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -34,7 +34,7 @@ impl AppState for VersionInputState {
                 Constraint::Length(3),
                 Constraint::Min(0),
             ])
-            .split(f.size());
+            .split(f.area());
 
         let title = Paragraph::new("Enter Version Number")
             .style(Style::default().fg(Color::Cyan))

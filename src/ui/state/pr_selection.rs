@@ -75,7 +75,7 @@ impl AppState for PullRequestSelectionState {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([Constraint::Min(0), Constraint::Length(3)].as_ref())
-            .split(f.size());
+            .split(f.area());
 
         let items: Vec<ListItem> = app
             .pull_requests
@@ -96,8 +96,12 @@ impl AppState for PullRequestSelectionState {
                         .add_modifier(Modifier::BOLD),
                 ));
 
-                if let Ok(date) = DateTime::parse_from_rfc3339(&pr_with_wi.pr.creation_date) {
-                    spans.push(Span::raw(format!("[{}] ", date.format("%Y-%m-%d"))));
+                if let Some(closed_date) = &pr_with_wi.pr.closed_date {
+                    if let Ok(date) = DateTime::parse_from_rfc3339(closed_date) {
+                        spans.push(Span::raw(format!("[{}] ", date.format("%Y-%m-%d"))));
+                    }
+                } else {
+                    spans.push(Span::raw("[PR Active]"));
                 }
 
                 if !pr_with_wi.work_items.is_empty() {

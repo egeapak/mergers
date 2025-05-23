@@ -6,7 +6,7 @@ mod ui;
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -14,12 +14,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use ui::run_app;
 
-use crate::{
-    api::AzureDevOpsClient,
-    models::Args,
-    ui::App,
-    ui::state::{AppState, PullRequestSelectionState, StateChange},
-};
+use crate::{api::AzureDevOpsClient, models::Args, ui::App};
 
 #[tokio::main]
 async fn main() -> Result<()> {

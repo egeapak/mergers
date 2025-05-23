@@ -9,7 +9,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
@@ -35,7 +35,7 @@ impl AppState for CherryPickState {
                 Constraint::Min(0),
                 Constraint::Length(3),
             ])
-            .split(f.size());
+            .split(f.area());
 
         let title = Paragraph::new("Cherry-picking Commits")
             .style(Style::default().fg(Color::Cyan))

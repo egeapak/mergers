@@ -36,7 +36,7 @@ impl AppState for ConflictResolutionState {
                 Constraint::Length(5),
                 Constraint::Length(3),
             ])
-            .split(f.size());
+            .split(f.area());
 
         let title = Paragraph::new("⚠️  Merge Conflict Detected")
             .style(

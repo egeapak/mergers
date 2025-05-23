@@ -32,7 +32,7 @@ impl AppState for CompletionState {
                 Constraint::Min(0),
                 Constraint::Length(5),
             ])
-            .split(f.size());
+            .split(f.area());
 
         let title = Paragraph::new("🏁 Cherry-pick Process Completed!")
             .style(

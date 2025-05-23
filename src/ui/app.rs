@@ -3,6 +3,7 @@ use crate::{
     models::{CherryPickItem, PullRequestWithWorkItems},
 };
 use std::process::Command;
+use tempfile::TempDir;
 
 pub struct App {
     pub pull_requests: Vec<PullRequestWithWorkItems>,
@@ -17,6 +18,7 @@ pub struct App {
     // Runtime state
     pub version: Option<String>,
     pub repo_path: Option<std::path::PathBuf>,
+    pub _temp_dir: Option<TempDir>, // Keeps temp directory alive
     pub cherry_pick_items: Vec<CherryPickItem>,
     pub current_cherry_pick_index: usize,
     pub error_message: Option<String>,
@@ -44,6 +46,7 @@ impl App {
             client,
             version: None,
             repo_path: None,
+            _temp_dir: None,
             cherry_pick_items: Vec::new(),
             current_cherry_pick_index: 0,
             error_message: None,

@@ -41,7 +41,7 @@ pub struct PullRequest {
     #[serde(rename = "creationDate")]
     pub creation_date: String,
     #[serde(rename = "closedDate")]
-    pub closed_date: String,
+    pub closed_date: Option<String>,
     #[serde(rename = "createdBy")]
     pub created_by: CreatedBy,
     #[serde(rename = "lastMergeCommit")]
