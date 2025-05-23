@@ -28,28 +28,8 @@ async fn main() -> Result<()> {
         args.pat.clone(),
     )?;
 
-    // Fetch pull requests
-    let mut prs = client.fetch_pull_requests(&args.dev_branch).await?;
-    prs = api::filter_prs_without_merged_tag(prs);
-
-    if prs.is_empty() {
-        eprintln!("No pull requests found without merged tags.");
-        return Ok(());
-    }
-
-    // Fetch work items
-    let mut pr_with_work_items = Vec::new();
-    for pr in prs {
-        let work_items = client
-            .fetch_work_items_for_pr(pr.id)
-            .await
-            .unwrap_or_default();
-        pr_with_work_items.push(models::PullRequestWithWorkItems {
-            pr,
-            work_items,
-            selected: false,
-        });
-    }
+    // Pull requests will be fetched by PullRequestSelectionState
+    let pr_with_work_items = Vec::new();
 
     // Setup terminal
     enable_raw_mode()?;

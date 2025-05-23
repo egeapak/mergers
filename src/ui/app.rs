@@ -54,7 +54,13 @@ impl App {
     }
 
     pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
-        self.pull_requests.iter().filter(|pr| pr.selected).collect()
+        let mut prs = self
+            .pull_requests
+            .iter()
+            .filter(|pr| pr.selected)
+            .collect::<Vec<_>>();
+        prs.sort_by_key(|pr| pr.pr.closed_date.as_ref().unwrap());
+        prs
     }
 
     pub fn open_pr_in_browser(&self, pr_id: i32) {

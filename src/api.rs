@@ -47,7 +47,7 @@ impl AzureDevOpsClient {
 
     pub async fn fetch_pull_requests(&self, dev_branch: &str) -> Result<Vec<PullRequest>> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0",
+            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit",
             self.organization, self.project, self.repository, dev_branch
         );
 
@@ -113,6 +113,32 @@ impl AzureDevOpsClient {
         let response = self.client.get(&url).send().await?;
         let repo_details: RepoDetails = response.json().await?;
         Ok(repo_details)
+    }
+
+    pub async fn fetch_pr_commit(&self, pr_id: i32) -> Result<crate::models::MergeCommit> {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullRequests/{}?api-version=7.0",
+            self.organization, self.project, self.repository, pr_id
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch pull request details")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await?;
+            anyhow::bail!("API request failed with status {}: {}", status, text);
+        }
+
+        let pr: PullRequest = response.json().await
+            .context("Failed to parse pull request response")?;
+
+        pr.last_merge_commit
+            .ok_or_else(|| anyhow::anyhow!("Pull request {} has no merge commit", pr_id))
     }
 }
 

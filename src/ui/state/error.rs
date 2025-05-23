@@ -30,7 +30,7 @@ impl AppState for ErrorState {
                 Constraint::Min(0),
                 Constraint::Length(3),
             ])
-            .split(f.size());
+            .split(f.area());
 
         let title = Paragraph::new("❌ Error Occurred")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))

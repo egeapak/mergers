@@ -9,9 +9,9 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
 pub struct CherryPickState {
@@ -38,10 +38,17 @@ impl AppState for CherryPickState {
             .split(f.area());
 
         let title = Paragraph::new("Cherry-picking Commits")
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
+        // Split the main area horizontally
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(chunks[1]);
+
+        // Left side: Commit list
         let items: Vec<ListItem> = app
             .cherry_pick_items
             .iter()
@@ -71,24 +78,117 @@ impl AppState for CherryPickState {
                     format!("PR #{}: ", item.pr_id),
                     Style::default().fg(Color::Cyan),
                 ));
-                spans.push(Span::raw(&item.pr_title));
-
-                if let CherryPickStatus::Failed(msg) = &item.status {
-                    spans.push(Span::styled(
-                        format!(" - {}", msg),
-                        Style::default().fg(Color::Red),
-                    ));
-                }
+                
+                // Truncate title if too long
+                let title = if item.pr_title.len() > 40 {
+                    format!("{}...", &item.pr_title[..37])
+                } else {
+                    item.pr_title.clone()
+                };
+                spans.push(Span::raw(title));
 
                 ListItem::new(Line::from(spans))
             })
             .collect();
 
-        let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Progress"));
-        f.render_widget(list, chunks[1]);
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Commits"))
+            .highlight_style(Style::default().bg(Color::DarkGray));
+        f.render_widget(list, main_chunks[0]);
+
+        // Right side: Details
+        let mut details_text = vec![];
+        
+        if app.current_cherry_pick_index < app.cherry_pick_items.len() {
+            let current_item = &app.cherry_pick_items[app.current_cherry_pick_index];
+            
+            details_text.push(Line::from(vec![
+                Span::raw("Current PR: "),
+                Span::styled(
+                    format!("#{}", current_item.pr_id),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+            
+            details_text.push(Line::from(""));
+            details_text.push(Line::from(vec![
+                Span::raw("Title: "),
+                Span::raw(&current_item.pr_title),
+            ]));
+            
+            details_text.push(Line::from(""));
+            details_text.push(Line::from(vec![
+                Span::raw("Commit: "),
+                Span::styled(
+                    &current_item.commit_id[..8],
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]));
+            
+            details_text.push(Line::from(""));
+            details_text.push(Line::from(vec![
+                Span::raw("Status: "),
+                Span::styled(
+                    match &current_item.status {
+                        CherryPickStatus::Pending => "Pending",
+                        CherryPickStatus::InProgress => "In Progress",
+                        CherryPickStatus::Success => "Success",
+                        CherryPickStatus::Conflict => "Conflict",
+                        CherryPickStatus::Failed(_) => "Failed",
+                        CherryPickStatus::Skipped => "Skipped",
+                    },
+                    Style::default().fg(match &current_item.status {
+                        CherryPickStatus::Success => Color::Green,
+                        CherryPickStatus::Failed(_) => Color::Red,
+                        CherryPickStatus::Conflict => Color::Yellow,
+                        CherryPickStatus::InProgress => Color::Yellow,
+                        CherryPickStatus::Skipped => Color::Gray,
+                        _ => Color::White,
+                    }),
+                ),
+            ]));
+            
+            if let CherryPickStatus::Failed(msg) = &current_item.status {
+                details_text.push(Line::from(""));
+                details_text.push(Line::from(vec![
+                    Span::raw("Error: "),
+                    Span::styled(msg, Style::default().fg(Color::Red)),
+                ]));
+            }
+        }
+        
+        details_text.push(Line::from(""));
+        details_text.push(Line::from("─────────────────────"));
+        details_text.push(Line::from(""));
+        
+        let branch_name = format!(
+            "patch/{}-{}",
+            app.target_branch,
+            app.version.as_ref().unwrap()
+        );
+        
+        details_text.push(Line::from(vec![
+            Span::raw("Branch: "),
+            Span::styled(branch_name, Style::default().fg(Color::Cyan)),
+        ]));
+        
+        if let Some(repo_path) = &app.repo_path {
+            details_text.push(Line::from(vec![
+                Span::raw("Location: "),
+                Span::styled(
+                    format!("{}", repo_path.display()),
+                    Style::default().fg(Color::Blue),
+                ),
+            ]));
+        }
+
+        let details = Paragraph::new(details_text)
+            .block(Block::default().borders(Borders::ALL).title("Details"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(details, main_chunks[1]);
 
         let status = if self.processing {
-            "Processing..."
+            "Processing cherry-picks..."
         } else {
             "Press any key to continue"
         };
