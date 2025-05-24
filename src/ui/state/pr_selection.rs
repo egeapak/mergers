@@ -1,6 +1,7 @@
 use crate::{
     ui::App,
     ui::state::{AppState, StateChange, VersionInputState},
+    utils::html_to_lines,
 };
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -263,7 +264,10 @@ impl PullRequestSelectionState {
                         }
                     };
 
-                    let description_widget = Paragraph::new(description_content)
+                    // Convert HTML content to ratatui spans
+                    let description_lines = html_to_lines(&description_content);
+
+                    let description_widget = Paragraph::new(description_lines)
                         .style(Style::default().fg(Color::White))
                         .block(
                             Block::default()

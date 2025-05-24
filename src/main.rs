@@ -2,6 +2,7 @@ mod api;
 mod git;
 mod models;
 mod ui;
+mod utils;
 
 use anyhow::Result;
 use clap::Parser;
