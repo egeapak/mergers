@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::Engine;
 use reqwest::{Client, header::HeaderMap};
 use serde::Deserialize;
 use std::time::Duration;
@@ -23,7 +24,8 @@ impl AzureDevOpsClient {
         let client = Client::builder()
             .default_headers({
                 let mut headers = HeaderMap::new();
-                let auth_value = base64::encode(format!(":{}", pat));
+                let auth_value =
+                    base64::engine::general_purpose::STANDARD.encode(format!(":{}", pat));
                 headers.insert(
                     reqwest::header::AUTHORIZATION,
                     reqwest::header::HeaderValue::from_str(&format!("Basic {}", auth_value))?,
@@ -97,16 +99,20 @@ impl AzureDevOpsClient {
         }
 
         // Use batch API to get work items with specific fields
-        let work_item_ids: Vec<String> = work_item_refs.value.iter().map(|wi| wi.id.clone()).collect();
+        let work_item_ids: Vec<String> = work_item_refs
+            .value
+            .iter()
+            .map(|wi| wi.id.clone())
+            .collect();
         let ids_param = work_item_ids.join(",");
-        
+
         let batch_url = format!(
             "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps&api-version=7.0",
             self.organization, self.project, ids_param
         );
 
         let batch_response = self.client.get(&batch_url).send().await?;
-        
+
         if !batch_response.status().is_success() {
             // Fallback to basic fetch
             let mut work_items = Vec::new();
@@ -159,7 +165,9 @@ impl AzureDevOpsClient {
             anyhow::bail!("API request failed with status {}: {}", status, text);
         }
 
-        let pr: PullRequest = response.json().await
+        let pr: PullRequest = response
+            .json()
+            .await
             .context("Failed to parse pull request response")?;
 
         pr.last_merge_commit

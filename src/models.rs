@@ -38,8 +38,6 @@ pub struct PullRequest {
     #[serde(rename = "pullRequestId")]
     pub id: i32,
     pub title: String,
-    #[serde(rename = "creationDate")]
-    pub creation_date: String,
     #[serde(rename = "closedDate")]
     pub closed_date: Option<String>,
     #[serde(rename = "createdBy")]
@@ -47,19 +45,12 @@ pub struct PullRequest {
     #[serde(rename = "lastMergeCommit")]
     pub last_merge_commit: Option<MergeCommit>,
     pub labels: Option<Vec<Label>>,
-    #[serde(rename = "targetRefName")]
-    pub target_ref_name: Option<String>,
-    #[serde(rename = "sourceRefName")]
-    pub source_ref_name: Option<String>,
-    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreatedBy {
     #[serde(rename = "displayName")]
     pub display_name: String,
-    #[serde(rename = "uniqueName")]
-    pub unique_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,8 +86,6 @@ pub struct WorkItemFields {
     pub work_item_type: Option<String>,
     #[serde(rename = "System.AssignedTo", default)]
     pub assigned_to: Option<CreatedBy>,
-    #[serde(rename = "System.AreaPath", default)]
-    pub area_path: Option<String>,
     #[serde(rename = "System.IterationPath", default)]
     pub iteration_path: Option<String>,
     #[serde(rename = "System.Description", default)]
