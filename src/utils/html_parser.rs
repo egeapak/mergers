@@ -118,6 +118,11 @@ impl HtmlConverter {
         // Pop style
         self.pop_style();
 
+        // Add space after inline elements that typically need separation
+        if matches!(tag_name, "a") {
+            self.current_spans.push(Span::raw(" "));
+        }
+
         // Finish line for block elements
         if is_block && tag_name != "br" {
             self.finish_line();
@@ -193,8 +198,8 @@ impl HtmlConverter {
         let color_str = color_str.trim().to_lowercase();
 
         // Handle hex colors
-        if color_str.starts_with('#') {
-            if let Ok(hex) = u32::from_str_radix(&color_str[1..], 16) {
+        if let Some(color) = color_str.strip_prefix('#') {
+            if let Ok(hex) = u32::from_str_radix(color, 16) {
                 let r = ((hex >> 16) & 0xFF) as u8;
                 let g = ((hex >> 8) & 0xFF) as u8;
                 let b = (hex & 0xFF) as u8;
