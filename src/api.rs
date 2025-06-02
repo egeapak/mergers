@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use base64::Engine;
 use reqwest::{Client, header::HeaderMap};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemRef};
@@ -172,6 +172,75 @@ impl AzureDevOpsClient {
 
         pr.last_merge_commit
             .ok_or_else(|| anyhow::anyhow!("Pull request {} has no merge commit", pr_id))
+    }
+
+    pub async fn add_label_to_pr(&self, pr_id: i32, label: &str) -> Result<()> {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullRequests/{}/labels?api-version=7.0",
+            self.organization, self.project, self.repository, pr_id
+        );
+
+        #[derive(Serialize)]
+        struct LabelRequest {
+            name: String,
+        }
+
+        let label_request = LabelRequest {
+            name: label.to_string(),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&label_request)
+            .send()
+            .await
+            .context("Failed to add label to pull request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await?;
+            anyhow::bail!("Failed to add label to PR {}: status {}, body: {}", pr_id, status, text);
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_work_item_state(&self, work_item_id: i32, new_state: &str) -> Result<()> {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}?api-version=7.0",
+            self.organization, self.project, work_item_id
+        );
+
+        #[derive(Serialize)]
+        struct WorkItemUpdate {
+            op: String,
+            path: String,
+            value: String,
+        }
+
+        let update = vec![WorkItemUpdate {
+            op: "add".to_string(),
+            path: "/fields/System.State".to_string(),
+            value: new_state.to_string(),
+        }];
+
+        let response = self
+            .client
+            .patch(&url)
+            .header("Content-Type", "application/json-patch+json")
+            .json(&update)
+            .send()
+            .await
+            .context("Failed to update work item state")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await?;
+            anyhow::bail!("Failed to update work item {} state: status {}, body: {}", work_item_id, status, text);
+        }
+
+        Ok(())
     }
 }
 

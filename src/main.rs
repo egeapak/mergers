@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
         args.dev_branch.clone(),
         args.target_branch.clone(),
         args.local_repo.clone(),
+        args.work_item_state.clone(),
         client,
     );
 

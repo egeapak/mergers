@@ -31,6 +31,10 @@ pub struct Args {
     /// Local repository path (if provided, uses git worktree instead of cloning)
     #[arg(long)]
     pub local_repo: Option<String>,
+
+    /// Target state for work items after successful merge
+    #[arg(long, default_value = "Next Merged")]
+    pub work_item_state: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

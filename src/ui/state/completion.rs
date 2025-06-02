@@ -261,6 +261,7 @@ impl AppState for CompletionState {
         summary_text.push(Line::from("↑/↓ Navigate"));
         summary_text.push(Line::from("'p' Open PR in browser"));
         summary_text.push(Line::from("'w' Open work items"));
+        summary_text.push(Line::from(format!("'t' Tag PRs & update work items to '{}'", app.work_item_state)));
         summary_text.push(Line::from("'q' Exit"));
 
         let summary = Paragraph::new(summary_text)
@@ -300,6 +301,9 @@ impl AppState for CompletionState {
                     }
                 }
                 StateChange::Keep
+            }
+            KeyCode::Char('t') => {
+                StateChange::Change(Box::new(crate::ui::state::PostCompletionState::new()))
             }
             _ => StateChange::Keep,
         }

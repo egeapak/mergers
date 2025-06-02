@@ -13,6 +13,7 @@ pub struct App {
     pub dev_branch: String,
     pub target_branch: String,
     pub local_repo: Option<String>,
+    pub work_item_state: String,
     pub client: AzureDevOpsClient,
 
     // Runtime state
@@ -33,6 +34,7 @@ impl App {
         dev_branch: String,
         target_branch: String,
         local_repo: Option<String>,
+        work_item_state: String,
         client: AzureDevOpsClient,
     ) -> Self {
         Self {
@@ -43,6 +45,7 @@ impl App {
             dev_branch,
             target_branch,
             local_repo,
+            work_item_state,
             client,
             version: None,
             repo_path: None,
