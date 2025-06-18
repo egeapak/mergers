@@ -5,6 +5,29 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[derive(Debug, Clone)]
+pub enum RepositorySetupError {
+    BranchExists(String),
+    WorktreeExists(String),
+    Other(String),
+}
+
+impl std::fmt::Display for RepositorySetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RepositorySetupError::BranchExists(branch) => {
+                write!(f, "Branch '{}' already exists", branch)
+            }
+            RepositorySetupError::WorktreeExists(path) => {
+                write!(f, "Worktree already exists at path: {}", path)
+            }
+            RepositorySetupError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for RepositorySetupError {}
+
 pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf, TempDir)> {
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let repo_path = temp_dir.path().to_path_buf();
@@ -38,64 +61,44 @@ pub fn create_worktree(
     base_repo_path: &Path,
     target_branch: &str,
     version: &str,
-) -> Result<PathBuf> {
+) -> Result<PathBuf, RepositorySetupError> {
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
 
-    // Check if worktree already exists and remove it
+    // Check if worktree already exists
     let list_output = Command::new("git")
         .current_dir(base_repo_path)
         .args(["worktree", "list", "--porcelain"])
         .output()
-        .context("Failed to list worktrees")?;
+        .map_err(|e| RepositorySetupError::Other(format!("Failed to list worktrees: {}", e)))?;
 
     if !list_output.status.success() {
-        anyhow::bail!(
+        return Err(RepositorySetupError::Other(format!(
             "Failed to list worktrees: {}",
             String::from_utf8_lossy(&list_output.stderr)
-        );
+        )));
     }
 
     let worktree_list = String::from_utf8_lossy(&list_output.stdout);
-    if worktree_list.contains(&worktree_name) {
-        let remove_output = Command::new("git")
-            .current_dir(base_repo_path)
-            .args(["worktree", "remove", "--force", &worktree_name])
-            .output()
-            .context("Failed to remove existing worktree")?;
-
-        if !remove_output.status.success() {
-            let prune_output = Command::new("git")
-                .current_dir(base_repo_path)
-                .args(["worktree", "prune"])
-                .output()?;
-
-            if !prune_output.status.success() {
-                // Just continue
-            }
-
-            if worktree_path.exists() {
-                std::fs::remove_dir_all(&worktree_path)
-                    .context("Failed to remove existing worktree directory")?;
-            }
-        }
-    }
-
-    if worktree_path.exists() {
-        std::fs::remove_dir_all(&worktree_path).context("Failed to remove existing directory")?;
+    if worktree_list.contains(&worktree_name) || worktree_path.exists() {
+        return Err(RepositorySetupError::WorktreeExists(
+            worktree_path.display().to_string(),
+        ));
     }
 
     let fetch_output = Command::new("git")
         .current_dir(base_repo_path)
         .args(["fetch", "origin", target_branch])
         .output()
-        .context("Failed to fetch target branch")?;
+        .map_err(|e| {
+            RepositorySetupError::Other(format!("Failed to fetch target branch: {}", e))
+        })?;
 
     if !fetch_output.status.success() {
-        anyhow::bail!(
+        return Err(RepositorySetupError::Other(format!(
             "Failed to fetch target branch: {}",
             String::from_utf8_lossy(&fetch_output.stderr)
-        );
+        )));
     }
 
     let create_output = Command::new("git")
@@ -107,16 +110,70 @@ pub fn create_worktree(
             &format!("origin/{}", target_branch),
         ])
         .output()
-        .context("Failed to create worktree")?;
+        .map_err(|e| RepositorySetupError::Other(format!("Failed to create worktree: {}", e)))?;
 
     if !create_output.status.success() {
-        anyhow::bail!(
+        let stderr = String::from_utf8_lossy(&create_output.stderr);
+        if stderr.contains("already exists")
+            || stderr.contains("already checked out")
+            || stderr.contains("is already checked out")
+            || stderr.contains("already registered")
+        {
+            return Err(RepositorySetupError::WorktreeExists(
+                worktree_path.display().to_string(),
+            ));
+        }
+        if stderr.contains("invalid reference")
+            || stderr.contains("not a valid branch")
+            || stderr.contains("branch") && stderr.contains("already exists")
+        {
+            return Err(RepositorySetupError::BranchExists(format!(
+                "origin/{}",
+                target_branch
+            )));
+        }
+        return Err(RepositorySetupError::Other(format!(
             "Failed to create worktree: {}",
-            String::from_utf8_lossy(&create_output.stderr)
-        );
+            stderr
+        )));
     }
 
     Ok(worktree_path)
+}
+
+pub fn force_remove_worktree(base_repo_path: &Path, version: &str) -> Result<()> {
+    let worktree_name = format!("next-{}", version);
+    let worktree_path = base_repo_path.join(&worktree_name);
+
+    // Remove from git worktree list
+    let _remove_output = Command::new("git")
+        .current_dir(base_repo_path)
+        .args(["worktree", "remove", "--force", &worktree_name])
+        .output();
+
+    // Prune worktrees
+    let _prune_output = Command::new("git")
+        .current_dir(base_repo_path)
+        .args(["worktree", "prune"])
+        .output();
+
+    // Remove directory if it exists
+    if worktree_path.exists() {
+        std::fs::remove_dir_all(&worktree_path)
+            .context("Failed to remove existing worktree directory")?;
+    }
+
+    Ok(())
+}
+
+pub fn force_delete_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
+    // Delete local branch if it exists
+    let _delete_output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["branch", "-D", branch_name])
+        .output();
+
+    Ok(())
 }
 
 pub enum RepositorySetup {
@@ -129,29 +186,38 @@ pub fn setup_repository(
     ssh_url: &str,
     target_branch: &str,
     version: &str,
-) -> Result<RepositorySetup> {
+) -> Result<RepositorySetup, RepositorySetupError> {
     match local_repo {
         Some(repo_path) => {
             let repo_path = Path::new(repo_path);
             if !repo_path.exists() {
-                anyhow::bail!("Local repository path does not exist: {:?}", repo_path);
+                return Err(RepositorySetupError::Other(format!(
+                    "Local repository path does not exist: {:?}",
+                    repo_path
+                )));
             }
 
             let verify_output = Command::new("git")
                 .current_dir(repo_path)
                 .args(["rev-parse", "--git-dir"])
                 .output()
-                .context("Failed to verify git repository")?;
+                .map_err(|e| {
+                    RepositorySetupError::Other(format!("Failed to verify git repository: {}", e))
+                })?;
 
             if !verify_output.status.success() {
-                anyhow::bail!("Not a valid git repository: {:?}", repo_path);
+                return Err(RepositorySetupError::Other(format!(
+                    "Not a valid git repository: {:?}",
+                    repo_path
+                )));
             }
 
             let worktree_path = create_worktree(repo_path, target_branch, version)?;
             Ok(RepositorySetup::Local(worktree_path))
         }
         None => {
-            let (repo_path, temp_dir) = shallow_clone_repo(ssh_url, target_branch)?;
+            let (repo_path, temp_dir) = shallow_clone_repo(ssh_url, target_branch)
+                .map_err(|e| RepositorySetupError::Other(e.to_string()))?;
             Ok(RepositorySetup::Clone(repo_path, temp_dir))
         }
     }
