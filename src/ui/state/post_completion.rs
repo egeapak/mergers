@@ -15,8 +15,14 @@ use ratatui::{
 
 #[derive(Debug, Clone)]
 pub enum PostCompletionTask {
-    TaggingPR { pr_id: i32, pr_title: String },
-    UpdatingWorkItem { work_item_id: i32, work_item_title: String },
+    TaggingPR {
+        pr_id: i32,
+        pr_title: String,
+    },
+    UpdatingWorkItem {
+        work_item_id: i32,
+        work_item_title: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +54,29 @@ impl PostCompletionState {
             completed: false,
             total_tasks: 0,
         }
+    }
+
+    fn retry_failed_tasks(&mut self) {
+        for task_item in &mut self.tasks {
+            if matches!(task_item.status, TaskStatus::Failed(_)) {
+                task_item.status = TaskStatus::Pending;
+            }
+        }
+
+        // Reset current task index to the first pending task
+        self.current_task_index = self
+            .tasks
+            .iter()
+            .position(|task| matches!(task.status, TaskStatus::Pending))
+            .unwrap_or(self.tasks.len());
+
+        self.completed = false;
+    }
+
+    fn has_failed_tasks(&self) -> bool {
+        self.tasks
+            .iter()
+            .any(|task| matches!(task.status, TaskStatus::Failed(_)))
     }
 
     fn initialize_tasks(&mut self, app: &App) {
@@ -95,7 +124,7 @@ impl PostCompletionState {
         }
 
         let task_item = &mut self.tasks[self.current_task_index];
-        
+
         if !matches!(task_item.status, TaskStatus::Pending) {
             self.current_task_index += 1;
             return false;
@@ -110,7 +139,9 @@ impl PostCompletionState {
                 app.client.add_label_to_pr(*pr_id, &tag_name).await
             }
             PostCompletionTask::UpdatingWorkItem { work_item_id, .. } => {
-                app.client.update_work_item_state(*work_item_id, &app.work_item_state).await
+                app.client
+                    .update_work_item_state(*work_item_id, &app.work_item_state)
+                    .await
             }
         };
 
@@ -164,7 +195,11 @@ impl AppState for PostCompletionState {
         let progress_label = if self.completed {
             "✅ All tasks completed!".to_string()
         } else if self.total_tasks > 0 {
-            format!("Processing task {} of {}", self.current_task_index.min(self.total_tasks), self.total_tasks)
+            format!(
+                "Processing task {} of {}",
+                self.current_task_index.min(self.total_tasks),
+                self.total_tasks
+            )
         } else {
             "No tasks to process".to_string()
         };
@@ -191,8 +226,14 @@ impl AppState for PostCompletionState {
                 PostCompletionTask::TaggingPR { pr_id, pr_title } => {
                     format!("Tag PR #{}: {}", pr_id, pr_title)
                 }
-                PostCompletionTask::UpdatingWorkItem { work_item_id, work_item_title } => {
-                    format!("Update WI #{} to '{}': {}", work_item_id, app.work_item_state, work_item_title)
+                PostCompletionTask::UpdatingWorkItem {
+                    work_item_id,
+                    work_item_title,
+                } => {
+                    format!(
+                        "Update WI #{} to '{}': {}",
+                        work_item_id, app.work_item_state, work_item_title
+                    )
                 }
             };
 
@@ -229,20 +270,46 @@ impl AppState for PostCompletionState {
 
         // Instructions
         let instructions = if self.completed {
-            vec![
+            let mut lines = vec![
                 Line::from("🎉 All post-completion tasks have been processed!"),
                 Line::from(""),
-                Line::from(format!("✅ PRs tagged with 'merged-{}'", app.version.as_ref().unwrap())),
-                Line::from(format!("✅ Work items updated to '{}'", app.work_item_state)),
+                Line::from(format!(
+                    "✅ PRs tagged with 'merged-{}'",
+                    app.version.as_ref().unwrap()
+                )),
+                Line::from(format!(
+                    "✅ Work items updated to '{}'",
+                    app.work_item_state
+                )),
                 Line::from(""),
-                Line::from("Press 'q' to exit or any other key to return to completion summary"),
-            ]
+            ];
+
+            if self.has_failed_tasks() {
+                lines.extend(vec![
+                    Line::from("Press 'Enter' to return to completion summary"),
+                    Line::from("Press 'r' to retry failed tasks"),
+                    Line::from("Press 'q' to exit"),
+                ]);
+            } else {
+                lines.extend(vec![
+                    Line::from("Press 'Enter' to return to completion summary"),
+                    Line::from("Press 'q' to exit"),
+                ]);
+            }
+
+            lines
         } else {
             vec![
                 Line::from("Processing tasks automatically..."),
                 Line::from(""),
-                Line::from(format!("🏷️  Tagging PRs with 'merged-{}'", app.version.as_ref().unwrap())),
-                Line::from(format!("📝 Updating work items to '{}'", app.work_item_state)),
+                Line::from(format!(
+                    "🏷️  Tagging PRs with 'merged-{}'",
+                    app.version.as_ref().unwrap()
+                )),
+                Line::from(format!(
+                    "📝 Updating work items to '{}'",
+                    app.work_item_state
+                )),
                 Line::from(""),
                 Line::from("Press 'q' to exit (tasks will continue in background)"),
             ]
@@ -264,9 +331,14 @@ impl AppState for PostCompletionState {
                 }
                 StateChange::Keep
             }
-            _ if self.completed => {
+            KeyCode::Enter if self.completed => {
                 // Return to completion state
                 StateChange::Change(Box::new(crate::ui::state::CompletionState::new()))
+            }
+            KeyCode::Char('r') if self.completed && self.has_failed_tasks() => {
+                // Retry failed tasks
+                self.retry_failed_tasks();
+                StateChange::Keep
             }
             _ => StateChange::Keep,
         }
