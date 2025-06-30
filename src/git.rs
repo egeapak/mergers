@@ -323,3 +323,44 @@ pub fn abort_cherry_pick(repo_path: &Path) -> Result<()> {
 
     Ok(())
 }
+
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub hash: String,
+    pub date: String,
+    pub title: String,
+    pub author: String,
+}
+
+pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "show",
+            "--no-patch",
+            "--format=%H|%ci|%s|%an",
+            commit_id,
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to get commit info: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = output_str.trim().split('|').collect();
+    
+    if parts.len() >= 4 {
+        Ok(CommitInfo {
+            hash: parts[0].to_string(),
+            date: parts[1].to_string(),
+            title: parts[2].to_string(),
+            author: parts[3].to_string(),
+        })
+    } else {
+        anyhow::bail!("Unexpected git show output format");
+    }
+}
