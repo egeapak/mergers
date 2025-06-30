@@ -2,7 +2,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::App,
-    ui::state::{AppState, StateChange, cherry_pick::process_next_commit},
+    ui::state::{AppState, StateChange, CherryPickState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -77,7 +77,7 @@ impl AppState for ConflictResolutionState {
             .style(Style::default().fg(Color::White));
         f.render_widget(instructions_widget, chunks[2]);
 
-        let help = Paragraph::new("c: Continue (after resolving) | s: Skip this commit | a: Abort")
+        let help = Paragraph::new("c: Continue (after resolving) | a: Abort")
             .style(Style::default().fg(Color::Gray))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(help, chunks[3]);
@@ -97,27 +97,19 @@ impl AppState for ConflictResolutionState {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Success;
                                 app.current_cherry_pick_index += 1;
-                                process_next_commit(app)
+                                StateChange::Change(Box::new(CherryPickState::new()))
                             }
                             Err(e) => {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Failed(e.to_string());
                                 app.current_cherry_pick_index += 1;
-                                process_next_commit(app)
+                                StateChange::Change(Box::new(CherryPickState::new()))
                             }
                         }
                     }
                     Ok(false) => StateChange::Keep, // Conflicts not resolved
                     Err(_) => StateChange::Keep,
                 }
-            }
-            KeyCode::Char('s') => {
-                // Skip this commit
-                let _ = git::abort_cherry_pick(repo_path);
-                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                    CherryPickStatus::Skipped;
-                app.current_cherry_pick_index += 1;
-                process_next_commit(app)
             }
             KeyCode::Char('a') => {
                 // Abort entire process

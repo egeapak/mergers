@@ -100,7 +100,6 @@ impl AppState for CompletionState {
                 let (symbol, color) = match &item.status {
                     CherryPickStatus::Success => ("✅", Color::Green),
                     CherryPickStatus::Failed(_) => ("❌", Color::Red),
-                    CherryPickStatus::Skipped => ("⏭️", Color::Gray),
                     CherryPickStatus::Conflict => ("⚠️", Color::Yellow),
                     _ => ("❓", Color::White),
                 };
@@ -193,13 +192,10 @@ impl AppState for CompletionState {
         // Calculate summary
         let mut successful = 0;
         let mut failed = 0;
-        let mut skipped = 0;
-
         for item in &app.cherry_pick_items {
             match &item.status {
                 CherryPickStatus::Success => successful += 1,
                 CherryPickStatus::Failed(_) => failed += 1,
-                CherryPickStatus::Skipped => skipped += 1,
                 _ => {}
             }
         }
@@ -215,10 +211,6 @@ impl AppState for CompletionState {
         summary_text.push(Line::from(vec![
             Span::raw("❌ Failed: "),
             Span::styled(format!("{}", failed), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-        ]));
-        summary_text.push(Line::from(vec![
-            Span::raw("⏭️  Skipped: "),
-            Span::styled(format!("{}", skipped), Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD)),
         ]));
         
         summary_text.push(Line::from(""));

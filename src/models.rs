@@ -118,7 +118,6 @@ pub enum CherryPickStatus {
     Success,
     Conflict,
     Failed(String),
-    Skipped,
 }
 
 #[derive(Debug, Clone)]
