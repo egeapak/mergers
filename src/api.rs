@@ -4,7 +4,7 @@ use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemRef};
+use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemRef, WorkItemHistory};
 
 #[derive(Clone)]
 pub struct AzureDevOpsClient {
@@ -107,7 +107,7 @@ impl AzureDevOpsClient {
         let ids_param = work_item_ids.join(",");
 
         let batch_url = format!(
-            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps&api-version=7.0",
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps,System.CreatedDate&api-version=7.0",
             self.organization, self.project, ids_param
         );
 
@@ -241,6 +241,51 @@ impl AzureDevOpsClient {
         }
 
         Ok(())
+    }
+
+    pub async fn fetch_work_item_history(&self, work_item_id: i32) -> Result<Vec<WorkItemHistory>> {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}/updates?api-version=7.0",
+            self.organization, self.project, work_item_id
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch work item history")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await?;
+            anyhow::bail!("API request failed with status {}: {}", status, text);
+        }
+
+        #[derive(Deserialize)]
+        struct WorkItemHistoryResponse {
+            value: Vec<WorkItemHistory>,
+        }
+
+        let history_response: WorkItemHistoryResponse = response
+            .json()
+            .await
+            .context("Failed to parse work item history response")?;
+        Ok(history_response.value)
+    }
+
+    pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+        // First get the basic work items
+        let mut work_items = self.fetch_work_items_for_pr(pr_id).await?;
+        
+        // Then fetch history for each work item
+        for work_item in &mut work_items {
+            if let Ok(history) = self.fetch_work_item_history(work_item.id).await {
+                work_item.history = history;
+            }
+        }
+        
+        Ok(work_items)
     }
 }
 

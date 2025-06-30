@@ -125,11 +125,12 @@ impl PullRequestSelectionState {
                 };
 
                 if let Some(work_item) = pr.work_items.get(work_item_index) {
-                    // Create layout for header and content
+                    // Create layout for header, history, and content
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Length(4), // Header (2 lines + borders)
+                            Constraint::Length(3), // History (1 line + borders)
                             Constraint::Min(0),    // Description content
                         ])
                         .split(area);
@@ -218,6 +219,9 @@ impl PullRequestSelectionState {
 
                     f.render_widget(header_widget, chunks[0]);
 
+                    // Render history section
+                    self.render_work_item_history_linear(f, chunks[1], work_item);
+
                     // Render description - use repro steps for bugs, description for others
                     let (description_content, description_title) = match work_item_type
                         .to_lowercase()
@@ -276,7 +280,7 @@ impl PullRequestSelectionState {
                         )
                         .wrap(ratatui::widgets::Wrap { trim: true });
 
-                    f.render_widget(description_widget, chunks[1]);
+                    f.render_widget(description_widget, chunks[2]);
                 }
             }
         } else {
@@ -290,6 +294,146 @@ impl PullRequestSelectionState {
                 .alignment(Alignment::Center);
             f.render_widget(no_selection, area);
         }
+    }
+
+    fn render_work_item_history_linear(&self, f: &mut Frame, area: ratatui::layout::Rect, work_item: &crate::models::WorkItem) {
+        use ratatui::text::{Line, Span};
+        
+        let mut history_spans = vec![];
+        
+        
+        if work_item.history.is_empty() {
+            history_spans.push(Span::styled("No history available", Style::default().fg(Color::Gray)));
+        } else {
+            // Sort history by date (most recent first) and filter to only state changes
+            let mut state_changes: Vec<_> = work_item.history.iter()
+                .filter(|h| h.fields.as_ref()
+                    .and_then(|f| f.state.as_ref())
+                    .and_then(|s| s.new_value.as_ref())
+                    .is_some())
+                .cloned()
+                .collect();
+            
+            // Sort by date from earliest to latest (left to right chronologically)
+            state_changes.sort_by(|a, b| {
+                let a_is_initial = a.revised_date.starts_with("9999-01-01");
+                let b_is_initial = b.revised_date.starts_with("9999-01-01");
+                
+                match (a_is_initial, b_is_initial) {
+                    (true, false) => std::cmp::Ordering::Less,     // a is initial, so it goes first (leftmost)
+                    (false, true) => std::cmp::Ordering::Greater,  // b is initial, so it goes first (leftmost)
+                    (true, true) => {
+                        // Both are initial, they're essentially the same timing
+                        std::cmp::Ordering::Equal
+                    }
+                    (false, false) => a.revised_date.cmp(&b.revised_date), // Normal chronological order (earliest first)
+                }
+            });
+            
+            if state_changes.is_empty() {
+                history_spans.push(Span::styled("No state changes in history", Style::default().fg(Color::Gray)));
+            } else {
+                // Show first 5 and last 1 entries (Azure DevOps style) in chronological order
+                let total_count = state_changes.len();
+                let entries_to_show = if total_count <= 6 {
+                    state_changes
+                } else {
+                    let mut entries = Vec::new();
+                    entries.extend(state_changes[..5].iter().cloned()); // First 5 (earliest)
+                    entries.push(state_changes[total_count - 1].clone()); // Last 1 (latest)
+                    entries
+                };
+                
+                for (i, history_entry) in entries_to_show.iter().enumerate() {
+                    // Add separator for omitted entries (after showing first 5, before showing last 1)
+                    if i == 5 && total_count > 6 {
+                        if !history_spans.is_empty() {
+                            history_spans.push(Span::styled(" → ", Style::default().fg(Color::Gray)));
+                        }
+                        history_spans.push(Span::styled(
+                            format!("... ({} omitted)", total_count - 6),
+                            Style::default().fg(Color::Gray),
+                        ));
+                    }
+                    
+                    if let Some(fields) = &history_entry.fields {
+                        if let Some(state_change) = &fields.state {
+                            if let Some(new_state) = &state_change.new_value {
+                                // Add arrow separator between entries (showing chronological flow)
+                                if !history_spans.is_empty() {
+                                    history_spans.push(Span::styled(" → ", Style::default().fg(Color::Gray)));
+                                }
+                                
+                                // Format date - extract just the date part and handle 9999-01-01
+                                let date_str = if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                    let date_part = &history_entry.revised_date[..t_pos];
+                                    if date_part.starts_with("9999-01-01") {
+                                        // Use work item creation date for initial items
+                                        if let Some(created_date) = &work_item.fields.created_date {
+                                            if let Some(created_t_pos) = created_date.find('T') {
+                                                &created_date[..created_t_pos]
+                                            } else {
+                                                created_date
+                                            }
+                                        } else {
+                                            "Initial"
+                                        }
+                                    } else {
+                                        date_part
+                                    }
+                                } else {
+                                    if history_entry.revised_date.starts_with("9999-01-01") {
+                                        // Use work item creation date for initial items
+                                        if let Some(created_date) = &work_item.fields.created_date {
+                                            if let Some(created_t_pos) = created_date.find('T') {
+                                                &created_date[..created_t_pos]
+                                            } else {
+                                                created_date
+                                            }
+                                        } else {
+                                            "Initial"
+                                        }
+                                    } else {
+                                        &history_entry.revised_date
+                                    }
+                                };
+                                
+                                // Get color for the state
+                                let state_color = get_state_color(new_state);
+                                
+                                history_spans.push(Span::styled(
+                                    "●",
+                                    Style::default()
+                                        .fg(state_color)
+                                        .add_modifier(Modifier::BOLD),
+                                ));
+                                history_spans.push(Span::raw(" "));
+                                history_spans.push(Span::styled(
+                                    new_state.clone(),
+                                    Style::default().fg(state_color),
+                                ));
+                                history_spans.push(Span::styled(
+                                    format!(" ({})", date_str),
+                                    Style::default().fg(Color::Gray),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let history_line = Line::from(history_spans);
+        let history_widget = Paragraph::new(vec![history_line])
+            .style(Style::default().fg(Color::White))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("History"),
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        
+        f.render_widget(history_widget, area);
     }
 }
 

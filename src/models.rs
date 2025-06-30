@@ -78,6 +78,8 @@ pub struct WorkItemRef {
 pub struct WorkItem {
     pub id: i32,
     pub fields: WorkItemFields,
+    #[serde(skip_deserializing, default)]
+    pub history: Vec<WorkItemHistory>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +98,36 @@ pub struct WorkItemFields {
     pub description: Option<String>,
     #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
     pub repro_steps: Option<String>,
+    #[serde(rename = "System.CreatedDate", default)]
+    pub created_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemHistory {
+    pub id: i32,
+    #[serde(rename = "workItemId")]
+    pub work_item_id: i32,
+    pub rev: i32,
+    #[serde(rename = "revisedDate")]
+    pub revised_date: String,
+    #[serde(rename = "revisedBy")]
+    pub revised_by: Option<CreatedBy>,
+    #[serde(rename = "fields")]
+    pub fields: Option<WorkItemHistoryFields>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemHistoryFields {
+    #[serde(rename = "System.State")]
+    pub state: Option<WorkItemFieldChange>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemFieldChange {
+    #[serde(rename = "newValue")]
+    pub new_value: Option<String>,
+    #[serde(rename = "oldValue")]
+    pub old_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

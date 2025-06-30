@@ -66,10 +66,10 @@ impl DataLoadingState {
     async fn fetch_work_items(&mut self, app: &mut App) -> Result<(), String> {
         self.loading_stage = LoadingStage::FetchingWorkItems;
 
-        // Fetch work items for each PR
+        // Fetch work items with history for each PR
         for pr_with_wi in &mut app.pull_requests {
             let work_items = app.client
-                .fetch_work_items_for_pr(pr_with_wi.pr.id)
+                .fetch_work_items_with_history_for_pr(pr_with_wi.pr.id)
                 .await
                 .unwrap_or_default();
             pr_with_wi.work_items = work_items;
