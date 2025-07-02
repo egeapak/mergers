@@ -16,6 +16,11 @@ use ratatui::{
 pub struct DataLoadingState {
     loading_stage: LoadingStage,
     loaded: bool,
+    work_items_fetched: usize,
+    work_items_total: usize,
+    commit_info_fetched: usize,
+    commit_info_total: usize,
+    work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -23,6 +28,7 @@ enum LoadingStage {
     NotStarted,
     FetchingPullRequests,
     FetchingWorkItems,
+    WaitingForWorkItems,
     FetchingCommitInfo,
     Complete,
 }
@@ -32,6 +38,11 @@ impl DataLoadingState {
         Self {
             loading_stage: LoadingStage::NotStarted,
             loaded: false,
+            work_items_fetched: 0,
+            work_items_total: 0,
+            commit_info_fetched: 0,
+            commit_info_total: 0,
+            work_items_tasks: None,
         }
     }
 
@@ -63,23 +74,84 @@ impl DataLoadingState {
         Ok(())
     }
 
-    async fn fetch_work_items(&mut self, app: &mut App) -> Result<(), String> {
+    fn start_work_items_fetching(&mut self, app: &App) {
         self.loading_stage = LoadingStage::FetchingWorkItems;
+        self.work_items_total = app.pull_requests.len();
+        self.work_items_fetched = 0;
 
-        // Fetch work items with history for each PR
-        for pr_with_wi in &mut app.pull_requests {
-            let work_items = app.client
-                .fetch_work_items_with_history_for_pr(pr_with_wi.pr.id)
-                .await
-                .unwrap_or_default();
-            pr_with_wi.work_items = work_items;
+        // Start parallel tasks for fetching work items
+        let mut tasks = Vec::new();
+        
+        for (index, pr_with_wi) in app.pull_requests.iter().enumerate() {
+            let client = app.client.clone();
+            let pr_id = pr_with_wi.pr.id;
+            
+            let task = tokio::spawn(async move {
+                let work_items = client
+                    .fetch_work_items_with_history_for_pr(pr_id)
+                    .await
+                    .unwrap_or_default();
+                Ok((index, work_items))
+            });
+            
+            tasks.push(task);
         }
+        
+        self.work_items_tasks = Some(tasks);
+    }
 
-        Ok(())
+    async fn check_work_items_progress(&mut self, app: &mut App) -> Result<bool, String> {
+        if let Some(ref mut tasks) = self.work_items_tasks {
+            let mut completed = Vec::new();
+            let mut still_running = Vec::new();
+            
+            // Check which tasks have completed
+            for task in tasks.drain(..) {
+                if task.is_finished() {
+                    match task.await {
+                        Ok(Ok((index, work_items))) => {
+                            completed.push((index, work_items));
+                        }
+                        Ok(Err(e)) => {
+                            return Err(format!("Failed to fetch work items: {}", e));
+                        }
+                        Err(e) => {
+                            return Err(format!("Task failed: {}", e));
+                        }
+                    }
+                } else {
+                    still_running.push(task);
+                }
+            }
+            
+            // Update completed work items
+            for (index, work_items) in completed {
+                if let Some(pr_with_wi) = app.pull_requests.get_mut(index) {
+                    pr_with_wi.work_items = work_items;
+                    self.work_items_fetched += 1;
+                }
+            }
+            
+            *tasks = still_running;
+            
+            // Return true if all tasks are completed
+            if tasks.is_empty() {
+                self.work_items_tasks = None;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(true) // No tasks means we're done
+        }
     }
 
     async fn fetch_commit_info(&mut self, app: &mut App) -> Result<(), String> {
         self.loading_stage = LoadingStage::FetchingCommitInfo;
+        self.commit_info_total = app.pull_requests.iter()
+            .filter(|pr| pr.pr.last_merge_commit.is_none())
+            .count();
+        self.commit_info_fetched = 0;
 
         for pr_with_wi in &mut app.pull_requests {
             if pr_with_wi.pr.last_merge_commit.is_none() {
@@ -94,6 +166,7 @@ impl DataLoadingState {
                         ));
                     }
                 }
+                self.commit_info_fetched += 1;
             }
         }
 
@@ -101,13 +174,26 @@ impl DataLoadingState {
         Ok(())
     }
 
-    fn get_loading_message(&self) -> &'static str {
+    fn get_loading_message(&self) -> String {
         match self.loading_stage {
-            LoadingStage::NotStarted => "Initializing...",
-            LoadingStage::FetchingPullRequests => "Fetching pull requests...",
-            LoadingStage::FetchingWorkItems => "Fetching work items...",
-            LoadingStage::FetchingCommitInfo => "Fetching commit information...",
-            LoadingStage::Complete => "Loading complete",
+            LoadingStage::NotStarted => "Initializing...".to_string(),
+            LoadingStage::FetchingPullRequests => "Fetching pull requests...".to_string(),
+            LoadingStage::FetchingWorkItems => "Starting work items fetch...".to_string(),
+            LoadingStage::WaitingForWorkItems => {
+                if self.work_items_total > 0 {
+                    format!("Fetching work items ({}/{})", self.work_items_fetched, self.work_items_total)
+                } else {
+                    "Fetching work items...".to_string()
+                }
+            },
+            LoadingStage::FetchingCommitInfo => {
+                if self.commit_info_total > 0 {
+                    format!("Fetching commit information ({}/{})", self.commit_info_fetched, self.commit_info_total)
+                } else {
+                    "Fetching commit information...".to_string()
+                }
+            },
+            LoadingStage::Complete => "Loading complete".to_string(),
         }
     }
 }
@@ -140,16 +226,32 @@ impl AppState for DataLoadingState {
                     return StateChange::Keep;
                 }
                 LoadingStage::FetchingPullRequests => {
-                    if let Err(e) = self.fetch_work_items(app).await {
-                        app.error_message = Some(e);
-                        return StateChange::Change(Box::new(super::ErrorState::new()));
-                    }
+                    // Start parallel work items fetching
+                    self.start_work_items_fetching(app);
                     return StateChange::Keep;
                 }
                 LoadingStage::FetchingWorkItems => {
-                    if let Err(e) = self.fetch_commit_info(app).await {
-                        app.error_message = Some(e);
-                        return StateChange::Change(Box::new(super::ErrorState::new()));
+                    // Transition to waiting for work items
+                    self.loading_stage = LoadingStage::WaitingForWorkItems;
+                    return StateChange::Keep;
+                }
+                LoadingStage::WaitingForWorkItems => {
+                    // Check progress of work items fetching
+                    match self.check_work_items_progress(app).await {
+                        Ok(true) => {
+                            // All work items fetched, move to commit info
+                            if let Err(e) = self.fetch_commit_info(app).await {
+                                app.error_message = Some(e);
+                                return StateChange::Change(Box::new(super::ErrorState::new()));
+                            }
+                        }
+                        Ok(false) => {
+                            // Still waiting for work items, continue
+                        }
+                        Err(e) => {
+                            app.error_message = Some(e);
+                            return StateChange::Change(Box::new(super::ErrorState::new()));
+                        }
                     }
                     return StateChange::Keep;
                 }
