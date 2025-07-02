@@ -120,6 +120,8 @@ pub struct WorkItemHistory {
 pub struct WorkItemHistoryFields {
     #[serde(rename = "System.State")]
     pub state: Option<WorkItemFieldChange>,
+    #[serde(rename = "System.ChangedDate")]
+    pub changed_date: Option<WorkItemFieldChange>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

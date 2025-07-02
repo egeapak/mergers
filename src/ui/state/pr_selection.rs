@@ -1,4 +1,5 @@
 use crate::{
+    models::WorkItemHistory,
     ui::App,
     ui::state::{AppState, StateChange, VersionInputState},
     utils::html_to_lines,
@@ -315,18 +316,35 @@ impl PullRequestSelectionState {
                 .collect();
             
             // Sort by date from earliest to latest (left to right chronologically)
+            // Use System.ChangedDate as primary date source, fall back to revisedDate
             state_changes.sort_by(|a, b| {
-                let a_is_initial = a.revised_date.starts_with("9999-01-01");
-                let b_is_initial = b.revised_date.starts_with("9999-01-01");
-                
-                match (a_is_initial, b_is_initial) {
-                    (true, false) => std::cmp::Ordering::Less,     // a is initial, so it goes first (leftmost)
-                    (false, true) => std::cmp::Ordering::Greater,  // b is initial, so it goes first (leftmost)
-                    (true, true) => {
-                        // Both are initial, they're essentially the same timing
-                        std::cmp::Ordering::Equal
+                let get_date_string = |entry: &WorkItemHistory| -> Option<String> {
+                    // First try System.ChangedDate
+                    if let Some(fields) = &entry.fields {
+                        if let Some(changed_date) = &fields.changed_date {
+                            if let Some(new_date) = &changed_date.new_value {
+                                if !new_date.starts_with("9999-01-01") {
+                                    return Some(new_date.clone());
+                                }
+                            }
+                        }
                     }
-                    (false, false) => a.revised_date.cmp(&b.revised_date), // Normal chronological order (earliest first)
+                    // Fall back to revisedDate if not a placeholder
+                    if !entry.revised_date.starts_with("9999-01-01") {
+                        Some(entry.revised_date.clone())
+                    } else {
+                        None // No valid date found
+                    }
+                };
+                
+                let a_date = get_date_string(a);
+                let b_date = get_date_string(b);
+                
+                match (a_date, b_date) {
+                    (Some(a_d), Some(b_d)) => a_d.cmp(&b_d), // Normal chronological order
+                    (None, Some(_)) => std::cmp::Ordering::Less,    // a has unknown date, goes first
+                    (Some(_), None) => std::cmp::Ordering::Greater, // b has unknown date, goes first
+                    (None, None) => a.rev.cmp(&b.rev), // Both unknown, use revision order
                 }
             });
             
@@ -364,37 +382,48 @@ impl PullRequestSelectionState {
                                     history_spans.push(Span::styled(" → ", Style::default().fg(Color::Gray)));
                                 }
                                 
-                                // Format date - extract just the date part and handle 9999-01-01
-                                let date_str = if let Some(t_pos) = history_entry.revised_date.find('T') {
-                                    let date_part = &history_entry.revised_date[..t_pos];
-                                    if date_part.starts_with("9999-01-01") {
-                                        // Use work item creation date for initial items
-                                        if let Some(created_date) = &work_item.fields.created_date {
-                                            if let Some(created_t_pos) = created_date.find('T') {
-                                                &created_date[..created_t_pos]
+                                // Format date - use System.ChangedDate as primary source
+                                let date_str = {
+                                    // First try System.ChangedDate
+                                    if let Some(fields) = &history_entry.fields {
+                                        if let Some(changed_date) = &fields.changed_date {
+                                            if let Some(new_date) = &changed_date.new_value {
+                                                if !new_date.starts_with("9999-01-01") {
+                                                    // Extract date part from System.ChangedDate
+                                                    if let Some(t_pos) = new_date.find('T') {
+                                                        &new_date[..t_pos]
+                                                    } else {
+                                                        new_date
+                                                    }
+                                                } else {
+                                                    "Unknown date"
+                                                }
                                             } else {
-                                                created_date
+                                                "Unknown date"
                                             }
                                         } else {
-                                            "Initial"
+                                            // No System.ChangedDate, try revisedDate
+                                            if !history_entry.revised_date.starts_with("9999-01-01") {
+                                                if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                                    &history_entry.revised_date[..t_pos]
+                                                } else {
+                                                    &history_entry.revised_date
+                                                }
+                                            } else {
+                                                "Unknown date"
+                                            }
                                         }
                                     } else {
-                                        date_part
-                                    }
-                                } else {
-                                    if history_entry.revised_date.starts_with("9999-01-01") {
-                                        // Use work item creation date for initial items
-                                        if let Some(created_date) = &work_item.fields.created_date {
-                                            if let Some(created_t_pos) = created_date.find('T') {
-                                                &created_date[..created_t_pos]
+                                        // No fields, try revisedDate
+                                        if !history_entry.revised_date.starts_with("9999-01-01") {
+                                            if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                                &history_entry.revised_date[..t_pos]
                                             } else {
-                                                created_date
+                                                &history_entry.revised_date
                                             }
                                         } else {
-                                            "Initial"
+                                            "Unknown date"
                                         }
-                                    } else {
-                                        &history_entry.revised_date
                                     }
                                 };
                                 
