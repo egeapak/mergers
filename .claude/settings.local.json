@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo:*)",
+      "Bash(rg:*)",
+      "WebFetch(domain:learn.microsoft.com)"
+    ],
+    "deny": []
+  }
+}

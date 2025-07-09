@@ -309,13 +309,13 @@ impl AppState for ConflictResolutionState {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Success;
                                 app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(CherryPickState::new()))
+                                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
                             }
                             Err(e) => {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Failed(e.to_string());
                                 app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(CherryPickState::new()))
+                                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
                             }
                         }
                     }

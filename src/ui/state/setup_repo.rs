@@ -129,7 +129,17 @@ impl SetupRepoState {
                     StateChange::Change(Box::new(ErrorState::new()))
                 } else {
                     app.cherry_pick_items = cherry_pick_items;
-                    StateChange::Change(Box::new(CherryPickState::new()))
+                    
+                    // Create branch for cherry-picking
+                    self.set_status("Creating branch...".to_string());
+                    let branch_name = format!("patch/{}-{}", app.target_branch, version);
+                    
+                    if let Err(e) = git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name) {
+                        app.error_message = Some(format!("Failed to create branch: {}", e));
+                        StateChange::Change(Box::new(ErrorState::new()))
+                    } else {
+                        StateChange::Change(Box::new(CherryPickState::new()))
+                    }
                 }
             }
             Err(e) => {

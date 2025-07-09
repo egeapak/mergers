@@ -22,6 +22,10 @@ impl CherryPickState {
     pub fn new() -> Self {
         Self { processing: true }
     }
+    
+    pub fn continue_after_conflict() -> Self {
+        Self { processing: false }
+    }
 }
 
 #[async_trait]
@@ -196,73 +200,75 @@ impl AppState for CherryPickState {
     }
 
     async fn process_key(&mut self, _code: KeyCode, app: &mut App) -> StateChange {
-        if !self.processing {
-            return StateChange::Keep;
-        }
+        if self.processing {
+            // First time processing - fetch commits if needed
+            self.processing = false;
 
-        self.processing = false;
+            let repo_path = app.repo_path.as_ref().unwrap();
 
-        let repo_path = app.repo_path.as_ref().unwrap();
-        let version = app.version.as_ref().unwrap();
-        let branch_name = format!("patch/{}-{}", app.target_branch, version);
+            // Fetch commits if needed (for cloned repositories)
+            if app.local_repo.is_none() {
+                let commits: Vec<String> = app
+                    .cherry_pick_items
+                    .iter()
+                    .map(|item| item.commit_id.clone())
+                    .collect();
 
-        // Create branch
-        if let Err(e) = git::create_branch(repo_path, &branch_name) {
-            app.error_message = Some(format!("Failed to create branch: {}", e));
-            return StateChange::Change(Box::new(ErrorState::new()));
-        }
-
-        // Fetch commits if needed
-        if app.local_repo.is_none() {
-            let commits: Vec<String> = app
-                .cherry_pick_items
-                .iter()
-                .map(|item| item.commit_id.clone())
-                .collect();
-
-            if let Err(e) = git::fetch_commits(repo_path, &commits) {
-                app.error_message = Some(format!("Failed to fetch commits: {}", e));
-                return StateChange::Change(Box::new(ErrorState::new()));
+                if let Err(e) = git::fetch_commits(repo_path, &commits) {
+                    app.error_message = Some(format!("Failed to fetch commits: {}", e));
+                    return StateChange::Change(Box::new(ErrorState::new()));
+                }
             }
         }
 
-        // Process first commit
+        // Process next commit (either first time or continuing after conflict)
         process_next_commit(app)
     }
 }
 
 pub fn process_next_commit(app: &mut App) -> StateChange {
+    // Skip already processed commits
     while app.current_cherry_pick_index < app.cherry_pick_items.len() {
-        let item = &mut app.cherry_pick_items[app.current_cherry_pick_index];
-
-        if !matches!(item.status, CherryPickStatus::Pending) {
-            app.current_cherry_pick_index += 1;
-            continue;
+        let item = &app.cherry_pick_items[app.current_cherry_pick_index];
+        if matches!(item.status, CherryPickStatus::Pending) {
+            break;
         }
-
-        item.status = CherryPickStatus::InProgress;
-        let commit_id = item.commit_id.clone();
-        let repo_path = app.repo_path.as_ref().unwrap();
-
-        match git::cherry_pick_commit(repo_path, &commit_id) {
-            Ok(git::CherryPickResult::Success) => {
-                item.status = CherryPickStatus::Success;
-                app.current_cherry_pick_index += 1;
-            }
-            Ok(git::CherryPickResult::Conflict(files)) => {
-                item.status = CherryPickStatus::Conflict;
-                return StateChange::Change(Box::new(ConflictResolutionState::new(files)));
-            }
-            Ok(git::CherryPickResult::Failed(msg)) => {
-                item.status = CherryPickStatus::Failed(msg);
-                app.current_cherry_pick_index += 1;
-            }
-            Err(e) => {
-                item.status = CherryPickStatus::Failed(e.to_string());
-                app.current_cherry_pick_index += 1;
-            }
-        }
+        app.current_cherry_pick_index += 1;
     }
 
-    StateChange::Change(Box::new(CompletionState::new()))
+    // Check if we're done with all commits
+    if app.current_cherry_pick_index >= app.cherry_pick_items.len() {
+        return StateChange::Change(Box::new(CompletionState::new()));
+    }
+
+    // Process the current commit
+    let item = &mut app.cherry_pick_items[app.current_cherry_pick_index];
+    item.status = CherryPickStatus::InProgress;
+    let commit_id = item.commit_id.clone();
+    let repo_path = app.repo_path.as_ref().unwrap();
+
+    match git::cherry_pick_commit(repo_path, &commit_id) {
+        Ok(git::CherryPickResult::Success) => {
+            item.status = CherryPickStatus::Success;
+            app.current_cherry_pick_index += 1;
+            // Return to the same state to continue processing and show UI update
+            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+        }
+        Ok(git::CherryPickResult::Conflict(files)) => {
+            item.status = CherryPickStatus::Conflict;
+            StateChange::Change(Box::new(ConflictResolutionState::new(files)))
+        }
+        Ok(git::CherryPickResult::Failed(msg)) => {
+            item.status = CherryPickStatus::Failed(msg);
+            app.current_cherry_pick_index += 1;
+            // Return to the same state to continue processing and show UI update
+            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+        }
+        Err(e) => {
+            item.status = CherryPickStatus::Failed(e.to_string());
+            app.current_cherry_pick_index += 1;
+            // Return to the same state to continue processing and show UI update
+            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+        }
+    }
 }
