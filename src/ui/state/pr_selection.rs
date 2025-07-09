@@ -542,19 +542,26 @@ impl AppState for PullRequestSelectionState {
                     String::new()
                 };
 
+                // Apply background highlighting for selected items
+                let row_style = if pr_with_wi.selected {
+                    Style::default().bg(Color::Green)
+                } else {
+                    Style::default()
+                };
+
                 let cells = vec![
-                    Cell::from(selected).style(Style::default().fg(Color::Green)),
+                    Cell::from(selected).style(if pr_with_wi.selected { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
                     Cell::from(format!("{:<6}", pr_with_wi.pr.id)) // Left-aligned with fixed width
-                        .style(Style::default().fg(Color::Cyan)),
-                    Cell::from(date),
-                    Cell::from(pr_with_wi.pr.title.clone()),
+                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(Color::Cyan) }),
+                    Cell::from(date).style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default() }),
+                    Cell::from(pr_with_wi.pr.title.clone()).style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default() }),
                     Cell::from(pr_with_wi.pr.created_by.display_name.clone())
-                        .style(Style::default().fg(Color::Yellow)),
+                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(Color::Yellow) }),
                     Cell::from(work_items)
-                        .style(Style::default().fg(get_work_items_color(&pr_with_wi.work_items))),
+                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(get_work_items_color(&pr_with_wi.work_items)) }),
                 ];
 
-                Row::new(cells).height(1)
+                Row::new(cells).height(1).style(row_style)
             })
             .collect();
 
