@@ -544,7 +544,7 @@ impl AppState for PullRequestSelectionState {
 
                 // Apply background highlighting for selected items
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::Green)
+                    Style::default().bg(Color::DarkGray)
                 } else {
                     Style::default()
                 };
