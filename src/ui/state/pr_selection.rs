@@ -1,7 +1,7 @@
 use crate::{
     models::WorkItemHistory,
     ui::App,
-    ui::state::{AppState, StateChange, VersionInputState},
+    ui::state::{AppState, DataLoadingState, StateChange, VersionInputState},
     utils::html_to_lines,
 };
 use async_trait::async_trait;
@@ -591,7 +591,7 @@ impl AppState for PullRequestSelectionState {
         self.render_work_item_details(f, app, chunks[1]);
 
         let help = List::new(vec![
-            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | q: Quit"),
+            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | r: Refresh | q: Quit"),
         ])
         .block(Block::default().borders(Borders::ALL).title("Help"));
 
@@ -655,6 +655,10 @@ impl AppState for PullRequestSelectionState {
                 } else {
                     StateChange::Change(Box::new(VersionInputState::new()))
                 }
+            }
+            KeyCode::Char('r') => {
+                // Refresh: go back to data loading state to re-fetch PRs
+                StateChange::Change(Box::new(DataLoadingState::new()))
             }
             _ => StateChange::Keep,
         }
