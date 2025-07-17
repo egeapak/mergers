@@ -1,4 +1,5 @@
 mod api;
+mod config;
 mod git;
 mod models;
 mod ui;
@@ -15,18 +16,27 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use ui::run_app;
 
-use crate::{api::AzureDevOpsClient, models::Args, ui::App};
+use crate::{api::AzureDevOpsClient, config::Config, models::Args, ui::App};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Handle --create-config flag
+    if args.create_config {
+        Config::create_sample_config()?;
+        return Ok(());
+    }
+
+    // Resolve configuration from CLI args, environment variables, and config file
+    let config = args.resolve_config()?;
+
     // Create Azure DevOps client
     let client = AzureDevOpsClient::new(
-        args.organization.clone(),
-        args.project.clone(),
-        args.repository.clone(),
-        args.pat.clone(),
+        config.organization.clone(),
+        config.project.clone(),
+        config.repository.clone(),
+        config.pat.clone(),
     )?;
 
     // Pull requests will be fetched by PullRequestSelectionState
@@ -42,13 +52,13 @@ async fn main() -> Result<()> {
     // Create app
     let mut app = App::new(
         pr_with_work_items,
-        args.organization.clone(),
-        args.project.clone(),
-        args.repository.clone(),
-        args.dev_branch.clone(),
-        args.target_branch.clone(),
-        args.local_repo.clone(),
-        args.work_item_state.clone(),
+        config.organization.clone(),
+        config.project.clone(),
+        config.repository.clone(),
+        config.dev_branch.clone(),
+        config.target_branch.clone(),
+        config.local_repo.clone(),
+        config.work_item_state.clone(),
         client,
     );
 
