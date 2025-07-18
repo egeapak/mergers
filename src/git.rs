@@ -367,11 +367,97 @@ pub fn get_symmetric_difference(
     dev_branch: &str,
     target_branch: &str,
 ) -> Result<SymmetricDiffResult> {
-    // Get commits in dev branch but not in target branch
-    let dev_not_target = get_commits_in_branch_not_in_target(repo_path, dev_branch, target_branch)?;
+    // Get commits in dev branch but not in target branch using git log with cherry-pick
+    let git_cmd = format!(
+        "git log {}...{} --cherry-pick --right-only --oneline --no-decorate --no-merges",
+        target_branch, dev_branch
+    );
+    let dev_not_target_output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "log",
+            &format!("{}...{}", target_branch, dev_branch),
+            "--cherry-pick",
+            "--right-only",
+            "--oneline",
+            "--no-decorate",
+            "--no-merges",
+        ])
+        .output()
+        .context("Failed to get commits in dev not in target")?;
+
+    if !dev_not_target_output.status.success() {
+        let stderr = String::from_utf8_lossy(&dev_not_target_output.stderr);
+        let stdout = String::from_utf8_lossy(&dev_not_target_output.stdout);
+        anyhow::bail!(
+            "Failed to get commits in '{}' not in '{}'. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            dev_branch,
+            target_branch,
+            git_cmd,
+            repo_path,
+            stderr,
+            stdout
+        );
+    }
+
+    let dev_not_target: Vec<String> = String::from_utf8_lossy(&dev_not_target_output.stdout)
+        .lines()
+        .map(|line| {
+            // Extract commit hash from the oneline format (first part before space)
+            line.trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect();
 
     // Get commits in target branch but not in dev branch
-    let target_not_dev = get_commits_in_branch_not_in_target(repo_path, target_branch, dev_branch)?;
+    let git_cmd2 = format!(
+        "git log {}...{} --cherry-pick --right-only --oneline --no-decorate --no-merges",
+        dev_branch, target_branch
+    );
+    let target_not_dev_output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "log",
+            &format!("{}...{}", dev_branch, target_branch),
+            "--cherry-pick",
+            "--right-only",
+            "--oneline",
+            "--no-decorate",
+            "--no-merges",
+        ])
+        .output()
+        .context("Failed to get commits in target not in dev")?;
+
+    if !target_not_dev_output.status.success() {
+        let stderr = String::from_utf8_lossy(&target_not_dev_output.stderr);
+        let stdout = String::from_utf8_lossy(&target_not_dev_output.stdout);
+        anyhow::bail!(
+            "Failed to get commits in '{}' not in '{}'. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            target_branch,
+            dev_branch,
+            git_cmd2,
+            repo_path,
+            stderr,
+            stdout
+        );
+    }
+
+    let target_not_dev: Vec<String> = String::from_utf8_lossy(&target_not_dev_output.stdout)
+        .lines()
+        .map(|line| {
+            // Extract commit hash from the oneline format (first part before space)
+            line.trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect();
 
     // Get common commits using merge-base
     let common_commits = get_common_commits(repo_path, dev_branch, target_branch)?;
@@ -383,33 +469,132 @@ pub fn get_symmetric_difference(
     })
 }
 
-pub fn get_commits_in_branch_not_in_target(
+/// Check if a PR's commit is already present in the target branch
+/// by getting commits that are in dev but not in target and checking if
+/// the PR's last merge commit is in that list
+pub fn is_pr_commit_already_in_target(
     repo_path: &Path,
-    source_branch: &str,
+    pr_commit_id: &str,
+    dev_branch: &str,
     target_branch: &str,
-) -> Result<Vec<String>> {
+) -> Result<bool> {
+    let git_cmd = format!(
+        "git log {}...{} --cherry-pick --right-only --oneline --no-decorate --no-merges",
+        target_branch, dev_branch
+    );
     let output = Command::new("git")
         .current_dir(repo_path)
         .args([
-            "rev-list",
-            "--reverse",
-            &format!("{}..{}", target_branch, source_branch),
+            "log",
+            &format!("{}...{}", target_branch, dev_branch),
+            "--cherry-pick",
+            "--right-only",
+            "--oneline",
+            "--no-decorate",
+            "--no-merges",
         ])
         .output()
-        .context("Failed to get commits difference")?;
+        .context("Failed to get commits in dev not in target")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to get commits difference: {}", stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        anyhow::bail!(
+            "Failed to check if PR commit is in target. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            git_cmd,
+            repo_path,
+            stderr,
+            stdout
+        );
     }
 
-    let commits = String::from_utf8_lossy(&output.stdout)
+    let commits_only_in_dev: Vec<String> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .map(|line| line.trim().to_string())
+        .map(|line| {
+            // Extract commit hash from the oneline format (first part before space)
+            line.trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
         .filter(|line| !line.is_empty())
         .collect();
 
-    Ok(commits)
+    // If the PR's commit is NOT in the list of commits only in dev,
+    // then it means it's already in target (or equivalent changes are in target)
+    Ok(!commits_only_in_dev.contains(&pr_commit_id.to_string()))
+}
+
+/// Filter a list of PRs to only include those whose commits are not already in the target branch
+/// This function takes a list of PRs and returns only those that haven't been merged into target yet
+pub fn filter_prs_not_in_target(
+    repo_path: &Path,
+    prs: Vec<crate::models::PullRequest>,
+    dev_branch: &str,
+    target_branch: &str,
+) -> Result<Vec<crate::models::PullRequest>> {
+    // First, get all commits that are only in dev but not in target
+    let git_cmd = format!(
+        "git log {}...{} --cherry-pick --right-only --oneline --no-decorate --no-merges",
+        target_branch, dev_branch
+    );
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "log",
+            &format!("{}...{}", target_branch, dev_branch),
+            "--cherry-pick",
+            "--right-only",
+            "--oneline",
+            "--no-decorate",
+            "--no-merges",
+        ])
+        .output()
+        .context("Failed to get commits in dev not in target for filtering")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        anyhow::bail!(
+            "Failed to get commits for PR filtering. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            git_cmd,
+            repo_path,
+            stderr,
+            stdout
+        );
+    }
+
+    let commits_only_in_dev: std::collections::HashSet<String> =
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| {
+                // Extract commit hash from the oneline format (first part before space)
+                line.trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .filter(|line| !line.is_empty())
+            .collect();
+
+    // Filter PRs: only keep those whose last merge commit is in the commits_only_in_dev set
+    let filtered_prs: Vec<crate::models::PullRequest> = prs
+        .into_iter()
+        .filter(|pr| {
+            if let Some(ref last_merge_commit) = pr.last_merge_commit {
+                // If the PR's commit is in the list of commits only in dev,
+                // then it hasn't been merged to target yet
+                commits_only_in_dev.contains(&last_merge_commit.commit_id)
+            } else {
+                // If there's no last merge commit, include it to be safe
+                true
+            }
+        })
+        .collect();
+
+    Ok(filtered_prs)
 }
 
 pub fn check_commit_exists_in_branch(
@@ -427,6 +612,7 @@ pub fn check_commit_exists_in_branch(
 }
 
 pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Result<Vec<String>> {
+    let git_cmd = format!("git merge-base {} {}", branch1, branch2);
     let merge_base_output = Command::new("git")
         .current_dir(repo_path)
         .args(["merge-base", branch1, branch2])
@@ -434,7 +620,17 @@ pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Res
         .context("Failed to get merge base")?;
 
     if !merge_base_output.status.success() {
-        return Ok(Vec::new());
+        let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
+        let stdout = String::from_utf8_lossy(&merge_base_output.stdout);
+        anyhow::bail!(
+            "Failed to get merge base between '{}' and '{}'. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            branch1,
+            branch2,
+            git_cmd,
+            repo_path,
+            stderr,
+            stdout
+        );
     }
 
     let merge_base = String::from_utf8_lossy(&merge_base_output.stdout)
@@ -446,6 +642,7 @@ pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Res
     }
 
     // Get all commits from merge base to both branches
+    let git_cmd2 = format!("git rev-list --reverse {}..{}", merge_base, branch1);
     let output = Command::new("git")
         .current_dir(repo_path)
         .args([
@@ -457,7 +654,17 @@ pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Res
         .context("Failed to get common commits")?;
 
     if !output.status.success() {
-        return Ok(vec![merge_base]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        anyhow::bail!(
+            "Failed to get commits from merge base '{}' to '{}'. Command: '{}' (in {:?}). Git stderr: '{}'. Git stdout: '{}'",
+            merge_base,
+            branch1,
+            git_cmd2,
+            repo_path,
+            stderr,
+            stdout
+        );
     }
 
     let mut commits = vec![merge_base];

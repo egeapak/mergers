@@ -24,6 +24,7 @@ pub struct DataLoadingState {
     commit_info_total: usize,
     work_items_tasks:
         Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
+    current_batch_start: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +47,7 @@ impl DataLoadingState {
             commit_info_fetched: 0,
             commit_info_total: 0,
             work_items_tasks: None,
+            current_batch_start: 0,
         }
     }
 
@@ -81,23 +83,36 @@ impl DataLoadingState {
         self.loading_stage = LoadingStage::FetchingWorkItems;
         self.work_items_total = app.pull_requests.len();
         self.work_items_fetched = 0;
+        self.current_batch_start = 0;
 
-        // Start parallel tasks for fetching work items
+        // Start first batch of parallel tasks for fetching work items
+        self.start_next_batch(app);
+    }
+
+    fn start_next_batch(&mut self, app: &App) {
+        const BATCH_SIZE: usize = 100;
         let mut tasks = Vec::new();
 
-        for (index, pr_with_wi) in app.pull_requests.iter().enumerate() {
-            let client = app.client.clone();
-            let pr_id = pr_with_wi.pr.id;
+        let end = std::cmp::min(
+            self.current_batch_start + BATCH_SIZE,
+            app.pull_requests.len(),
+        );
 
-            let task = tokio::spawn(async move {
-                let work_items = client
-                    .fetch_work_items_with_history_for_pr(pr_id)
-                    .await
-                    .unwrap_or_default();
-                Ok((index, work_items))
-            });
+        for index in self.current_batch_start..end {
+            if let Some(pr_with_wi) = app.pull_requests.get(index) {
+                let client = app.client.clone();
+                let pr_id = pr_with_wi.pr.id;
 
-            tasks.push(task);
+                let task = tokio::spawn(async move {
+                    let work_items = client
+                        .fetch_work_items_with_history_for_pr(pr_id)
+                        .await
+                        .unwrap_or_default();
+                    Ok((index, work_items))
+                });
+
+                tasks.push(task);
+            }
         }
 
         self.work_items_tasks = Some(tasks);
@@ -137,10 +152,21 @@ impl DataLoadingState {
 
             *tasks = still_running;
 
-            // Return true if all tasks are completed
+            // Check if current batch is completed
             if tasks.is_empty() {
-                self.work_items_tasks = None;
-                Ok(true)
+                const BATCH_SIZE: usize = 100;
+                self.current_batch_start += BATCH_SIZE;
+
+                // Check if there are more PRs to process
+                if self.current_batch_start < app.pull_requests.len() {
+                    // Start next batch
+                    self.start_next_batch(app);
+                    Ok(false)
+                } else {
+                    // All batches completed
+                    self.work_items_tasks = None;
+                    Ok(true)
+                }
             } else {
                 Ok(false)
             }

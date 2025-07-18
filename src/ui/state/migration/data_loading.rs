@@ -43,6 +43,7 @@ pub struct MigrationDataLoadingState {
     work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>), String>>>>,
     analysis_task:
         Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis, String>>>,
+    current_batch_start: usize,
 
     // Progress tracking
     total_prs: usize,
@@ -75,6 +76,7 @@ impl MigrationDataLoadingState {
             repo_setup_task: None,
             work_items_tasks: None,
             analysis_task: None,
+            current_batch_start: 0,
             total_prs: 0,
             work_items_fetched: 0,
             work_items_total: 0,
@@ -221,31 +223,41 @@ impl MigrationDataLoadingState {
         self.loading_stage = LoadingStage::FetchingWorkItems;
         self.work_items_total = self.prs.len();
         self.work_items_fetched = 0;
+        self.current_batch_start = 0;
         self.status = "Fetching work items for PRs...".to_string();
         self.progress = 0.3;
 
-        // Start parallel tasks for fetching work items
+        // Start first batch of parallel tasks for fetching work items
+        self.start_next_batch(app);
+    }
+
+    fn start_next_batch(&mut self, app: &App) {
+        const BATCH_SIZE: usize = 100;
         let mut tasks = Vec::new();
 
-        for (index, pr) in self.prs.iter().enumerate() {
-            let client = app.client.clone();
-            let pr_id = pr.id;
+        let end = std::cmp::min(self.current_batch_start + BATCH_SIZE, self.prs.len());
 
-            let task = tokio::spawn(async move {
-                let work_items = client
-                    .fetch_work_items_with_history_for_pr(pr_id)
-                    .await
-                    .unwrap_or_default();
-                Ok((index, work_items))
-            });
+        for index in self.current_batch_start..end {
+            if let Some(pr) = self.prs.get(index) {
+                let client = app.client.clone();
+                let pr_id = pr.id;
 
-            tasks.push(task);
+                let task = tokio::spawn(async move {
+                    let work_items = client
+                        .fetch_work_items_with_history_for_pr(pr_id)
+                        .await
+                        .unwrap_or_default();
+                    Ok((index, work_items))
+                });
+
+                tasks.push(task);
+            }
         }
 
         self.work_items_tasks = Some(tasks);
     }
 
-    async fn check_work_items_progress(&mut self) -> Result<bool, String> {
+    async fn check_work_items_progress(&mut self, app: &App) -> Result<bool, String> {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
@@ -281,8 +293,6 @@ impl MigrationDataLoadingState {
                 }
             }
 
-            *tasks = still_running;
-
             // Update progress
             if self.work_items_total > 0 {
                 self.progress =
@@ -292,11 +302,23 @@ impl MigrationDataLoadingState {
                     self.work_items_fetched, self.work_items_total
                 );
             }
+            *tasks = still_running;
 
-            // Return true if all tasks are completed
+            // Check if current batch is completed
             if tasks.is_empty() {
-                self.work_items_tasks = None;
-                Ok(true)
+                const BATCH_SIZE: usize = 100;
+                self.current_batch_start += BATCH_SIZE;
+
+                // Check if there are more PRs to process
+                if self.current_batch_start < self.prs.len() {
+                    // Start next batch
+                    self.start_next_batch(app);
+                    Ok(false)
+                } else {
+                    // All batches completed
+                    self.work_items_tasks = None;
+                    Ok(true)
+                }
             } else {
                 Ok(false)
             }
@@ -347,7 +369,7 @@ impl MigrationDataLoadingState {
             config.shared().repository.clone(),
             config.shared().pat.clone(),
         )
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+        .map_err(|e| format!("Failed to create client: {e:?}"))?;
 
         // Create migration analyzer
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
@@ -358,7 +380,7 @@ impl MigrationDataLoadingState {
             &config.shared().dev_branch,
             &config.shared().target_branch,
         )
-        .map_err(|e| format!("Failed to calculate git diff: {}", e))?;
+        .map_err(|e| format!("Failed to calculate git diff: {e:?}"))?;
 
         // Analyze each PR in parallel
         let mut analysis_tasks = Vec::new();
@@ -600,7 +622,7 @@ impl AppState for MigrationDataLoadingState {
                     return StateChange::Keep;
                 }
                 LoadingStage::WaitingForWorkItems => {
-                    match self.check_work_items_progress().await {
+                    match self.check_work_items_progress(app).await {
                         Ok(true) => {
                             // Work items complete, start migration analysis
                             if let Err(e) = self.start_migration_analysis().await {

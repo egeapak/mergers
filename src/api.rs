@@ -4,7 +4,7 @@ use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemRef, WorkItemHistory};
+use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef};
 
 #[derive(Clone)]
 pub struct AzureDevOpsClient {
@@ -47,36 +47,70 @@ impl AzureDevOpsClient {
         })
     }
 
+    /// Fetches all pull requests for a given branch using pagination.
+    ///
+    /// This method implements pagination to ensure all pull requests are retrieved,
+    /// regardless of the total number. The Azure DevOps API has default limits on
+    /// the number of items returned per request, so we use $top and $skip parameters
+    /// to fetch all pages until no more results are available.
     pub async fn fetch_pull_requests(&self, dev_branch: &str) -> Result<Vec<PullRequest>> {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit",
-            self.organization, self.project, self.repository, dev_branch
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch pull requests")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await?;
-            anyhow::bail!("API request failed with status {}: {}", status, text);
-        }
-
-        let text = response.text().await?;
+        let mut all_prs = Vec::new();
+        let mut skip = 0;
+        let top = 100; // Number of PRs to fetch per request
+        let max_requests = 100; // Safety limit to prevent infinite loops
+        let mut request_count = 0;
 
         #[derive(Deserialize)]
         struct PullRequestsResponse {
             value: Vec<PullRequest>,
         }
 
-        let prs: PullRequestsResponse = serde_json::from_str(&text)
-            .with_context(|| format!("Failed to parse PR response: {}", text))?;
+        loop {
+            request_count += 1;
+            if request_count > max_requests {
+                anyhow::bail!(
+                    "Exceeded maximum number of requests ({}) while fetching pull requests. Retrieved {} PRs so far.",
+                    max_requests,
+                    all_prs.len()
+                );
+            }
 
-        Ok(prs.value)
+            let url = format!(
+                "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top={}&$skip={}",
+                self.organization, self.project, self.repository, dev_branch, top, skip
+            );
+
+            let response = self
+                .client
+                .get(&url)
+                .send()
+                .await
+                .context("Failed to fetch pull requests")?;
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let text = response.text().await?;
+                anyhow::bail!("API request failed with status {}: {}", status, text);
+            }
+
+            let text = response.text().await?;
+            let prs: PullRequestsResponse = serde_json::from_str(&text)
+                .with_context(|| format!("Failed to parse PR response: {}", text))?;
+
+            let fetched_count = prs.value.len();
+            all_prs.extend(prs.value);
+
+            // If we received fewer PRs than requested, we've reached the end
+            if fetched_count < top {
+                break;
+            }
+
+            skip += top;
+        }
+
+        // Total PRs fetched: all_prs.len(), using request_count API requests
+
+        Ok(all_prs)
     }
 
     pub async fn fetch_work_items_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
@@ -200,7 +234,12 @@ impl AzureDevOpsClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await?;
-            anyhow::bail!("Failed to add label to PR {}: status {}, body: {}", pr_id, status, text);
+            anyhow::bail!(
+                "Failed to add label to PR {}: status {}, body: {}",
+                pr_id,
+                status,
+                text
+            );
         }
 
         Ok(())
@@ -237,7 +276,12 @@ impl AzureDevOpsClient {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await?;
-            anyhow::bail!("Failed to update work item {} state: status {}, body: {}", work_item_id, status, text);
+            anyhow::bail!(
+                "Failed to update work item {} state: status {}, body: {}",
+                work_item_id,
+                status,
+                text
+            );
         }
 
         Ok(())
@@ -277,14 +321,14 @@ impl AzureDevOpsClient {
     pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
         // First get the basic work items
         let mut work_items = self.fetch_work_items_for_pr(pr_id).await?;
-        
+
         // Then fetch history for each work item
         for work_item in &mut work_items {
             if let Ok(history) = self.fetch_work_item_history(work_item.id).await {
                 work_item.history = history;
             }
         }
-        
+
         Ok(work_items)
     }
 
@@ -318,42 +362,6 @@ impl AzureDevOpsClient {
 
         let all_terminal = non_terminal_items.is_empty() && !terminal_items.is_empty();
         (all_terminal, terminal_items, non_terminal_items)
-    }
-
-    pub async fn fetch_all_pull_requests(&self, dev_branch: &str) -> Result<Vec<PullRequest>> {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit",
-            self.organization, self.project, self.repository, dev_branch
-        );
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch pull requests")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Failed to fetch pull requests: {} - {}",
-                status,
-                error_text
-            );
-        }
-
-        #[derive(Deserialize)]
-        struct PullRequestsResponse {
-            value: Vec<PullRequest>,
-        }
-
-        let response: PullRequestsResponse = response
-            .json()
-            .await
-            .context("Failed to parse pull requests response")?;
-
-        Ok(response.value)
     }
 
     pub fn parse_terminal_states(terminal_states_str: &str) -> Vec<String> {
