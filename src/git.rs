@@ -471,8 +471,9 @@ pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Res
     Ok(commits)
 }
 
-pub fn check_pr_title_fuzzy_match_in_branch(
+pub fn check_pr_merged_in_branch(
     repo_path: &Path,
+    pr_id: i32,
     pr_title: &str,
     branch: &str,
 ) -> Result<bool> {
@@ -490,16 +491,27 @@ pub fn check_pr_title_fuzzy_match_in_branch(
 
     let commit_messages = String::from_utf8_lossy(&output.stdout);
 
-    // Clean and normalize the PR title for comparison
-    let normalized_pr_title = normalize_title(pr_title);
+    // Check for the Azure DevOps merge pattern: "Merged PR <PR ID>: <Original PR title>"
+    let expected_prefix = format!("Merged PR {}: ", pr_id);
 
-    // Check if any commit message contains key parts of the PR title
     for commit_message in commit_messages.lines() {
-        let normalized_commit_message = normalize_title(commit_message);
+        if commit_message.starts_with(&expected_prefix) {
+            // Extract the title part after the prefix
+            let commit_title_part = &commit_message[expected_prefix.len()..];
 
-        // Check for fuzzy match - if the PR title contains significant words from commit message
-        if fuzzy_title_match(&normalized_pr_title, &normalized_commit_message) {
-            return Ok(true);
+            // Normalize both titles for comparison
+            let normalized_commit_title = normalize_title(commit_title_part);
+            let normalized_pr_title = normalize_title(pr_title);
+
+            // Check if the titles match (allowing for some normalization differences)
+            if normalized_commit_title == normalized_pr_title {
+                return Ok(true);
+            }
+
+            // Fallback to fuzzy match if exact match fails
+            if fuzzy_title_match(&normalized_pr_title, &normalized_commit_title) {
+                return Ok(true);
+            }
         }
     }
 
@@ -593,4 +605,146 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_test_repo() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().to_path_buf();
+
+        // Initialize git repo
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+
+        // Configure git user
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        (temp_dir, repo_path)
+    }
+
+    fn create_commit_with_message(repo_path: &Path, message: &str) {
+        // Create a test file with unique content based on message
+        let content = format!("test content for: {}", message);
+        fs::write(repo_path.join("test.txt"), content).unwrap();
+
+        // Add and commit
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["commit", "-m", message])
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_exact_match() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a commit with Azure DevOps merge pattern
+        create_commit_with_message(&repo_path, "Merged PR 123: Fix authentication bug");
+
+        // Test exact match
+        let result =
+            check_pr_merged_in_branch(&repo_path, 123, "Fix authentication bug", "HEAD").unwrap();
+
+        assert!(result, "Should find PR with exact title match");
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_normalized_match() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a commit with Azure DevOps merge pattern and different casing
+        create_commit_with_message(&repo_path, "Merged PR 456: Fix: Authentication Bug");
+
+        // Test with different normalization
+        let result =
+            check_pr_merged_in_branch(&repo_path, 456, "fix authentication bug", "HEAD").unwrap();
+
+        assert!(result, "Should find PR with normalized title match");
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_fuzzy_match() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a commit with Azure DevOps merge pattern and slightly different title
+        create_commit_with_message(
+            &repo_path,
+            "Merged PR 789: Fix authentication issue in login module",
+        );
+
+        // Test with fuzzy match
+        let result =
+            check_pr_merged_in_branch(&repo_path, 789, "Fix authentication issue", "HEAD").unwrap();
+
+        assert!(result, "Should find PR with fuzzy title match");
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_wrong_id() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a commit with Azure DevOps merge pattern
+        create_commit_with_message(&repo_path, "Merged PR 123: Fix authentication bug");
+
+        // Test with wrong PR ID
+        let result =
+            check_pr_merged_in_branch(&repo_path, 456, "Fix authentication bug", "HEAD").unwrap();
+
+        assert!(!result, "Should not find PR with wrong ID");
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_no_merge_pattern() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a commit without Azure DevOps merge pattern
+        create_commit_with_message(&repo_path, "Fix authentication bug");
+
+        // Test with no merge pattern
+        let result =
+            check_pr_merged_in_branch(&repo_path, 123, "Fix authentication bug", "HEAD").unwrap();
+
+        assert!(!result, "Should not find PR without merge pattern");
+    }
+
+    #[test]
+    fn test_check_pr_merged_in_branch_multiple_commits() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create multiple commits
+        create_commit_with_message(&repo_path, "Initial commit");
+        create_commit_with_message(&repo_path, "Merged PR 111: Add feature A");
+        create_commit_with_message(&repo_path, "Merged PR 222: Fix bug B");
+        create_commit_with_message(&repo_path, "Regular commit");
+
+        // Test finding the right PR among multiple
+        let result = check_pr_merged_in_branch(&repo_path, 222, "Fix bug B", "HEAD").unwrap();
+
+        assert!(result, "Should find specific PR among multiple commits");
+    }
 }

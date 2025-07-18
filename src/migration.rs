@@ -3,14 +3,8 @@ use std::path::Path;
 
 use crate::{
     api::AzureDevOpsClient,
-    git::{
-        check_commit_exists_in_branch, check_pr_title_fuzzy_match_in_branch,
-        get_symmetric_difference,
-    },
-    models::{
-        MigrationAnalysis, PRAnalysisResult, PullRequest, PullRequestWithWorkItems,
-        SymmetricDiffResult,
-    },
+    git::{check_commit_exists_in_branch, check_pr_merged_in_branch},
+    models::{MigrationAnalysis, PRAnalysisResult, PullRequestWithWorkItems, SymmetricDiffResult},
 };
 
 #[derive(Clone)]
@@ -55,9 +49,10 @@ impl MigrationAnalyzer {
         let commit_in_target =
             check_commit_exists_in_branch(repo_path, &commit_id, target_branch).unwrap_or(false);
 
-        // Check if PR title exists in target branch (fuzzy match)
-        let commit_title_in_target = check_pr_title_fuzzy_match_in_branch(
+        // Check if PR was merged using Azure DevOps merge pattern
+        let commit_title_in_target = check_pr_merged_in_branch(
             repo_path,
+            pr_with_work_items.pr.id,
             &pr_with_work_items.pr.title,
             target_branch,
         )
