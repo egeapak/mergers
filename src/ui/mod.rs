@@ -2,7 +2,6 @@ use crossterm::event::{self, Event, KeyCode};
 use ratatui::Terminal;
 use state::{AppState, DataLoadingState, StateChange};
 
-
 mod app;
 pub mod state;
 
@@ -12,7 +11,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> anyhow::Result<()> {
-    let mut current_state: Box<dyn AppState> = Box::new(DataLoadingState::new());
+    let mut current_state: Box<dyn AppState> = app
+        .initial_state
+        .take()
+        .unwrap_or_else(|| Box::new(DataLoadingState::new()));
 
     loop {
         terminal.draw(|f| current_state.ui(f, app))?;

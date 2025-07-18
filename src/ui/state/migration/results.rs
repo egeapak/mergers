@@ -1,13 +1,13 @@
-use super::{AppState, StateChange};
 use crate::ui::App;
+use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
-    Frame,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +29,7 @@ impl MigrationState {
     pub fn new() -> Self {
         let mut eligible_list_state = ListState::default();
         eligible_list_state.select(Some(0));
-        
+
         Self {
             current_tab: MigrationTab::Eligible,
             eligible_list_state,
@@ -61,7 +61,7 @@ impl MigrationState {
 
     fn move_selection(&mut self, app: &App, direction: i32) {
         let count = self.get_current_prs_count(app);
-        
+
         if count == 0 {
             return;
         }
@@ -71,11 +71,7 @@ impl MigrationState {
         let new_index = if direction > 0 {
             (current + 1) % count
         } else {
-            if current == 0 {
-                count - 1
-            } else {
-                current - 1
-            }
+            if current == 0 { count - 1 } else { current - 1 }
         };
         current_list.select(Some(new_index));
     }
@@ -115,7 +111,10 @@ impl MigrationState {
         }
     }
 
-    fn get_current_pr<'a>(&self, app: &'a App) -> Option<&'a crate::models::PullRequestWithWorkItems> {
+    fn get_current_pr<'a>(
+        &self,
+        app: &'a App,
+    ) -> Option<&'a crate::models::PullRequestWithWorkItems> {
         if let Some(analysis) = &app.migration_analysis {
             let list_state = match self.current_tab {
                 MigrationTab::Eligible => &self.eligible_list_state,
@@ -145,7 +144,7 @@ impl MigrationState {
 
     fn render_tabs(&self, f: &mut Frame, app: &App, area: Rect) {
         let analysis = app.migration_analysis.as_ref().unwrap();
-        
+
         let tab_titles = vec![
             format!("✅ Eligible ({})", analysis.eligible_prs.len()),
             format!("❓ Unsure ({})", analysis.unsure_prs.len()),
@@ -166,7 +165,7 @@ impl MigrationState {
 
     fn render_pr_list(&mut self, f: &mut Frame, app: &App, area: Rect) {
         let analysis = app.migration_analysis.as_ref().unwrap();
-        
+
         let (prs, title, color) = match self.current_tab {
             MigrationTab::Eligible => (
                 &analysis.eligible_prs,
@@ -192,7 +191,9 @@ impl MigrationState {
                     Line::from(vec![
                         Span::styled(
                             format!("#{}", pr.pr.id),
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(" "),
                         Span::raw(&pr.pr.title),
@@ -228,32 +229,36 @@ impl MigrationState {
     fn render_details(&self, f: &mut Frame, app: &App, area: Rect) {
         if let Some(pr) = self.get_current_pr(app) {
             let analysis = app.migration_analysis.as_ref().unwrap();
-            
+
             let mut details = vec![
-                Line::from(vec![
-                    Span::styled("PR Details:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                ]),
-                Line::from(vec![
-                    Span::raw(format!("ID: #{}", pr.pr.id)),
-                ]),
-                Line::from(vec![
-                    Span::raw(format!("Title: {}", pr.pr.title)),
-                ]),
-                Line::from(vec![
-                    Span::raw(format!("Created By: {}", pr.pr.created_by.display_name)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "PR Details:",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(vec![Span::raw(format!("ID: #{}", pr.pr.id))]),
+                Line::from(vec![Span::raw(format!("Title: {}", pr.pr.title))]),
+                Line::from(vec![Span::raw(format!(
+                    "Created By: {}",
+                    pr.pr.created_by.display_name
+                ))]),
                 Line::from(""),
             ];
 
             // Add work items information
             if pr.work_items.is_empty() {
-                details.push(Line::from(vec![
-                    Span::styled("Work Items: None", Style::default().fg(Color::Gray)),
-                ]));
+                details.push(Line::from(vec![Span::styled(
+                    "Work Items: None",
+                    Style::default().fg(Color::Gray),
+                )]));
             } else {
-                details.push(Line::from(vec![
-                    Span::styled("Work Items:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                ]));
+                details.push(Line::from(vec![Span::styled(
+                    "Work Items:",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
                     let color = if analysis.terminal_states.contains(&state.to_string()) {
@@ -263,7 +268,10 @@ impl MigrationState {
                     };
                     details.push(Line::from(vec![
                         Span::raw("  "),
-                        Span::styled(format!("#{}", work_item.id), Style::default().fg(Color::Cyan)),
+                        Span::styled(
+                            format!("#{}", work_item.id),
+                            Style::default().fg(Color::Cyan),
+                        ),
                         Span::raw(" - "),
                         Span::raw(work_item.fields.title.as_deref().unwrap_or("No title")),
                         Span::raw(" ("),
@@ -275,15 +283,18 @@ impl MigrationState {
 
             // Add unsure reason for unsure PRs
             if self.current_tab == MigrationTab::Unsure {
-                if let Some(unsure_detail) = analysis.unsure_details.iter().find(|d| d.pr.pr.id == pr.pr.id) {
+                if let Some(unsure_detail) = analysis
+                    .unsure_details
+                    .iter()
+                    .find(|d| d.pr.pr.id == pr.pr.id)
+                {
                     if let Some(reason) = &unsure_detail.unsure_reason {
                         details.push(Line::from(""));
-                        details.push(Line::from(vec![
-                            Span::styled("Unsure Reason:", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                        ]));
-                        details.push(Line::from(vec![
-                            Span::raw(reason),
-                        ]));
+                        details.push(Line::from(vec![Span::styled(
+                            "Unsure Reason:",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        )]));
+                        details.push(Line::from(vec![Span::raw(reason)]));
                     }
                 }
             }
@@ -298,9 +309,12 @@ impl MigrationState {
 
     fn render_help(&self, f: &mut Frame, area: Rect) {
         let help_text = vec![
-            Line::from(vec![
-                Span::styled("Navigation:", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            ]),
+            Line::from(vec![Span::styled(
+                "Navigation:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from("  ↑/↓ - Navigate PRs"),
             Line::from("  ←/→ - Switch tabs"),
             Line::from("  Enter/Space - Open PR in browser"),

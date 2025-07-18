@@ -1,6 +1,7 @@
+use super::SetupRepoState;
 use crate::{
     ui::App,
-    ui::state::{AppState, SetupRepoState, StateChange},
+    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;

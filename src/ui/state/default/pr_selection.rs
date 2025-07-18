@@ -1,7 +1,8 @@
+use super::{DataLoadingState, VersionInputState};
 use crate::{
     models::WorkItemHistory,
     ui::App,
-    ui::state::{AppState, DataLoadingState, StateChange, VersionInputState},
+    ui::state::{AppState, StateChange},
     utils::html_to_lines,
 };
 use async_trait::async_trait;
@@ -297,24 +298,36 @@ impl PullRequestSelectionState {
         }
     }
 
-    fn render_work_item_history_linear(&self, f: &mut Frame, area: ratatui::layout::Rect, work_item: &crate::models::WorkItem) {
+    fn render_work_item_history_linear(
+        &self,
+        f: &mut Frame,
+        area: ratatui::layout::Rect,
+        work_item: &crate::models::WorkItem,
+    ) {
         use ratatui::text::{Line, Span};
-        
+
         let mut history_spans = vec![];
-        
-        
+
         if work_item.history.is_empty() {
-            history_spans.push(Span::styled("No history available", Style::default().fg(Color::Gray)));
+            history_spans.push(Span::styled(
+                "No history available",
+                Style::default().fg(Color::Gray),
+            ));
         } else {
             // Sort history by date (most recent first) and filter to only state changes
-            let mut state_changes: Vec<_> = work_item.history.iter()
-                .filter(|h| h.fields.as_ref()
-                    .and_then(|f| f.state.as_ref())
-                    .and_then(|s| s.new_value.as_ref())
-                    .is_some())
+            let mut state_changes: Vec<_> = work_item
+                .history
+                .iter()
+                .filter(|h| {
+                    h.fields
+                        .as_ref()
+                        .and_then(|f| f.state.as_ref())
+                        .and_then(|s| s.new_value.as_ref())
+                        .is_some()
+                })
                 .cloned()
                 .collect();
-            
+
             // Sort by date from earliest to latest (left to right chronologically)
             // Use System.ChangedDate as primary date source, fall back to revisedDate
             state_changes.sort_by(|a, b| {
@@ -336,20 +349,23 @@ impl PullRequestSelectionState {
                         None // No valid date found
                     }
                 };
-                
+
                 let a_date = get_date_string(a);
                 let b_date = get_date_string(b);
-                
+
                 match (a_date, b_date) {
                     (Some(a_d), Some(b_d)) => a_d.cmp(&b_d), // Normal chronological order
-                    (None, Some(_)) => std::cmp::Ordering::Less,    // a has unknown date, goes first
+                    (None, Some(_)) => std::cmp::Ordering::Less, // a has unknown date, goes first
                     (Some(_), None) => std::cmp::Ordering::Greater, // b has unknown date, goes first
                     (None, None) => a.rev.cmp(&b.rev), // Both unknown, use revision order
                 }
             });
-            
+
             if state_changes.is_empty() {
-                history_spans.push(Span::styled("No state changes in history", Style::default().fg(Color::Gray)));
+                history_spans.push(Span::styled(
+                    "No state changes in history",
+                    Style::default().fg(Color::Gray),
+                ));
             } else {
                 // Show first 5 and last 1 entries (Azure DevOps style) in chronological order
                 let total_count = state_changes.len();
@@ -361,27 +377,31 @@ impl PullRequestSelectionState {
                     entries.push(state_changes[total_count - 1].clone()); // Last 1 (latest)
                     entries
                 };
-                
+
                 for (i, history_entry) in entries_to_show.iter().enumerate() {
                     // Add separator for omitted entries (after showing first 5, before showing last 1)
                     if i == 5 && total_count > 6 {
                         if !history_spans.is_empty() {
-                            history_spans.push(Span::styled(" → ", Style::default().fg(Color::Gray)));
+                            history_spans
+                                .push(Span::styled(" → ", Style::default().fg(Color::Gray)));
                         }
                         history_spans.push(Span::styled(
                             format!("... ({} omitted)", total_count - 6),
                             Style::default().fg(Color::Gray),
                         ));
                     }
-                    
+
                     if let Some(fields) = &history_entry.fields {
                         if let Some(state_change) = &fields.state {
                             if let Some(new_state) = &state_change.new_value {
                                 // Add arrow separator between entries (showing chronological flow)
                                 if !history_spans.is_empty() {
-                                    history_spans.push(Span::styled(" → ", Style::default().fg(Color::Gray)));
+                                    history_spans.push(Span::styled(
+                                        " → ",
+                                        Style::default().fg(Color::Gray),
+                                    ));
                                 }
-                                
+
                                 // Format date - use System.ChangedDate as primary source
                                 let date_str = {
                                     // First try System.ChangedDate
@@ -403,8 +423,11 @@ impl PullRequestSelectionState {
                                             }
                                         } else {
                                             // No System.ChangedDate, try revisedDate
-                                            if !history_entry.revised_date.starts_with("9999-01-01") {
-                                                if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                            if !history_entry.revised_date.starts_with("9999-01-01")
+                                            {
+                                                if let Some(t_pos) =
+                                                    history_entry.revised_date.find('T')
+                                                {
                                                     &history_entry.revised_date[..t_pos]
                                                 } else {
                                                     &history_entry.revised_date
@@ -416,7 +439,9 @@ impl PullRequestSelectionState {
                                     } else {
                                         // No fields, try revisedDate
                                         if !history_entry.revised_date.starts_with("9999-01-01") {
-                                            if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                            if let Some(t_pos) =
+                                                history_entry.revised_date.find('T')
+                                            {
                                                 &history_entry.revised_date[..t_pos]
                                             } else {
                                                 &history_entry.revised_date
@@ -426,10 +451,10 @@ impl PullRequestSelectionState {
                                         }
                                     }
                                 };
-                                
+
                                 // Get color for the state
                                 let state_color = get_state_color(new_state);
-                                
+
                                 history_spans.push(Span::styled(
                                     "●",
                                     Style::default()
@@ -451,17 +476,13 @@ impl PullRequestSelectionState {
                 }
             }
         }
-        
+
         let history_line = Line::from(history_spans);
         let history_widget = Paragraph::new(vec![history_line])
             .style(Style::default().fg(Color::White))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("History"),
-            )
+            .block(Block::default().borders(Borders::ALL).title("History"))
             .wrap(ratatui::widgets::Wrap { trim: true });
-        
+
         f.render_widget(history_widget, area);
     }
 }
@@ -550,15 +571,43 @@ impl AppState for PullRequestSelectionState {
                 };
 
                 let cells = vec![
-                    Cell::from(selected).style(if pr_with_wi.selected { Style::default().fg(Color::White).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Green).add_modifier(Modifier::BOLD) }),
+                    Cell::from(selected).style(if pr_with_wi.selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    }),
                     Cell::from(format!("{:<6}", pr_with_wi.pr.id)) // Left-aligned with fixed width
-                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(Color::Cyan) }),
-                    Cell::from(date).style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default() }),
-                    Cell::from(pr_with_wi.pr.title.clone()).style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default() }),
-                    Cell::from(pr_with_wi.pr.created_by.display_name.clone())
-                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(Color::Yellow) }),
-                    Cell::from(work_items)
-                        .style(if pr_with_wi.selected { Style::default().fg(Color::White) } else { Style::default().fg(get_work_items_color(&pr_with_wi.work_items)) }),
+                        .style(if pr_with_wi.selected {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(Color::Cyan)
+                        }),
+                    Cell::from(date).style(if pr_with_wi.selected {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default()
+                    }),
+                    Cell::from(pr_with_wi.pr.title.clone()).style(if pr_with_wi.selected {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default()
+                    }),
+                    Cell::from(pr_with_wi.pr.created_by.display_name.clone()).style(
+                        if pr_with_wi.selected {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(Color::Yellow)
+                        },
+                    ),
+                    Cell::from(work_items).style(if pr_with_wi.selected {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
+                    }),
                 ];
 
                 Row::new(cells).height(1).style(row_style)

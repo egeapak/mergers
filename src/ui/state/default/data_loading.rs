@@ -1,8 +1,10 @@
+use super::PullRequestSelectionState;
+use crate::ui::state::shared::ErrorState;
 use crate::{
     api,
     models::PullRequestWithWorkItems,
     ui::App,
-    ui::state::{AppState, StateChange, PullRequestSelectionState},
+    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -20,7 +22,8 @@ pub struct DataLoadingState {
     work_items_total: usize,
     commit_info_fetched: usize,
     commit_info_total: usize,
-    work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
+    work_items_tasks:
+        Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +51,7 @@ impl DataLoadingState {
 
     async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<(), String> {
         self.loading_stage = LoadingStage::FetchingPullRequests;
-        
+
         // Fetch pull requests
         let prs = match app.client.fetch_pull_requests(&app.dev_branch).await {
             Ok(prs) => prs,
@@ -81,11 +84,11 @@ impl DataLoadingState {
 
         // Start parallel tasks for fetching work items
         let mut tasks = Vec::new();
-        
+
         for (index, pr_with_wi) in app.pull_requests.iter().enumerate() {
             let client = app.client.clone();
             let pr_id = pr_with_wi.pr.id;
-            
+
             let task = tokio::spawn(async move {
                 let work_items = client
                     .fetch_work_items_with_history_for_pr(pr_id)
@@ -93,10 +96,10 @@ impl DataLoadingState {
                     .unwrap_or_default();
                 Ok((index, work_items))
             });
-            
+
             tasks.push(task);
         }
-        
+
         self.work_items_tasks = Some(tasks);
     }
 
@@ -104,7 +107,7 @@ impl DataLoadingState {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
-            
+
             // Check which tasks have completed
             for task in tasks.drain(..) {
                 if task.is_finished() {
@@ -123,7 +126,7 @@ impl DataLoadingState {
                     still_running.push(task);
                 }
             }
-            
+
             // Update completed work items
             for (index, work_items) in completed {
                 if let Some(pr_with_wi) = app.pull_requests.get_mut(index) {
@@ -131,9 +134,9 @@ impl DataLoadingState {
                     self.work_items_fetched += 1;
                 }
             }
-            
+
             *tasks = still_running;
-            
+
             // Return true if all tasks are completed
             if tasks.is_empty() {
                 self.work_items_tasks = None;
@@ -148,7 +151,9 @@ impl DataLoadingState {
 
     async fn fetch_commit_info(&mut self, app: &mut App) -> Result<(), String> {
         self.loading_stage = LoadingStage::FetchingCommitInfo;
-        self.commit_info_total = app.pull_requests.iter()
+        self.commit_info_total = app
+            .pull_requests
+            .iter()
             .filter(|pr| pr.pr.last_merge_commit.is_none())
             .count();
         self.commit_info_fetched = 0;
@@ -181,18 +186,24 @@ impl DataLoadingState {
             LoadingStage::FetchingWorkItems => "Starting work items fetch...".to_string(),
             LoadingStage::WaitingForWorkItems => {
                 if self.work_items_total > 0 {
-                    format!("Fetching work items ({}/{})", self.work_items_fetched, self.work_items_total)
+                    format!(
+                        "Fetching work items ({}/{})",
+                        self.work_items_fetched, self.work_items_total
+                    )
                 } else {
                     "Fetching work items...".to_string()
                 }
-            },
+            }
             LoadingStage::FetchingCommitInfo => {
                 if self.commit_info_total > 0 {
-                    format!("Fetching commit information ({}/{})", self.commit_info_fetched, self.commit_info_total)
+                    format!(
+                        "Fetching commit information ({}/{})",
+                        self.commit_info_fetched, self.commit_info_total
+                    )
                 } else {
                     "Fetching commit information...".to_string()
                 }
-            },
+            }
             LoadingStage::Complete => "Loading complete".to_string(),
         }
     }
@@ -221,7 +232,7 @@ impl AppState for DataLoadingState {
                 LoadingStage::NotStarted => {
                     if let Err(e) = self.fetch_pull_requests(app).await {
                         app.error_message = Some(e);
-                        return StateChange::Change(Box::new(super::ErrorState::new()));
+                        return StateChange::Change(Box::new(ErrorState::new()));
                     }
                     return StateChange::Keep;
                 }
@@ -242,7 +253,7 @@ impl AppState for DataLoadingState {
                             // All work items fetched, move to commit info
                             if let Err(e) = self.fetch_commit_info(app).await {
                                 app.error_message = Some(e);
-                                return StateChange::Change(Box::new(super::ErrorState::new()));
+                                return StateChange::Change(Box::new(ErrorState::new()));
                             }
                         }
                         Ok(false) => {
@@ -250,7 +261,7 @@ impl AppState for DataLoadingState {
                         }
                         Err(e) => {
                             app.error_message = Some(e);
-                            return StateChange::Change(Box::new(super::ErrorState::new()));
+                            return StateChange::Change(Box::new(ErrorState::new()));
                         }
                     }
                     return StateChange::Keep;

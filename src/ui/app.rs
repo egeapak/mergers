@@ -1,6 +1,7 @@
 use crate::{
     api::AzureDevOpsClient,
-    models::{CherryPickItem, PullRequestWithWorkItems, MigrationAnalysis},
+    models::{CherryPickItem, MigrationAnalysis, PullRequestWithWorkItems},
+    ui::state::AppState,
 };
 use std::process::Command;
 use tempfile::TempDir;
@@ -23,9 +24,12 @@ pub struct App {
     pub cherry_pick_items: Vec<CherryPickItem>,
     pub current_cherry_pick_index: usize,
     pub error_message: Option<String>,
-    
+
     // Migration state
     pub migration_analysis: Option<MigrationAnalysis>,
+
+    // Initial state for state machine
+    pub initial_state: Option<Box<dyn AppState>>,
 }
 
 impl App {
@@ -57,6 +61,7 @@ impl App {
             current_cherry_pick_index: 0,
             error_message: None,
             migration_analysis: None,
+            initial_state: None,
         }
     }
 
