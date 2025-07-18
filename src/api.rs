@@ -287,6 +287,82 @@ impl AzureDevOpsClient {
         
         Ok(work_items)
     }
+
+    pub fn is_work_item_in_terminal_state(
+        &self,
+        work_item: &WorkItem,
+        terminal_states: &[String],
+    ) -> bool {
+        if let Some(state) = &work_item.fields.state {
+            terminal_states.contains(state)
+        } else {
+            false
+        }
+    }
+
+    pub fn analyze_work_items_for_pr(
+        &self,
+        pr_with_work_items: &crate::models::PullRequestWithWorkItems,
+        terminal_states: &[String],
+    ) -> (bool, Vec<WorkItem>, Vec<WorkItem>) {
+        let mut terminal_items = Vec::new();
+        let mut non_terminal_items = Vec::new();
+
+        for work_item in &pr_with_work_items.work_items {
+            if self.is_work_item_in_terminal_state(work_item, terminal_states) {
+                terminal_items.push(work_item.clone());
+            } else {
+                non_terminal_items.push(work_item.clone());
+            }
+        }
+
+        let all_terminal = non_terminal_items.is_empty() && !terminal_items.is_empty();
+        (all_terminal, terminal_items, non_terminal_items)
+    }
+
+    pub async fn fetch_all_pull_requests(&self, dev_branch: &str) -> Result<Vec<PullRequest>> {
+        let url = format!(
+            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit",
+            self.organization, self.project, self.repository, dev_branch
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch pull requests")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "Failed to fetch pull requests: {} - {}",
+                status,
+                error_text
+            );
+        }
+
+        #[derive(Deserialize)]
+        struct PullRequestsResponse {
+            value: Vec<PullRequest>,
+        }
+
+        let response: PullRequestsResponse = response
+            .json()
+            .await
+            .context("Failed to parse pull requests response")?;
+
+        Ok(response.value)
+    }
+
+    pub fn parse_terminal_states(terminal_states_str: &str) -> Vec<String> {
+        terminal_states_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
 }
 
 pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> {

@@ -364,3 +364,294 @@ pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> 
         anyhow::bail!("Unexpected git show output format");
     }
 }
+
+use crate::models::SymmetricDiffResult;
+
+pub fn get_symmetric_difference(
+    repo_path: &Path,
+    dev_branch: &str,
+    target_branch: &str,
+) -> Result<SymmetricDiffResult> {
+    // Get commits in dev branch but not in target branch
+    let dev_not_target = get_commits_in_branch_not_in_target(repo_path, dev_branch, target_branch)?;
+    
+    // Get commits in target branch but not in dev branch
+    let target_not_dev = get_commits_in_branch_not_in_target(repo_path, target_branch, dev_branch)?;
+    
+    // Get common commits using merge-base
+    let common_commits = get_common_commits(repo_path, dev_branch, target_branch)?;
+    
+    Ok(SymmetricDiffResult {
+        commits_in_dev_not_target: dev_not_target,
+        commits_in_target_not_dev: target_not_dev,
+        common_commits,
+    })
+}
+
+pub fn get_commits_in_branch_not_in_target(
+    repo_path: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "rev-list",
+            "--reverse",
+            &format!("{}..{}", target_branch, source_branch),
+        ])
+        .output()
+        .context("Failed to get commits difference")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to get commits difference: {}", stderr);
+    }
+
+    let commits = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    Ok(commits)
+}
+
+pub fn check_commit_exists_in_branch(
+    repo_path: &Path,
+    commit_id: &str,
+    branch: &str,
+) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["merge-base", "--is-ancestor", commit_id, branch])
+        .output()
+        .context("Failed to check if commit exists in branch")?;
+
+    Ok(output.status.success())
+}
+
+pub fn get_common_commits(
+    repo_path: &Path,
+    branch1: &str,
+    branch2: &str,
+) -> Result<Vec<String>> {
+    let merge_base_output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["merge-base", branch1, branch2])
+        .output()
+        .context("Failed to get merge base")?;
+
+    if !merge_base_output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let merge_base = String::from_utf8_lossy(&merge_base_output.stdout)
+        .trim()
+        .to_string();
+
+    if merge_base.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Get all commits from merge base to both branches
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "rev-list",
+            "--reverse",
+            &format!("{}..{}", merge_base, branch1),
+        ])
+        .output()
+        .context("Failed to get common commits")?;
+
+    if !output.status.success() {
+        return Ok(vec![merge_base]);
+    }
+
+    let mut commits = vec![merge_base];
+    commits.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty()),
+    );
+
+    Ok(commits)
+}
+
+pub fn get_commits_between_branches(
+    repo_path: &Path,
+    base_branch: &str,
+    target_branch: &str,
+) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "rev-list",
+            "--reverse",
+            &format!("{}..{}", base_branch, target_branch),
+        ])
+        .output()
+        .context("Failed to get commits between branches")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to get commits between branches: {}", stderr);
+    }
+
+    let commits = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    Ok(commits)
+}
+
+pub fn check_pr_title_exists_in_branch(
+    repo_path: &Path,
+    pr_title: &str,
+    branch: &str,
+) -> Result<bool> {
+    // Get all commit messages from the target branch
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "log",
+            "--format=%s",
+            "--grep",
+            pr_title,
+            branch,
+        ])
+        .output()
+        .context("Failed to search for PR title in branch")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to search for PR title in branch: {}", stderr);
+    }
+
+    let commit_messages = String::from_utf8_lossy(&output.stdout);
+    let has_match = !commit_messages.trim().is_empty();
+    
+    Ok(has_match)
+}
+
+pub fn check_pr_title_fuzzy_match_in_branch(
+    repo_path: &Path,
+    pr_title: &str,
+    branch: &str,
+) -> Result<bool> {
+    // Get all commit messages from the target branch (last 1000 commits for performance)
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "log",
+            "--format=%s",
+            "-n",
+            "1000",
+            branch,
+        ])
+        .output()
+        .context("Failed to get commit messages from branch")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to get commit messages from branch: {}", stderr);
+    }
+
+    let commit_messages = String::from_utf8_lossy(&output.stdout);
+    
+    // Clean and normalize the PR title for comparison
+    let normalized_pr_title = normalize_title(pr_title);
+    
+    // Check if any commit message contains key parts of the PR title
+    for commit_message in commit_messages.lines() {
+        let normalized_commit_message = normalize_title(commit_message);
+        
+        // Check for fuzzy match - if the PR title contains significant words from commit message
+        if fuzzy_title_match(&normalized_pr_title, &normalized_commit_message) {
+            return Ok(true);
+        }
+    }
+    
+    Ok(false)
+}
+
+fn normalize_title(title: &str) -> String {
+    // Remove common prefixes and normalize for comparison
+    title
+        .to_lowercase()
+        .replace("merge pull request", "")
+        .replace("merged pr", "")
+        .replace("#", "")
+        .replace("fix:", "")
+        .replace("feat:", "")
+        .replace("chore:", "")
+        .replace("docs:", "")
+        .trim()
+        .to_string()
+}
+
+fn fuzzy_title_match(pr_title: &str, commit_message: &str) -> bool {
+    // Split into words and check if significant words match
+    let pr_words: Vec<&str> = pr_title.split_whitespace().filter(|w| w.len() > 3).collect();
+    let commit_words: Vec<&str> = commit_message.split_whitespace().filter(|w| w.len() > 3).collect();
+    
+    if pr_words.is_empty() || commit_words.is_empty() {
+        return false;
+    }
+    
+    // Check if at least 60% of significant words match
+    let matching_words = pr_words.iter()
+        .filter(|&&pr_word| commit_words.iter().any(|&commit_word| 
+            commit_word.contains(pr_word) || pr_word.contains(commit_word)
+        ))
+        .count();
+    
+    let match_ratio = matching_words as f64 / pr_words.len() as f64;
+    match_ratio >= 0.6
+}
+
+pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
+    // List all worktrees
+    let list_output = Command::new("git")
+        .current_dir(base_repo_path)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .context("Failed to list worktrees")?;
+
+    if !list_output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to list worktrees: {}",
+            String::from_utf8_lossy(&list_output.stderr)
+        ));
+    }
+
+    let worktree_list = String::from_utf8_lossy(&list_output.stdout);
+    let mut migration_worktrees = Vec::new();
+
+    // Parse worktree list and find migration worktrees
+    for line in worktree_list.lines() {
+        if line.starts_with("worktree ") {
+            let path = line.strip_prefix("worktree ").unwrap();
+            if let Some(dir_name) = std::path::Path::new(path).file_name() {
+                if let Some(name) = dir_name.to_str() {
+                    if name.starts_with("next-migration-") {
+                        migration_worktrees.push(name.strip_prefix("next-").unwrap().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove found migration worktrees
+    for worktree_id in migration_worktrees {
+        if let Err(e) = force_remove_worktree(base_repo_path, &worktree_id) {
+            eprintln!("Warning: Failed to remove migration worktree {}: {}", worktree_id, e);
+        }
+    }
+
+    Ok(())
+}

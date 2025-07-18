@@ -1,9 +1,9 @@
-use clap::Parser;
-use serde::Deserialize;
 use crate::config::Config;
 use anyhow::Result;
+use clap::Parser;
+use serde::Deserialize;
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Azure DevOps organization
@@ -34,18 +34,30 @@ pub struct Args {
     #[arg(long)]
     pub local_repo: Option<String>,
 
-    /// Target state for work items after successful merge
+    /// Target state for work items after successful merge (default mode only)
     #[arg(long)]
     pub work_item_state: Option<String>,
+
+    /// Migration mode - analyze PRs for migration eligibility
+    #[arg(long)]
+    pub migrate: bool,
+
+    /// Terminal work item states (comma-separated, migration mode only)
+    #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
+    pub terminal_states: String,
+
+    /// Include all PRs regardless of tags (migration mode only)
+    #[arg(long)]
+    pub include_tagged: bool,
 
     /// Create a sample configuration file
     #[arg(long)]
     pub create_config: bool,
 }
 
-/// Resolved configuration with all required fields
+/// Shared configuration used by both modes
 #[derive(Debug, Clone)]
-pub struct ResolvedConfig {
+pub struct SharedConfig {
     pub organization: String,
     pub project: String,
     pub repository: String,
@@ -53,54 +65,119 @@ pub struct ResolvedConfig {
     pub dev_branch: String,
     pub target_branch: String,
     pub local_repo: Option<String>,
+}
+
+/// Configuration specific to default mode
+#[derive(Debug, Clone)]
+pub struct DefaultModeConfig {
     pub work_item_state: String,
+}
+
+/// Configuration specific to migration mode
+#[derive(Debug, Clone)]
+pub struct MigrationModeConfig {
+    pub terminal_states: String,
+    pub include_tagged: bool,
+}
+
+/// Resolved configuration with mode-specific settings
+#[derive(Debug, Clone)]
+pub enum AppConfig {
+    Default {
+        shared: SharedConfig,
+        default: DefaultModeConfig,
+    },
+    Migration {
+        shared: SharedConfig,
+        migration: MigrationModeConfig,
+    },
+}
+
+impl AppConfig {
+    pub fn shared(&self) -> &SharedConfig {
+        match self {
+            AppConfig::Default { shared, .. } => shared,
+            AppConfig::Migration { shared, .. } => shared,
+        }
+    }
+
+    pub fn is_migration_mode(&self) -> bool {
+        matches!(self, AppConfig::Migration { .. })
+    }
 }
 
 impl Args {
     /// Resolve configuration from CLI args, environment variables, and config file
     /// Priority: CLI args > environment variables > config file > defaults
-    pub fn resolve_config(self) -> Result<ResolvedConfig> {
+    pub fn resolve_config(self) -> Result<AppConfig> {
         // Load from config file (lowest priority)
         let file_config = Config::load_from_file()?;
-        
+
         // Load from environment variables (medium priority)
         let env_config = Config::load_from_env();
-        
+
         // Convert CLI args to config format (highest priority)
         let cli_config = Config {
-            organization: self.organization,
-            project: self.project,
-            repository: self.repository,
-            pat: self.pat,
-            dev_branch: self.dev_branch,
-            target_branch: self.target_branch,
-            local_repo: self.local_repo,
-            work_item_state: self.work_item_state,
+            organization: self.organization.clone(),
+            project: self.project.clone(),
+            repository: self.repository.clone(),
+            pat: self.pat.clone(),
+            dev_branch: self.dev_branch.clone(),
+            target_branch: self.target_branch.clone(),
+            local_repo: self.local_repo.clone(),
+            work_item_state: self.work_item_state.clone(),
         };
-        
+
         // Merge configs: file < env < cli
         let merged_config = file_config.merge(env_config).merge(cli_config);
-        
-        // Validate required fields
+
+        // Validate required shared fields
         let organization = merged_config.organization
             .ok_or_else(|| anyhow::anyhow!("organization is required (use --organization, MERGERS_ORGANIZATION env var, or config file)"))?;
-        let project = merged_config.project
-            .ok_or_else(|| anyhow::anyhow!("project is required (use --project, MERGERS_PROJECT env var, or config file)"))?;
+        let project = merged_config.project.ok_or_else(|| {
+            anyhow::anyhow!(
+                "project is required (use --project, MERGERS_PROJECT env var, or config file)"
+            )
+        })?;
         let repository = merged_config.repository
             .ok_or_else(|| anyhow::anyhow!("repository is required (use --repository, MERGERS_REPOSITORY env var, or config file)"))?;
-        let pat = merged_config.pat
-            .ok_or_else(|| anyhow::anyhow!("pat is required (use --pat, MERGERS_PAT env var, or config file)"))?;
-        
-        Ok(ResolvedConfig {
+        let pat = merged_config.pat.ok_or_else(|| {
+            anyhow::anyhow!("pat is required (use --pat, MERGERS_PAT env var, or config file)")
+        })?;
+
+        let shared = SharedConfig {
             organization,
             project,
             repository,
             pat,
-            dev_branch: merged_config.dev_branch.unwrap_or_else(|| "dev".to_string()),
-            target_branch: merged_config.target_branch.unwrap_or_else(|| "next".to_string()),
+            dev_branch: merged_config
+                .dev_branch
+                .unwrap_or_else(|| "dev".to_string()),
+            target_branch: merged_config
+                .target_branch
+                .unwrap_or_else(|| "next".to_string()),
             local_repo: merged_config.local_repo,
-            work_item_state: merged_config.work_item_state.unwrap_or_else(|| "Next Merged".to_string()),
-        })
+        };
+
+        // Return appropriate configuration based on mode
+        if self.migrate {
+            Ok(AppConfig::Migration {
+                shared,
+                migration: MigrationModeConfig {
+                    terminal_states: self.terminal_states,
+                    include_tagged: self.include_tagged,
+                },
+            })
+        } else {
+            Ok(AppConfig::Default {
+                shared,
+                default: DefaultModeConfig {
+                    work_item_state: merged_config
+                        .work_item_state
+                        .unwrap_or_else(|| "Next Merged".to_string()),
+                },
+            })
+        }
     }
 }
 
@@ -227,4 +304,33 @@ pub struct CherryPickItem {
     pub pr_id: i32,
     pub pr_title: String,
     pub status: CherryPickStatus,
+}
+
+#[derive(Debug, Clone)]
+pub struct MigrationAnalysis {
+    pub eligible_prs: Vec<PullRequestWithWorkItems>,
+    pub unsure_prs: Vec<PullRequestWithWorkItems>,
+    pub not_merged_prs: Vec<PullRequestWithWorkItems>,
+    pub terminal_states: Vec<String>,
+    pub symmetric_diff: SymmetricDiffResult,
+    pub unsure_details: Vec<PRAnalysisResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SymmetricDiffResult {
+    pub commits_in_dev_not_target: Vec<String>,
+    pub commits_in_target_not_dev: Vec<String>,
+    pub common_commits: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PRAnalysisResult {
+    pub pr: PullRequestWithWorkItems,
+    pub all_work_items_terminal: bool,
+    pub terminal_work_items: Vec<WorkItem>,
+    pub non_terminal_work_items: Vec<WorkItem>,
+    pub commit_in_target: bool,
+    pub commit_title_in_target: bool,
+    pub commit_id: String,
+    pub unsure_reason: Option<String>,
 }
