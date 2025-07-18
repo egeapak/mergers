@@ -13,6 +13,9 @@ pub struct Config {
     pub target_branch: Option<String>,
     pub local_repo: Option<String>,
     pub work_item_state: Option<String>,
+    pub parallel_limit: Option<usize>,
+    pub max_concurrent_network: Option<usize>,
+    pub max_concurrent_processing: Option<usize>,
 }
 
 impl Default for Config {
@@ -26,6 +29,9 @@ impl Default for Config {
             target_branch: Some("next".to_string()),
             local_repo: None,
             work_item_state: Some("Next Merged".to_string()),
+            parallel_limit: Some(300),
+            max_concurrent_network: Some(100),
+            max_concurrent_processing: Some(10),
         }
     }
 }
@@ -59,6 +65,15 @@ impl Config {
             target_branch: std::env::var("MERGERS_TARGET_BRANCH").ok(),
             local_repo: std::env::var("MERGERS_LOCAL_REPO").ok(),
             work_item_state: std::env::var("MERGERS_WORK_ITEM_STATE").ok(),
+            parallel_limit: std::env::var("MERGERS_PARALLEL_LIMIT")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            max_concurrent_network: std::env::var("MERGERS_MAX_CONCURRENT_NETWORK")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            max_concurrent_processing: std::env::var("MERGERS_MAX_CONCURRENT_PROCESSING")
+                .ok()
+                .and_then(|s| s.parse().ok()),
         }
     }
 
@@ -99,6 +114,11 @@ impl Config {
             target_branch: other.target_branch.or(self.target_branch),
             local_repo: other.local_repo.or(self.local_repo),
             work_item_state: other.work_item_state.or(self.work_item_state),
+            parallel_limit: other.parallel_limit.or(self.parallel_limit),
+            max_concurrent_network: other.max_concurrent_network.or(self.max_concurrent_network),
+            max_concurrent_processing: other
+                .max_concurrent_processing
+                .or(self.max_concurrent_processing),
         }
     }
 
@@ -138,6 +158,15 @@ target_branch = "next"
 
 # Target state for work items after successful merge (optional, defaults to "Next Merged")
 work_item_state = "Next Merged"
+
+# Maximum number of parallel operations for API calls (optional, defaults to 300)
+parallel_limit = 300
+
+# Maximum number of concurrent network operations (optional, defaults to 100)
+max_concurrent_network = 100
+
+# Maximum number of concurrent processing operations (optional, defaults to 10)
+max_concurrent_processing = 10
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {

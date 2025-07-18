@@ -5,6 +5,7 @@ use crate::{
     models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
     ui::App,
     ui::state::{AppState, StateChange},
+    utils::throttle::NetworkProcessor,
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -43,7 +44,7 @@ pub struct MigrationDataLoadingState {
     work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>), String>>>>,
     analysis_task:
         Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis, String>>>,
-    current_batch_start: usize,
+    network_processor: Option<NetworkProcessor>,
 
     // Progress tracking
     total_prs: usize,
@@ -76,7 +77,7 @@ impl MigrationDataLoadingState {
             repo_setup_task: None,
             work_items_tasks: None,
             analysis_task: None,
-            current_batch_start: 0,
+            network_processor: None,
             total_prs: 0,
             work_items_fetched: 0,
             work_items_total: 0,
@@ -223,31 +224,46 @@ impl MigrationDataLoadingState {
         self.loading_stage = LoadingStage::FetchingWorkItems;
         self.work_items_total = self.prs.len();
         self.work_items_fetched = 0;
-        self.current_batch_start = 0;
         self.status = "Fetching work items for PRs...".to_string();
         self.progress = 0.3;
 
-        // Start first batch of parallel tasks for fetching work items
-        self.start_next_batch(app);
+        // Initialize network processor with configurable network and processing throttling
+        self.network_processor = Some(NetworkProcessor::new_with_limits(
+            app.max_concurrent_network,
+            app.max_concurrent_processing,
+        ));
+
+        // Start all network tasks in parallel without batching
+        self.start_all_work_items_fetching(app);
     }
 
-    fn start_next_batch(&mut self, app: &App) {
-        const BATCH_SIZE: usize = 100;
+    fn start_all_work_items_fetching(&mut self, app: &App) {
         let mut tasks = Vec::new();
 
-        let end = std::cmp::min(self.current_batch_start + BATCH_SIZE, self.prs.len());
+        // Clone the network processor for use in tasks
+        let network_processor = self.network_processor.as_ref().unwrap().clone();
 
-        for index in self.current_batch_start..end {
+        // Start network requests with throttling
+        for index in 0..self.prs.len() {
             if let Some(pr) = self.prs.get(index) {
                 let client = app.client.clone();
                 let pr_id = pr.id;
+                let processor = network_processor.clone();
 
                 let task = tokio::spawn(async move {
-                    let work_items = client
-                        .fetch_work_items_with_history_for_pr(pr_id)
-                        .await
-                        .unwrap_or_default();
-                    Ok((index, work_items))
+                    let result = processor
+                        .execute_network_operation(|| async {
+                            client
+                                .fetch_work_items_with_history_for_pr(pr_id)
+                                .await
+                                .map_err(|e| format!("Failed to fetch work items: {}", e))
+                        })
+                        .await;
+
+                    match result {
+                        Ok(work_items) => Ok((index, work_items)),
+                        Err(e) => Err(e),
+                    }
                 });
 
                 tasks.push(task);
@@ -257,7 +273,7 @@ impl MigrationDataLoadingState {
         self.work_items_tasks = Some(tasks);
     }
 
-    async fn check_work_items_progress(&mut self, app: &App) -> Result<bool, String> {
+    async fn check_work_items_progress(&mut self, _app: &App) -> Result<bool, String> {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
@@ -304,21 +320,11 @@ impl MigrationDataLoadingState {
             }
             *tasks = still_running;
 
-            // Check if current batch is completed
+            // Check if all tasks are completed
             if tasks.is_empty() {
-                const BATCH_SIZE: usize = 100;
-                self.current_batch_start += BATCH_SIZE;
-
-                // Check if there are more PRs to process
-                if self.current_batch_start < self.prs.len() {
-                    // Start next batch
-                    self.start_next_batch(app);
-                    Ok(false)
-                } else {
-                    // All batches completed
-                    self.work_items_tasks = None;
-                    Ok(true)
-                }
+                // All work items fetched
+                self.work_items_tasks = None;
+                Ok(true)
             } else {
                 Ok(false)
             }
@@ -382,37 +388,51 @@ impl MigrationDataLoadingState {
         )
         .map_err(|e| format!("Failed to calculate git diff: {e:?}"))?;
 
-        // Analyze each PR in parallel
-        let mut analysis_tasks = Vec::new();
+        // Create network processor for git operations (these can be CPU intensive)
+        let network_processor = NetworkProcessor::new_with_limits(
+            config.shared().max_concurrent_network,
+            config.shared().max_concurrent_processing,
+        );
 
-        for pr_with_work_items in prs_with_work_items.iter() {
-            let analyzer_clone = analyzer.clone();
-            let pr_clone = pr_with_work_items.clone();
-            let symmetric_diff_clone = symmetric_diff.clone();
-            let repo_path_clone = repo_path.clone();
-            let target_branch = config.shared().target_branch.clone();
+        // Create analysis operations - git operations will be throttled as processing
+        let analysis_operations: Vec<_> = prs_with_work_items
+            .iter()
+            .map(|pr_with_work_items| {
+                let analyzer = analyzer.clone();
+                let pr_clone = pr_with_work_items.clone();
+                let symmetric_diff_clone = symmetric_diff.clone();
+                let repo_path_clone = repo_path.clone();
+                let target_branch = config.shared().target_branch.clone();
 
-            let task = tokio::spawn(async move {
-                analyzer_clone
-                    .analyze_single_pr(
-                        &pr_clone,
-                        &symmetric_diff_clone,
-                        &repo_path_clone,
-                        &target_branch,
-                    )
-                    .await
-            });
+                move || async move {
+                    analyzer
+                        .analyze_single_pr(
+                            &pr_clone,
+                            &symmetric_diff_clone,
+                            &repo_path_clone,
+                            &target_branch,
+                        )
+                        .await
+                }
+            })
+            .collect();
 
-            analysis_tasks.push(task);
+        // Execute git operations with throttling (as they're CPU/disk intensive)
+        let mut analysis_results = Vec::new();
+        for operation in analysis_operations {
+            let result = network_processor
+                .execute_processing_operation(operation)
+                .await;
+            analysis_results.push(result);
         }
 
         // Wait for all analyses to complete
+        // Collect all analysis results
         let mut pr_analyses = Vec::new();
-        for task in analysis_tasks {
-            match task.await {
-                Ok(Ok(analysis)) => pr_analyses.push(analysis),
-                Ok(Err(e)) => return Err(format!("PR analysis failed: {}", e)),
-                Err(e) => return Err(format!("PR analysis task failed: {}", e)),
+        for result in analysis_results {
+            match result {
+                Ok(analysis) => pr_analyses.push(analysis),
+                Err(e) => return Err(format!("Analysis failed: {}", e)),
             }
         }
 

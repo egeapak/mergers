@@ -50,6 +50,18 @@ pub struct Args {
     #[arg(long)]
     pub include_tagged: bool,
 
+    /// Maximum number of parallel operations for API calls
+    #[arg(long)]
+    pub parallel_limit: Option<usize>,
+
+    /// Maximum number of concurrent network operations
+    #[arg(long)]
+    pub max_concurrent_network: Option<usize>,
+
+    /// Maximum number of concurrent processing operations
+    #[arg(long)]
+    pub max_concurrent_processing: Option<usize>,
+
     /// Create a sample configuration file
     #[arg(long)]
     pub create_config: bool,
@@ -65,6 +77,9 @@ pub struct SharedConfig {
     pub dev_branch: String,
     pub target_branch: String,
     pub local_repo: Option<String>,
+    pub parallel_limit: usize,
+    pub max_concurrent_network: usize,
+    pub max_concurrent_processing: usize,
 }
 
 /// Configuration specific to default mode
@@ -126,6 +141,9 @@ impl Args {
             target_branch: self.target_branch.clone(),
             local_repo: self.local_repo.clone(),
             work_item_state: self.work_item_state.clone(),
+            parallel_limit: self.parallel_limit,
+            max_concurrent_network: self.max_concurrent_network,
+            max_concurrent_processing: self.max_concurrent_processing,
         };
 
         // Merge configs: file < env < cli
@@ -157,6 +175,9 @@ impl Args {
                 .target_branch
                 .unwrap_or_else(|| "next".to_string()),
             local_repo: merged_config.local_repo,
+            parallel_limit: merged_config.parallel_limit.unwrap_or(300),
+            max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
+            max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
         };
 
         // Return appropriate configuration based on mode
@@ -314,6 +335,7 @@ pub struct MigrationAnalysis {
     pub terminal_states: Vec<String>,
     pub symmetric_diff: SymmetricDiffResult,
     pub unsure_details: Vec<PRAnalysisResult>,
+    pub all_details: Vec<PRAnalysisResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -333,4 +355,5 @@ pub struct PRAnalysisResult {
     pub commit_title_in_target: bool,
     pub commit_id: String,
     pub unsure_reason: Option<String>,
+    pub reason: Option<String>,
 }

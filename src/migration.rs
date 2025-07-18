@@ -42,6 +42,7 @@ impl MigrationAnalyzer {
                 commit_title_in_target: false,
                 commit_id: String::new(),
                 unsure_reason: Some("No lastMergeCommit available".to_string()),
+                reason: Some("No lastMergeCommit available".to_string()),
             });
         };
 
@@ -49,7 +50,7 @@ impl MigrationAnalyzer {
         let commit_in_target =
             check_commit_exists_in_branch(repo_path, &commit_id, target_branch).unwrap_or(false);
 
-        // Check if PR was merged using Azure DevOps merge pattern
+        // Check if PR was merged using comprehensive PR detection
         let commit_title_in_target = check_pr_merged_in_branch(
             repo_path,
             pr_with_work_items.pr.id,
@@ -74,18 +75,27 @@ impl MigrationAnalyzer {
             true // Skip work item check if no work items
         };
 
-        // Generate unsure reason if applicable
-        let unsure_reason = match (work_items_requirement_met, actually_merged, has_work_items) {
-            (true, true, _) => None,   // Eligible
-            (false, false, _) => None, // Not merged
-            (true, false, true) => Some(
-                "Work items are in terminal state but PR not found in target branch".to_string(),
+        // Generate detailed reasons for all cases with PR detection details
+        let detection_details = Self::generate_pr_detection_details(
+            commit_in_target,
+            commit_title_in_target,
+            &commit_id,
+        );
+
+        let (unsure_reason, reason) = match (
+            work_items_requirement_met,
+            actually_merged,
+            has_work_items,
+        ) {
+            (true, true, _) => (
+                None,
+                Some(format!(
+                    "Eligible: Work items in terminal state and PR found in target branch. {}",
+                    detection_details
+                )),
             ),
-            (true, false, false) => {
-                Some("No work items found and PR not found in target branch".to_string())
-            }
             (false, true, true) => {
-                // PR is in target branch but work items are not in terminal state
+                // PR is in target branch but work items are not in terminal state - now eligible
                 let non_terminal_details: Vec<String> = non_terminal_work_items
                     .iter()
                     .map(|wi| {
@@ -96,12 +106,58 @@ impl MigrationAnalyzer {
                         )
                     })
                     .collect();
-                Some(format!(
-                    "PR is in target branch but work items are not in terminal state: {}",
-                    non_terminal_details.join(", ")
-                ))
+                (
+                    None,
+                    Some(format!(
+                        "Eligible: PR found in target branch (work items not in terminal state but overridden): {}. {}",
+                        non_terminal_details.join(", "),
+                        detection_details
+                    )),
+                )
             }
-            (false, true, false) => unreachable!(), // Can't have false work_items_requirement_met with no work items
+            (false, true, false) => (
+                None,
+                Some(format!(
+                    "Eligible: PR found in target branch and no work items to check. {}",
+                    detection_details
+                )),
+            ),
+            (true, false, true) => {
+                let reason = "Work items are in terminal state but PR not found in target branch"
+                    .to_string();
+                (Some(reason.clone()), Some(format!("Unsure: {}", reason)))
+            }
+            (true, false, false) => {
+                let reason = "No work items found and PR not found in target branch".to_string();
+                (Some(reason.clone()), Some(format!("Unsure: {}", reason)))
+            }
+            (false, false, true) => {
+                let non_terminal_details: Vec<String> = non_terminal_work_items
+                    .iter()
+                    .map(|wi| {
+                        format!(
+                            "#{} ({})",
+                            wi.id,
+                            wi.fields.state.as_deref().unwrap_or("Unknown")
+                        )
+                    })
+                    .collect();
+                (
+                    None,
+                    Some(format!(
+                        "Not merged: Work items not in terminal state and PR not found in target branch: {}. Detection attempts: commit ID '{}' not found in target, PR title/ID not found in commit history",
+                        non_terminal_details.join(", "),
+                        commit_id
+                    )),
+                )
+            }
+            (false, false, false) => (
+                None,
+                Some(format!(
+                    "Not merged: No work items found and PR not found in target branch. Detection attempts: commit ID '{}' not found in target, PR title/ID not found in commit history",
+                    commit_id
+                )),
+            ),
         };
 
         Ok(PRAnalysisResult {
@@ -113,7 +169,30 @@ impl MigrationAnalyzer {
             commit_title_in_target,
             commit_id,
             unsure_reason,
+            reason,
         })
+    }
+
+    fn generate_pr_detection_details(
+        commit_in_target: bool,
+        commit_title_in_target: bool,
+        commit_id: &str,
+    ) -> String {
+        match (commit_in_target, commit_title_in_target) {
+            (true, true) => format!(
+                "Detection: Commit '{}' found in target AND PR pattern found in commit history",
+                commit_id
+            ),
+            (true, false) => format!("Detection: Commit '{}' found in target branch", commit_id),
+            (false, true) => {
+                "Detection: PR pattern found in commit history (commit ID not directly found)"
+                    .to_string()
+            }
+            (false, false) => format!(
+                "Detection: Commit '{}' not found in target, PR pattern not found in commit history",
+                commit_id
+            ),
+        }
     }
 
     pub fn categorize_prs(
@@ -126,7 +205,7 @@ impl MigrationAnalyzer {
         let mut not_merged = Vec::new();
         let mut unsure_details = Vec::new();
 
-        for analysis in analyses {
+        for analysis in &analyses {
             // Use enhanced logic: PR is actually merged if commit ID OR title is found
             let actually_merged = analysis.commit_in_target || analysis.commit_title_in_target;
 
@@ -135,10 +214,14 @@ impl MigrationAnalyzer {
                     // PR is in both lists - work items requirement met AND PR is actually merged
                     eligible.push(analysis.pr.clone());
                 }
-                (true, false) | (false, true) => {
-                    // One condition met but not the other - needs manual review
+                (false, true) => {
+                    // PR is actually merged (commit in target branch history) - mark as eligible regardless of work item state
+                    eligible.push(analysis.pr.clone());
+                }
+                (true, false) => {
+                    // Work items requirement met but PR not found in target - needs manual review
                     unsure.push(analysis.pr.clone());
-                    unsure_details.push(analysis);
+                    unsure_details.push(analysis.clone());
                 }
                 (false, false) => {
                     // Neither condition met - not merged
@@ -153,7 +236,8 @@ impl MigrationAnalyzer {
             not_merged_prs: not_merged,
             terminal_states: self.terminal_states.clone(),
             symmetric_diff,
-            unsure_details,
+            unsure_details: unsure_details.clone(),
+            all_details: analyses,
         })
     }
 }
@@ -230,6 +314,9 @@ mod tests {
             commit_title_in_target: false,
             commit_id: "abc123".to_string(),
             unsure_reason: None,
+            reason: Some(
+                "Eligible: Work items in terminal state and PR found in target branch".to_string(),
+            ),
         };
 
         let analyses = vec![eligible_pr];
@@ -238,6 +325,7 @@ mod tests {
         assert_eq!(result.eligible_prs.len(), 1);
         assert_eq!(result.unsure_prs.len(), 0);
         assert_eq!(result.not_merged_prs.len(), 0);
+        assert_eq!(result.all_details.len(), 1);
     }
 
     #[tokio::test]
@@ -277,6 +365,9 @@ mod tests {
             commit_title_in_target: true,
             commit_id: "abc123".to_string(),
             unsure_reason: None,
+            reason: Some(
+                "Eligible: Work items in terminal state and PR found in target branch".to_string(),
+            ),
         };
 
         // Test case 2: PR with terminal work items but not in target (should be unsure)
@@ -295,15 +386,37 @@ mod tests {
             unsure_reason: Some(
                 "Work items are in terminal state but PR not found in target branch".to_string(),
             ),
+            reason: Some(
+                "Unsure: Work items are in terminal state but PR not found in target branch"
+                    .to_string(),
+            ),
         };
 
-        let analyses = vec![title_match_pr, unsure_pr];
+        // Test case 3: PR with non-terminal work items but commit in target (should be eligible)
+        let non_terminal_but_merged_pr = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(3, "Non-terminal but merged", Some("ghi789".to_string())),
+                work_items: vec![create_test_work_item(3, "Active")],
+                selected: false,
+            },
+            all_work_items_terminal: false,
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: vec![create_test_work_item(3, "Active")],
+            commit_in_target: true,
+            commit_title_in_target: false,
+            commit_id: "ghi789".to_string(),
+            unsure_reason: None,
+            reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #3 (Active)".to_string()),
+        };
+
+        let analyses = vec![title_match_pr, unsure_pr, non_terminal_but_merged_pr];
         let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
 
-        assert_eq!(result.eligible_prs.len(), 1);
+        assert_eq!(result.eligible_prs.len(), 2);
         assert_eq!(result.unsure_prs.len(), 1);
         assert_eq!(result.not_merged_prs.len(), 0);
         assert_eq!(result.unsure_details.len(), 1);
+        assert_eq!(result.all_details.len(), 3);
         assert!(result.unsure_details[0].unsure_reason.is_some());
     }
 
@@ -344,6 +457,9 @@ mod tests {
             commit_title_in_target: false,
             commit_id: "abc123".to_string(),
             unsure_reason: None,
+            reason: Some(
+                "Eligible: PR found in target branch and no work items to check".to_string(),
+            ),
         };
 
         let analyses = vec![no_work_items_pr];
@@ -352,6 +468,7 @@ mod tests {
         assert_eq!(result.eligible_prs.len(), 1);
         assert_eq!(result.unsure_prs.len(), 0);
         assert_eq!(result.not_merged_prs.len(), 0);
+        assert_eq!(result.all_details.len(), 1);
     }
 
     #[tokio::test]
@@ -395,19 +512,328 @@ mod tests {
             commit_in_target: true,
             commit_title_in_target: false,
             commit_id: "abc123".to_string(),
-            unsure_reason: Some("PR is in target branch but work items are not in terminal state: #1 (Active), #2 (In Progress)".to_string()),
+            unsure_reason: None,
+            reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #1 (Active), #2 (In Progress)".to_string()),
         };
 
         let analyses = vec![pr_with_non_terminal_work_items];
         let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
 
-        assert_eq!(result.eligible_prs.len(), 0);
+        // Now this should be eligible since commit is in target branch
+        assert_eq!(result.eligible_prs.len(), 1);
+        assert_eq!(result.unsure_prs.len(), 0);
+        assert_eq!(result.not_merged_prs.len(), 0);
+        assert_eq!(result.unsure_details.len(), 0);
+        assert_eq!(result.all_details.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_commit_in_target_overrides_work_item_state() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec![
+            "Closed".to_string(),
+            "Next Closed".to_string(),
+            "Next Merged".to_string(),
+        ];
+        let analyzer = MigrationAnalyzer::new(client, terminal_states);
+
+        let symmetric_diff = SymmetricDiffResult {
+            commits_in_dev_not_target: Vec::new(),
+            commits_in_target_not_dev: Vec::new(),
+            common_commits: Vec::new(),
+        };
+
+        // Test PR with non-terminal work items but commit in target branch (should be eligible)
+        let pr_with_commit_in_target = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(1, "Non-terminal WI but merged", Some("abc123".to_string())),
+                work_items: vec![
+                    create_test_work_item(1, "Active"),
+                    create_test_work_item(2, "In Progress"),
+                ],
+                selected: false,
+            },
+            all_work_items_terminal: false,
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: vec![
+                create_test_work_item(1, "Active"),
+                create_test_work_item(2, "In Progress"),
+            ],
+            commit_in_target: true,
+            commit_title_in_target: false,
+            commit_id: "abc123".to_string(),
+            unsure_reason: None,
+            reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #1 (Active), #2 (In Progress)".to_string()),
+        };
+
+        // Test PR with terminal work items but NOT in target branch (should be unsure)
+        let pr_not_in_target = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(2, "Terminal WI but not merged", Some("def456".to_string())),
+                work_items: vec![create_test_work_item(3, "Closed")],
+                selected: false,
+            },
+            all_work_items_terminal: true,
+            terminal_work_items: vec![create_test_work_item(3, "Closed")],
+            non_terminal_work_items: Vec::new(),
+            commit_in_target: false,
+            commit_title_in_target: false,
+            commit_id: "def456".to_string(),
+            unsure_reason: Some(
+                "Work items are in terminal state but PR not found in target branch".to_string(),
+            ),
+            reason: Some(
+                "Unsure: Work items are in terminal state but PR not found in target branch"
+                    .to_string(),
+            ),
+        };
+
+        let analyses = vec![pr_with_commit_in_target, pr_not_in_target];
+        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+
+        // First PR should be eligible because commit is in target (overrides work item state)
+        // Second PR should be unsure because work items are terminal but commit not in target
+        assert_eq!(result.eligible_prs.len(), 1);
         assert_eq!(result.unsure_prs.len(), 1);
         assert_eq!(result.not_merged_prs.len(), 0);
         assert_eq!(result.unsure_details.len(), 1);
+        assert_eq!(result.all_details.len(), 2);
 
-        let unsure_reason = result.unsure_details[0].unsure_reason.as_ref().unwrap();
-        assert!(unsure_reason.contains("#1 (Active)"));
-        assert!(unsure_reason.contains("#2 (In Progress)"));
+        // Verify the eligible PR is the one with commit in target
+        assert_eq!(result.eligible_prs[0].pr.id, 1);
+        // Verify the unsure PR is the one without commit in target
+        assert_eq!(result.unsure_prs[0].pr.id, 2);
+    }
+
+    #[tokio::test]
+    async fn test_not_merged_reasons() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec![
+            "Closed".to_string(),
+            "Next Closed".to_string(),
+            "Next Merged".to_string(),
+        ];
+        let analyzer = MigrationAnalyzer::new(client, terminal_states);
+
+        let symmetric_diff = SymmetricDiffResult {
+            commits_in_dev_not_target: Vec::new(),
+            commits_in_target_not_dev: Vec::new(),
+            common_commits: Vec::new(),
+        };
+
+        // Test PR with non-terminal work items and NOT in target branch (should be not_merged)
+        let pr_not_merged_with_wi = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(1, "Not merged with WI", Some("abc123".to_string())),
+                work_items: vec![
+                    create_test_work_item(1, "Active"),
+                    create_test_work_item(2, "In Progress"),
+                ],
+                selected: false,
+            },
+            all_work_items_terminal: false,
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: vec![
+                create_test_work_item(1, "Active"),
+                create_test_work_item(2, "In Progress"),
+            ],
+            commit_in_target: false,
+            commit_title_in_target: false,
+            commit_id: "abc123".to_string(),
+            unsure_reason: None,
+            reason: Some("Not merged: Work items not in terminal state and PR not found in target branch: #1 (Active), #2 (In Progress)".to_string()),
+        };
+
+        // Test PR with no work items and NOT in target branch (should be not_merged)
+        let pr_not_merged_no_wi = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(2, "Not merged no WI", Some("def456".to_string())),
+                work_items: Vec::new(),
+                selected: false,
+            },
+            all_work_items_terminal: true, // true because no work items
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: Vec::new(),
+            commit_in_target: false,
+            commit_title_in_target: false,
+            commit_id: "def456".to_string(),
+            unsure_reason: Some(
+                "No work items found and PR not found in target branch".to_string(),
+            ),
+            reason: Some(
+                "Unsure: No work items found and PR not found in target branch".to_string(),
+            ),
+        };
+
+        let analyses = vec![pr_not_merged_with_wi, pr_not_merged_no_wi];
+        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+
+        // First PR should be not_merged, second should be unsure
+        assert_eq!(result.eligible_prs.len(), 0);
+        assert_eq!(result.unsure_prs.len(), 1);
+        assert_eq!(result.not_merged_prs.len(), 1);
+        assert_eq!(result.all_details.len(), 2);
+
+        // Verify the not_merged PR has a proper reason
+        let not_merged_detail = result.all_details.iter().find(|d| d.pr.pr.id == 1).unwrap();
+        assert!(not_merged_detail.reason.is_some());
+        assert!(
+            not_merged_detail
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("Not merged")
+        );
+        assert!(
+            not_merged_detail
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("#1 (Active)")
+        );
+        assert!(
+            not_merged_detail
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("#2 (In Progress)")
+        );
+
+        // Verify the unsure PR has a proper reason
+        let unsure_detail = result.all_details.iter().find(|d| d.pr.pr.id == 2).unwrap();
+        assert!(unsure_detail.reason.is_some());
+        assert!(unsure_detail.reason.as_ref().unwrap().contains("Unsure"));
+    }
+
+    #[tokio::test]
+    async fn test_enhanced_pr_detection_details() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec![
+            "Closed".to_string(),
+            "Next Closed".to_string(),
+            "Next Merged".to_string(),
+        ];
+        let analyzer = MigrationAnalyzer::new(client, terminal_states);
+
+        let symmetric_diff = SymmetricDiffResult {
+            commits_in_dev_not_target: Vec::new(),
+            commits_in_target_not_dev: Vec::new(),
+            common_commits: Vec::new(),
+        };
+
+        // Test PR found by commit ID
+        let pr_found_by_commit = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(1, "Found by commit", Some("abc123".to_string())),
+                work_items: vec![create_test_work_item(1, "Closed")],
+                selected: false,
+            },
+            all_work_items_terminal: true,
+            terminal_work_items: vec![create_test_work_item(1, "Closed")],
+            non_terminal_work_items: Vec::new(),
+            commit_in_target: true,
+            commit_title_in_target: false,
+            commit_id: "abc123".to_string(),
+            unsure_reason: None,
+            reason: Some("Eligible: Work items in terminal state and PR found in target branch. Detection: Commit 'abc123' found in target branch".to_string()),
+        };
+
+        // Test PR found by title pattern
+        let pr_found_by_title = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(2, "Found by title", Some("def456".to_string())),
+                work_items: vec![create_test_work_item(2, "Closed")],
+                selected: false,
+            },
+            all_work_items_terminal: true,
+            terminal_work_items: vec![create_test_work_item(2, "Closed")],
+            non_terminal_work_items: Vec::new(),
+            commit_in_target: false,
+            commit_title_in_target: true,
+            commit_id: "def456".to_string(),
+            unsure_reason: None,
+            reason: Some("Eligible: Work items in terminal state and PR found in target branch. Detection: PR pattern found in commit history (commit ID not directly found)".to_string()),
+        };
+
+        // Test PR not found anywhere
+        let pr_not_found = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(3, "Not found", Some("ghi789".to_string())),
+                work_items: vec![create_test_work_item(3, "Active")],
+                selected: false,
+            },
+            all_work_items_terminal: false,
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: vec![create_test_work_item(3, "Active")],
+            commit_in_target: false,
+            commit_title_in_target: false,
+            commit_id: "ghi789".to_string(),
+            unsure_reason: None,
+            reason: Some("Not merged: Work items not in terminal state and PR not found in target branch: #3 (Active). Detection attempts: commit ID 'ghi789' not found in target, PR title/ID not found in commit history".to_string()),
+        };
+
+        let analyses = vec![pr_found_by_commit, pr_found_by_title, pr_not_found];
+        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+
+        assert_eq!(result.eligible_prs.len(), 2);
+        assert_eq!(result.unsure_prs.len(), 0);
+        assert_eq!(result.not_merged_prs.len(), 1);
+        assert_eq!(result.all_details.len(), 3);
+
+        // Verify detailed reasons include detection information
+        let eligible_1 = result.all_details.iter().find(|d| d.pr.pr.id == 1).unwrap();
+        assert!(
+            eligible_1
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("Detection: Commit 'abc123' found in target branch")
+        );
+
+        let eligible_2 = result.all_details.iter().find(|d| d.pr.pr.id == 2).unwrap();
+        assert!(
+            eligible_2
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("Detection: PR pattern found in commit history")
+        );
+
+        let not_merged = result.all_details.iter().find(|d| d.pr.pr.id == 3).unwrap();
+        assert!(
+            not_merged
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("Detection attempts: commit ID 'ghi789' not found")
+        );
+        assert!(
+            not_merged
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains("PR title/ID not found in commit history")
+        );
     }
 }

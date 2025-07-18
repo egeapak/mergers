@@ -281,7 +281,21 @@ impl MigrationState {
                 }
             }
 
-            // Add unsure reason for unsure PRs
+            // Add general reason for all PRs using all_details
+            if let Some(detail) = analysis.all_details.iter().find(|d| d.pr.pr.id == pr.pr.id) {
+                if let Some(reason) = &detail.reason {
+                    details.push(Line::from(""));
+                    details.push(Line::from(vec![Span::styled(
+                        "Reason:",
+                        Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::BOLD),
+                    )]));
+                    details.push(Line::from(vec![Span::raw(reason)]));
+                }
+            }
+
+            // Add unsure reason for unsure PRs (legacy support)
             if self.current_tab == MigrationTab::Unsure {
                 if let Some(unsure_detail) = analysis
                     .unsure_details

@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
             AppConfig::Default { default, .. } => default.work_item_state.clone(),
             AppConfig::Migration { .. } => "Next Merged".to_string(), // Default fallback for migration mode
         },
+        config.shared().parallel_limit,
+        config.shared().max_concurrent_network,
+        config.shared().max_concurrent_processing,
         client,
     );
 

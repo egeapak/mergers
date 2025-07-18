@@ -24,7 +24,6 @@ pub struct DataLoadingState {
     commit_info_total: usize,
     work_items_tasks:
         Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
-    current_batch_start: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +46,6 @@ impl DataLoadingState {
             commit_info_fetched: 0,
             commit_info_total: 0,
             work_items_tasks: None,
-            current_batch_start: 0,
         }
     }
 
@@ -83,32 +81,36 @@ impl DataLoadingState {
         self.loading_stage = LoadingStage::FetchingWorkItems;
         self.work_items_total = app.pull_requests.len();
         self.work_items_fetched = 0;
-        self.current_batch_start = 0;
 
-        // Start first batch of parallel tasks for fetching work items
-        self.start_next_batch(app);
-    }
+        // Use network processor to throttle network operations
+        use crate::utils::throttle::NetworkProcessor;
 
-    fn start_next_batch(&mut self, app: &App) {
-        const BATCH_SIZE: usize = 100;
+        let network_processor = NetworkProcessor::new_with_limits(
+            app.max_concurrent_network,
+            app.max_concurrent_processing,
+        );
         let mut tasks = Vec::new();
 
-        let end = std::cmp::min(
-            self.current_batch_start + BATCH_SIZE,
-            app.pull_requests.len(),
-        );
-
-        for index in self.current_batch_start..end {
+        for index in 0..app.pull_requests.len() {
             if let Some(pr_with_wi) = app.pull_requests.get(index) {
                 let client = app.client.clone();
                 let pr_id = pr_with_wi.pr.id;
+                let processor = network_processor.clone();
 
                 let task = tokio::spawn(async move {
-                    let work_items = client
-                        .fetch_work_items_with_history_for_pr(pr_id)
-                        .await
-                        .unwrap_or_default();
-                    Ok((index, work_items))
+                    let result = processor
+                        .execute_network_operation(|| async {
+                            client
+                                .fetch_work_items_with_history_for_pr(pr_id)
+                                .await
+                                .map_err(|e| format!("Failed to fetch work items: {}", e))
+                        })
+                        .await;
+
+                    match result {
+                        Ok(work_items) => Ok((index, work_items)),
+                        Err(e) => Err(e),
+                    }
                 });
 
                 tasks.push(task);
@@ -134,7 +136,7 @@ impl DataLoadingState {
                             return Err(format!("Failed to fetch work items: {}", e));
                         }
                         Err(e) => {
-                            return Err(format!("Task failed: {}", e));
+                            return Err(format!("Work items task failed: {}", e));
                         }
                     }
                 } else {
@@ -152,21 +154,10 @@ impl DataLoadingState {
 
             *tasks = still_running;
 
-            // Check if current batch is completed
+            // Check if all tasks are completed
             if tasks.is_empty() {
-                const BATCH_SIZE: usize = 100;
-                self.current_batch_start += BATCH_SIZE;
-
-                // Check if there are more PRs to process
-                if self.current_batch_start < app.pull_requests.len() {
-                    // Start next batch
-                    self.start_next_batch(app);
-                    Ok(false)
-                } else {
-                    // All batches completed
-                    self.work_items_tasks = None;
-                    Ok(true)
-                }
+                self.work_items_tasks = None;
+                Ok(true)
             } else {
                 Ok(false)
             }

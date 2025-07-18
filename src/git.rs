@@ -684,10 +684,49 @@ pub fn check_pr_merged_in_branch(
     pr_title: &str,
     branch: &str,
 ) -> Result<bool> {
-    // Get all commit messages from the target branch (last 1000 commits for performance)
+    // Use comprehensive PR detection with multiple strategies
+    check_pr_merged_comprehensive(repo_path, pr_id, pr_title, branch)
+}
+
+pub fn check_pr_merged_comprehensive(
+    repo_path: &Path,
+    pr_id: i32,
+    pr_title: &str,
+    branch: &str,
+) -> Result<bool> {
+    // Strategy 1: Check for Azure DevOps merge pattern (most common)
+    if check_azure_devops_merge_pattern(repo_path, pr_id, pr_title, branch)? {
+        return Ok(true);
+    }
+
+    // Strategy 2: Check for GitHub merge patterns
+    if check_github_merge_patterns(repo_path, pr_id, pr_title, branch)? {
+        return Ok(true);
+    }
+
+    // Strategy 3: Search for PR title in commit messages (broader search)
+    if search_pr_title_in_commits(repo_path, pr_title, branch)? {
+        return Ok(true);
+    }
+
+    // Strategy 4: Search for PR ID references in commit messages
+    if search_pr_id_in_commits(repo_path, pr_id, branch)? {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn check_azure_devops_merge_pattern(
+    repo_path: &Path,
+    pr_id: i32,
+    pr_title: &str,
+    branch: &str,
+) -> Result<bool> {
+    // Get all commit messages from the target branch (increased limit for better coverage)
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(["log", "--format=%s", "-n", "1000", branch])
+        .args(["log", "--format=%s", "-n", "5000", branch])
         .output()
         .context("Failed to get commit messages from branch")?;
 
@@ -723,6 +762,253 @@ pub fn check_pr_merged_in_branch(
     }
 
     Ok(false)
+}
+
+fn check_github_merge_patterns(
+    repo_path: &Path,
+    pr_id: i32,
+    pr_title: &str,
+    branch: &str,
+) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%s", "-n", "5000", branch])
+        .output()
+        .context("Failed to get commit messages from branch")?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let commit_messages = String::from_utf8_lossy(&output.stdout);
+    let normalized_pr_title = normalize_title(pr_title);
+
+    // Common GitHub merge patterns
+    let patterns = [
+        format!("Merge pull request #{} from", pr_id),
+        format!("#{}: {}", pr_id, pr_title),
+        format!("(#{}) {}", pr_id, pr_title),
+        format!("[{}] {}", pr_id, pr_title),
+    ];
+
+    for commit_message in commit_messages.lines() {
+        let normalized_commit = normalize_title(commit_message);
+
+        // Check for direct pattern matches
+        for pattern in &patterns {
+            if commit_message.contains(pattern)
+                || commit_message.contains(&normalize_title(pattern))
+            {
+                return Ok(true);
+            }
+        }
+
+        // Check if commit contains both PR ID and title
+        if normalized_commit.contains(&pr_id.to_string())
+            && fuzzy_title_match(&normalized_pr_title, &normalized_commit)
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn search_pr_title_in_commits(repo_path: &Path, pr_title: &str, branch: &str) -> Result<bool> {
+    // If title is too short or generic, skip this search to avoid false positives
+    if pr_title.len() < 10 {
+        return Ok(false);
+    }
+
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%s", "-n", "5000", branch])
+        .output()
+        .context("Failed to get commit messages from branch")?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let commit_messages = String::from_utf8_lossy(&output.stdout);
+    let normalized_pr_title = normalize_title(pr_title);
+
+    // Split title into significant words for better matching
+    let pr_words: Vec<&str> = normalized_pr_title
+        .split_whitespace()
+        .filter(|w| w.len() > 3 && !is_common_word(w))
+        .collect();
+
+    if pr_words.len() < 2 {
+        return Ok(false);
+    }
+
+    for commit_message in commit_messages.lines() {
+        let normalized_commit = normalize_title(commit_message);
+
+        // Check if commit contains most of the significant words from PR title
+        let matching_words = pr_words
+            .iter()
+            .filter(|&&word| normalized_commit.contains(word))
+            .count();
+
+        // Require at least 70% of significant words to match
+        if matching_words as f64 / pr_words.len() as f64 >= 0.7 {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn search_pr_id_in_commits(repo_path: &Path, pr_id: i32, branch: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%s", "-n", "5000", branch])
+        .output()
+        .context("Failed to get commit messages from branch")?;
+
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let commit_messages = String::from_utf8_lossy(&output.stdout);
+    let pr_id_str = pr_id.to_string();
+
+    // Look for PR ID in various formats
+    let id_patterns = [
+        format!("#{}", pr_id),
+        format!("PR{}", pr_id),
+        format!("PR {}", pr_id),
+        format!("pr{}", pr_id),
+        format!("pr {}", pr_id),
+        format!("({})", pr_id),
+        format!("[{}]", pr_id),
+    ];
+
+    for commit_message in commit_messages.lines() {
+        // Check for exact PR ID patterns
+        for pattern in &id_patterns {
+            if commit_message.contains(pattern) {
+                return Ok(true);
+            }
+        }
+
+        // Check for standalone PR ID (with word boundaries)
+        if commit_message.contains(&pr_id_str) {
+            // Ensure it's not part of a larger number
+            let words: Vec<&str> = commit_message.split_whitespace().collect();
+            for word in words {
+                let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric());
+                if clean_word == pr_id_str {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn is_common_word(word: &str) -> bool {
+    matches!(
+        word.to_lowercase().as_str(),
+        "the"
+            | "and"
+            | "for"
+            | "with"
+            | "from"
+            | "this"
+            | "that"
+            | "will"
+            | "have"
+            | "when"
+            | "where"
+            | "what"
+            | "which"
+            | "their"
+            | "there"
+            | "here"
+            | "then"
+            | "them"
+            | "they"
+            | "were"
+            | "been"
+            | "said"
+            | "each"
+            | "some"
+            | "time"
+            | "very"
+            | "more"
+            | "first"
+            | "well"
+            | "year"
+            | "work"
+            | "such"
+            | "even"
+            | "most"
+            | "take"
+            | "only"
+            | "think"
+            | "also"
+            | "back"
+            | "could"
+            | "good"
+            | "would"
+            | "should"
+            | "being"
+            | "going"
+            | "made"
+            | "come"
+            | "came"
+            | "want"
+            | "need"
+            | "know"
+            | "call"
+            | "called"
+            | "help"
+            | "look"
+            | "find"
+            | "found"
+            | "done"
+            | "used"
+            | "using"
+            | "into"
+            | "over"
+            | "both"
+            | "many"
+            | "much"
+            | "long"
+            | "way"
+            | "ways"
+            | "may"
+            | "might"
+            | "part"
+            | "same"
+            | "other"
+            | "another"
+            | "different"
+            | "new"
+            | "old"
+            | "great"
+            | "little"
+            | "large"
+            | "small"
+            | "right"
+            | "left"
+            | "next"
+            | "last"
+            | "between"
+            | "during"
+            | "before"
+            | "above"
+            | "below"
+            | "through"
+            | "against"
+            | "within"
+            | "without"
+            | "across"
+    )
 }
 
 fn normalize_title(title: &str) -> String {
@@ -953,5 +1239,87 @@ mod tests {
         let result = check_pr_merged_in_branch(&repo_path, 222, "Fix bug B", "HEAD").unwrap();
 
         assert!(result, "Should find specific PR among multiple commits");
+    }
+
+    #[test]
+    fn test_check_pr_merged_github_patterns() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Test GitHub merge patterns
+        create_commit_with_message(&repo_path, "Merge pull request #456 from feature/auth");
+        create_commit_with_message(&repo_path, "#789: Fix authentication issue");
+        create_commit_with_message(&repo_path, "Authentication fix (#321)");
+        create_commit_with_message(&repo_path, "[#654] Update login system");
+
+        assert!(check_pr_merged_in_branch(&repo_path, 456, "Add authentication", "HEAD").unwrap());
+        assert!(
+            check_pr_merged_in_branch(&repo_path, 789, "Fix authentication issue", "HEAD").unwrap()
+        );
+        assert!(check_pr_merged_in_branch(&repo_path, 321, "Authentication fix", "HEAD").unwrap());
+        assert!(check_pr_merged_in_branch(&repo_path, 654, "Update login system", "HEAD").unwrap());
+    }
+
+    #[test]
+    fn test_check_pr_merged_title_search() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Test title-based search without explicit PR patterns
+        create_commit_with_message(
+            &repo_path,
+            "Fix critical authentication vulnerability in login module",
+        );
+        create_commit_with_message(
+            &repo_path,
+            "Update user authentication system for better security",
+        );
+
+        assert!(
+            check_pr_merged_in_branch(
+                &repo_path,
+                999,
+                "Fix authentication vulnerability login",
+                "HEAD"
+            )
+            .unwrap()
+        );
+        assert!(
+            check_pr_merged_in_branch(
+                &repo_path,
+                888,
+                "Update authentication system security",
+                "HEAD"
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_check_pr_merged_id_search() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Test PR ID search in various formats
+        create_commit_with_message(&repo_path, "Fix issue reported in PR123");
+        create_commit_with_message(&repo_path, "Addresses feedback from pr 456");
+        create_commit_with_message(&repo_path, "Related to #789 discussion");
+        create_commit_with_message(&repo_path, "Implements feature [321] as requested");
+
+        assert!(check_pr_merged_in_branch(&repo_path, 123, "Some title", "HEAD").unwrap());
+        assert!(check_pr_merged_in_branch(&repo_path, 456, "Another title", "HEAD").unwrap());
+        assert!(check_pr_merged_in_branch(&repo_path, 789, "Different title", "HEAD").unwrap());
+        assert!(check_pr_merged_in_branch(&repo_path, 321, "Feature title", "HEAD").unwrap());
+    }
+
+    #[test]
+    fn test_check_pr_merged_false_positives() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Test that we don't get false positives with common words or short titles
+        create_commit_with_message(&repo_path, "Fix the bug");
+        create_commit_with_message(&repo_path, "Update");
+        create_commit_with_message(&repo_path, "Version 1.2.3 release");
+
+        assert!(!check_pr_merged_in_branch(&repo_path, 999, "Fix", "HEAD").unwrap());
+        assert!(!check_pr_merged_in_branch(&repo_path, 888, "Update", "HEAD").unwrap());
+        assert!(!check_pr_merged_in_branch(&repo_path, 123, "Bug", "HEAD").unwrap());
     }
 }
