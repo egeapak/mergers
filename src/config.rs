@@ -34,7 +34,7 @@ impl Config {
     /// Load configuration from XDG config directory
     pub fn load_from_file() -> Result<Self> {
         let config_path = Self::get_config_path()?;
-        
+
         if !config_path.exists() {
             return Ok(Self::default());
         }
@@ -72,15 +72,19 @@ impl Config {
                     .expect("Could not determine home directory")
                     .join(".config")
             });
-        
+
         let mergers_config_dir = config_dir.join("mergers");
-        
+
         // Create config directory if it doesn't exist
         if !mergers_config_dir.exists() {
-            fs::create_dir_all(&mergers_config_dir)
-                .with_context(|| format!("Failed to create config directory: {}", mergers_config_dir.display()))?;
+            fs::create_dir_all(&mergers_config_dir).with_context(|| {
+                format!(
+                    "Failed to create config directory: {}",
+                    mergers_config_dir.display()
+                )
+            })?;
         }
-        
+
         Ok(mergers_config_dir.join("config.toml"))
     }
 
@@ -101,7 +105,7 @@ impl Config {
     /// Create a sample config file for user reference
     pub fn create_sample_config() -> Result<()> {
         let config_path = Self::get_config_path()?;
-        
+
         // Don't overwrite existing config
         if config_path.exists() {
             return Ok(());
@@ -136,15 +140,14 @@ target_branch = "next"
 work_item_state = "Next Merged"
 "#;
 
-        fs::write(&config_path, sample_config)
-            .with_context(|| format!("Failed to write sample config to: {}", config_path.display()))?;
+        fs::write(&config_path, sample_config).with_context(|| {
+            format!(
+                "Failed to write sample config to: {}",
+                config_path.display()
+            )
+        })?;
 
         println!("Sample config created at: {}", config_path.display());
         Ok(())
-    }
-
-    /// Get the path to the config file for display purposes
-    pub fn get_config_file_path() -> Result<PathBuf> {
-        Self::get_config_path()
     }
 }

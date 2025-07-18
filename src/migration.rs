@@ -13,6 +13,7 @@ use crate::{
     },
 };
 
+#[derive(Clone)]
 pub struct MigrationAnalyzer {
     client: AzureDevOpsClient,
     terminal_states: Vec<String>,
@@ -26,59 +27,7 @@ impl MigrationAnalyzer {
         }
     }
 
-    pub async fn analyze_prs_for_migration<F>(
-        &self,
-        repo_path: &Path,
-        dev_branch: &str,
-        target_branch: &str,
-        mut progress_callback: F,
-    ) -> Result<MigrationAnalysis>
-    where
-        F: FnMut(&str),
-    {
-        // Step 1: Get all PRs (including tagged ones)
-        progress_callback("Fetching pull requests...");
-        let all_prs = self.client.fetch_all_pull_requests(dev_branch).await?;
-
-        // Step 2: Calculate symmetric difference
-        progress_callback("Calculating git symmetric difference...");
-        let symmetric_diff = get_symmetric_difference(repo_path, dev_branch, target_branch)?;
-
-        // Step 3: Analyze each PR
-        let mut pr_analyses = Vec::new();
-        let total_prs = all_prs.len();
-        for (i, pr) in all_prs.into_iter().enumerate() {
-            progress_callback(&format!("Analyzing PR {}/{}: #{}", i + 1, total_prs, pr.id));
-            let pr_with_work_items = self.fetch_pr_with_work_items(&pr).await?;
-            let analysis = self
-                .analyze_single_pr(
-                    &pr_with_work_items,
-                    &symmetric_diff,
-                    repo_path,
-                    target_branch,
-                )
-                .await?;
-            pr_analyses.push(analysis);
-        }
-
-        // Step 4: Categorize PRs
-        progress_callback("Categorizing results...");
-        self.categorize_prs(pr_analyses, symmetric_diff)
-    }
-
-    async fn fetch_pr_with_work_items(&self, pr: &PullRequest) -> Result<PullRequestWithWorkItems> {
-        let work_items = self
-            .client
-            .fetch_work_items_with_history_for_pr(pr.id)
-            .await?;
-        Ok(PullRequestWithWorkItems {
-            pr: pr.clone(),
-            work_items,
-            selected: false,
-        })
-    }
-
-    async fn analyze_single_pr(
+    pub async fn analyze_single_pr(
         &self,
         pr_with_work_items: &PullRequestWithWorkItems,
         _symmetric_diff: &SymmetricDiffResult,
@@ -172,7 +121,7 @@ impl MigrationAnalyzer {
         })
     }
 
-    fn categorize_prs(
+    pub fn categorize_prs(
         &self,
         analyses: Vec<PRAnalysisResult>,
         symmetric_diff: SymmetricDiffResult,
@@ -211,24 +160,6 @@ impl MigrationAnalyzer {
             symmetric_diff,
             unsure_details,
         })
-    }
-
-    pub fn get_migration_summary(&self, analysis: &MigrationAnalysis) -> String {
-        format!(
-            "Migration Analysis Summary:\n\
-            Eligible PRs: {} (Ready for tagging)\n\
-            Unsure PRs: {} (Require manual review)\n\
-            Not Merged PRs: {} (Not ready for migration)\n\
-            Terminal States: {}\n\
-            Commits in dev not in target: {}\n\
-            Commits in target not in dev: {}",
-            analysis.eligible_prs.len(),
-            analysis.unsure_prs.len(),
-            analysis.not_merged_prs.len(),
-            analysis.terminal_states.join(", "),
-            analysis.symmetric_diff.commits_in_dev_not_target.len(),
-            analysis.symmetric_diff.commits_in_target_not_dev.len()
-        )
     }
 }
 

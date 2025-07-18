@@ -335,12 +335,7 @@ pub struct CommitInfo {
 pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> {
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args([
-            "show",
-            "--no-patch",
-            "--format=%H|%ci|%s|%an",
-            commit_id,
-        ])
+        .args(["show", "--no-patch", "--format=%H|%ci|%s|%an", commit_id])
         .output()?;
 
     if !output.status.success() {
@@ -352,7 +347,7 @@ pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> 
 
     let output_str = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = output_str.trim().split('|').collect();
-    
+
     if parts.len() >= 4 {
         Ok(CommitInfo {
             hash: parts[0].to_string(),
@@ -374,13 +369,13 @@ pub fn get_symmetric_difference(
 ) -> Result<SymmetricDiffResult> {
     // Get commits in dev branch but not in target branch
     let dev_not_target = get_commits_in_branch_not_in_target(repo_path, dev_branch, target_branch)?;
-    
+
     // Get commits in target branch but not in dev branch
     let target_not_dev = get_commits_in_branch_not_in_target(repo_path, target_branch, dev_branch)?;
-    
+
     // Get common commits using merge-base
     let common_commits = get_common_commits(repo_path, dev_branch, target_branch)?;
-    
+
     Ok(SymmetricDiffResult {
         commits_in_dev_not_target: dev_not_target,
         commits_in_target_not_dev: target_not_dev,
@@ -431,11 +426,7 @@ pub fn check_commit_exists_in_branch(
     Ok(output.status.success())
 }
 
-pub fn get_common_commits(
-    repo_path: &Path,
-    branch1: &str,
-    branch2: &str,
-) -> Result<Vec<String>> {
+pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Result<Vec<String>> {
     let merge_base_output = Command::new("git")
         .current_dir(repo_path)
         .args(["merge-base", branch1, branch2])
@@ -480,64 +471,6 @@ pub fn get_common_commits(
     Ok(commits)
 }
 
-pub fn get_commits_between_branches(
-    repo_path: &Path,
-    base_branch: &str,
-    target_branch: &str,
-) -> Result<Vec<String>> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args([
-            "rev-list",
-            "--reverse",
-            &format!("{}..{}", base_branch, target_branch),
-        ])
-        .output()
-        .context("Failed to get commits between branches")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to get commits between branches: {}", stderr);
-    }
-
-    let commits = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect();
-
-    Ok(commits)
-}
-
-pub fn check_pr_title_exists_in_branch(
-    repo_path: &Path,
-    pr_title: &str,
-    branch: &str,
-) -> Result<bool> {
-    // Get all commit messages from the target branch
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args([
-            "log",
-            "--format=%s",
-            "--grep",
-            pr_title,
-            branch,
-        ])
-        .output()
-        .context("Failed to search for PR title in branch")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to search for PR title in branch: {}", stderr);
-    }
-
-    let commit_messages = String::from_utf8_lossy(&output.stdout);
-    let has_match = !commit_messages.trim().is_empty();
-    
-    Ok(has_match)
-}
-
 pub fn check_pr_title_fuzzy_match_in_branch(
     repo_path: &Path,
     pr_title: &str,
@@ -546,13 +479,7 @@ pub fn check_pr_title_fuzzy_match_in_branch(
     // Get all commit messages from the target branch (last 1000 commits for performance)
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args([
-            "log",
-            "--format=%s",
-            "-n",
-            "1000",
-            branch,
-        ])
+        .args(["log", "--format=%s", "-n", "1000", branch])
         .output()
         .context("Failed to get commit messages from branch")?;
 
@@ -562,20 +489,20 @@ pub fn check_pr_title_fuzzy_match_in_branch(
     }
 
     let commit_messages = String::from_utf8_lossy(&output.stdout);
-    
+
     // Clean and normalize the PR title for comparison
     let normalized_pr_title = normalize_title(pr_title);
-    
+
     // Check if any commit message contains key parts of the PR title
     for commit_message in commit_messages.lines() {
         let normalized_commit_message = normalize_title(commit_message);
-        
+
         // Check for fuzzy match - if the PR title contains significant words from commit message
         if fuzzy_title_match(&normalized_pr_title, &normalized_commit_message) {
             return Ok(true);
         }
     }
-    
+
     Ok(false)
 }
 
@@ -596,20 +523,29 @@ fn normalize_title(title: &str) -> String {
 
 fn fuzzy_title_match(pr_title: &str, commit_message: &str) -> bool {
     // Split into words and check if significant words match
-    let pr_words: Vec<&str> = pr_title.split_whitespace().filter(|w| w.len() > 3).collect();
-    let commit_words: Vec<&str> = commit_message.split_whitespace().filter(|w| w.len() > 3).collect();
-    
+    let pr_words: Vec<&str> = pr_title
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
+    let commit_words: Vec<&str> = commit_message
+        .split_whitespace()
+        .filter(|w| w.len() > 3)
+        .collect();
+
     if pr_words.is_empty() || commit_words.is_empty() {
         return false;
     }
-    
+
     // Check if at least 60% of significant words match
-    let matching_words = pr_words.iter()
-        .filter(|&&pr_word| commit_words.iter().any(|&commit_word| 
-            commit_word.contains(pr_word) || pr_word.contains(commit_word)
-        ))
+    let matching_words = pr_words
+        .iter()
+        .filter(|&&pr_word| {
+            commit_words
+                .iter()
+                .any(|&commit_word| commit_word.contains(pr_word) || pr_word.contains(commit_word))
+        })
         .count();
-    
+
     let match_ratio = matching_words as f64 / pr_words.len() as f64;
     match_ratio >= 0.6
 }
@@ -649,7 +585,10 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     // Remove found migration worktrees
     for worktree_id in migration_worktrees {
         if let Err(e) = force_remove_worktree(base_repo_path, &worktree_id) {
-            eprintln!("Warning: Failed to remove migration worktree {}: {}", worktree_id, e);
+            eprintln!(
+                "Warning: Failed to remove migration worktree {}: {}",
+                worktree_id, e
+            );
         }
     }
 
