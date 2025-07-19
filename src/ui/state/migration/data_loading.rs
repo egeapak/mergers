@@ -25,7 +25,7 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum LoadingStage {
     NotStarted,
     FetchingPullRequests,
@@ -48,6 +48,7 @@ pub struct MigrationDataLoadingState {
     pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>, String>>>,
     repo_setup_task:
         Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>), String>>>,
+    git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory, String>>>,
     work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>), String>>>>,
     analysis_task:
         Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis, String>>>,
@@ -67,6 +68,7 @@ pub struct MigrationDataLoadingState {
     prs_with_work_items: Vec<PullRequestWithWorkItems>,
     repo_path: Option<std::path::PathBuf>,
     terminal_states: Option<Vec<String>>,
+    commit_history: Option<crate::git::CommitHistory>,
 }
 
 impl MigrationDataLoadingState {
@@ -85,6 +87,7 @@ impl MigrationDataLoadingState {
             config: Some(config),
             pr_fetch_task: None,
             repo_setup_task: None,
+            git_history_task: None,
             work_items_tasks: None,
             analysis_task: None,
             network_processor: None,
@@ -99,6 +102,7 @@ impl MigrationDataLoadingState {
             prs_with_work_items: Vec::new(),
             repo_path: None,
             terminal_states: None,
+            commit_history: None,
         }
     }
 
@@ -147,14 +151,13 @@ impl MigrationDataLoadingState {
     async fn start_repository_setup(&mut self) -> Result<(), String> {
         if let Some(config) = &self.config {
             self.loading_stage = LoadingStage::SettingUpRepository;
-            self.status = "Setting up repository...".to_string();
+            self.status = "Setting up repository and preparing git history fetch...".to_string();
             self.progress = 0.2;
 
-            let config = config.clone();
+            let config_clone = config.clone();
             let migration_id = self.migration_id.clone();
-
             self.repo_setup_task = Some(tokio::spawn(async move {
-                Self::perform_repository_setup(config, migration_id).await
+                Self::perform_repository_setup(config_clone, migration_id).await
             }));
         }
         Ok(())
@@ -217,8 +220,21 @@ impl MigrationDataLoadingState {
                 let task = self.repo_setup_task.take().unwrap();
                 match task.await {
                     Ok(Ok((repo_path, terminal_states))) => {
-                        self.repo_path = Some(repo_path);
+                        self.repo_path = Some(repo_path.clone());
                         self.terminal_states = Some(terminal_states);
+
+                        // Start git history fetch in parallel now that repo is ready
+                        if let Some(config) = &self.config {
+                            let repo_path_clone = repo_path.clone();
+                            let target_branch = config.shared().target_branch.clone();
+
+                            self.git_history_task = Some(tokio::spawn(async move {
+                                get_target_branch_history(&repo_path_clone, &target_branch).map_err(
+                                    |e| format!("Failed to get target branch history: {e:?}"),
+                                )
+                            }));
+                        }
+
                         return Ok(true);
                     }
                     Ok(Err(e)) => {
@@ -347,9 +363,28 @@ impl MigrationDataLoadingState {
     }
 
     async fn start_migration_analysis(&mut self) -> Result<(), String> {
-        if let (Some(repo_path), Some(terminal_states), Some(config)) =
-            (&self.repo_path, &self.terminal_states, &self.config)
-        {
+        if !self.prs_with_work_items.is_empty() {
+            // Wait for git history fetch to complete if still running
+            if let Some(task) = self.git_history_task.take() {
+                self.status = "Waiting for git history fetch to complete...".to_string();
+                match task.await {
+                    Ok(Ok(commit_history)) => {
+                        self.commit_history = Some(commit_history);
+                    }
+                    Ok(Err(e)) => {
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        return Err(format!("Git history fetch task failed: {}", e));
+                    }
+                }
+            }
+
+            // Ensure we have the commit history
+            if self.commit_history.is_none() {
+                return Err("Commit history not available for analysis".to_string());
+            }
+
             self.loading_stage = LoadingStage::RunningAnalysis;
             self.prs_to_analyze = self.prs_with_work_items.len();
             self.prs_analyzed = 0;
@@ -361,9 +396,10 @@ impl MigrationDataLoadingState {
             self.analysis_progress = Some(progress_counter.clone());
 
             let prs_with_work_items = self.prs_with_work_items.clone();
-            let repo_path = repo_path.clone();
-            let terminal_states = terminal_states.clone();
-            let config = config.clone();
+            let repo_path = self.repo_path.clone().unwrap();
+            let terminal_states = self.terminal_states.clone().unwrap();
+            let commit_history = self.commit_history.clone().unwrap();
+            let config = self.config.clone().unwrap();
             let migration_id = self.migration_id.clone();
 
             self.analysis_task = Some(tokio::spawn(async move {
@@ -371,6 +407,7 @@ impl MigrationDataLoadingState {
                     prs_with_work_items,
                     repo_path,
                     terminal_states,
+                    commit_history,
                     config,
                     migration_id,
                     progress_counter,
@@ -385,6 +422,7 @@ impl MigrationDataLoadingState {
         prs_with_work_items: Vec<PullRequestWithWorkItems>,
         repo_path: std::path::PathBuf,
         terminal_states: Vec<String>,
+        commit_history: crate::git::CommitHistory,
         config: AppConfig,
         migration_id: String,
         progress_counter: Arc<AtomicUsize>,
@@ -408,10 +446,6 @@ impl MigrationDataLoadingState {
             &config.shared().target_branch,
         )
         .map_err(|e| format!("Failed to calculate git diff: {e:?}"))?;
-
-        // Pre-fetch complete commit history for target branch (optimization)
-        let commit_history = get_target_branch_history(&repo_path, &config.shared().target_branch)
-            .map_err(|e| format!("Failed to get target branch history: {e:?}"))?;
 
         // Analyze PRs using pre-fetched commit history (no individual git commands per PR)
         let mut pr_analyses = Vec::new();
@@ -482,23 +516,47 @@ impl MigrationDataLoadingState {
     fn get_loading_message(&self) -> String {
         match self.loading_stage {
             LoadingStage::NotStarted => "Initializing...".to_string(),
-            LoadingStage::FetchingPullRequests => "Fetching pull requests...".to_string(),
-            LoadingStage::SettingUpRepository => "Setting up repository...".to_string(),
+            LoadingStage::FetchingPullRequests => {
+                if self.git_history_task.is_some() {
+                    "Fetching pull requests and git history...".to_string()
+                } else {
+                    "Fetching pull requests...".to_string()
+                }
+            }
+            LoadingStage::SettingUpRepository => {
+                if self.git_history_task.is_some() {
+                    "Setting up repository and fetching git history...".to_string()
+                } else {
+                    "Setting up repository...".to_string()
+                }
+            }
             LoadingStage::FetchingWorkItems => {
-                if self.work_items_total > 0 {
+                let base_msg = if self.work_items_total > 0 {
                     format!(
                         "Fetching work items ({}/{})",
                         self.work_items_fetched, self.work_items_total
                     )
                 } else {
                     "Fetching work items...".to_string()
+                };
+
+                if self.git_history_task.is_some() {
+                    format!("{} and git history...", base_msg)
+                } else {
+                    base_msg
                 }
             }
             LoadingStage::WaitingForWorkItems => {
-                format!(
+                let work_items_msg = format!(
                     "Fetching work items ({}/{})",
                     self.work_items_fetched, self.work_items_total
-                )
+                );
+
+                if self.git_history_task.is_some() {
+                    format!("{} and git history...", work_items_msg)
+                } else {
+                    work_items_msg
+                }
             }
             LoadingStage::RunningAnalysis => {
                 format!(
@@ -718,5 +776,84 @@ impl AppState for MigrationDataLoadingState {
             }
             _ => StateChange::Keep,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parallel_execution_flow() {
+        // This test verifies the parallel execution flow structure
+        let config = AppConfig::Migration {
+            shared: crate::models::SharedConfig {
+                organization: "test".to_string(),
+                project: "test".to_string(),
+                repository: "test".to_string(),
+                pat: "test".to_string(),
+                target_branch: "main".to_string(),
+                dev_branch: "dev".to_string(),
+                local_repo: None,
+                max_concurrent_network: 5,
+                max_concurrent_processing: 2,
+                parallel_limit: 5,
+            },
+            migration: crate::models::MigrationModeConfig {
+                terminal_states: "Done,Closed".to_string(),
+                include_tagged: false,
+            },
+        };
+
+        let state = MigrationDataLoadingState::new(config);
+
+        // Initially git_history_task should be None
+        assert!(state.git_history_task.is_none());
+        assert!(state.commit_history.is_none());
+
+        // Verify initial state
+        assert_eq!(state.loading_stage, LoadingStage::NotStarted);
+        assert!(state.repo_path.is_none());
+        assert!(state.terminal_states.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_loading_messages_reflect_parallel_operations() {
+        let config = AppConfig::Migration {
+            shared: crate::models::SharedConfig {
+                organization: "test".to_string(),
+                project: "test".to_string(),
+                repository: "test".to_string(),
+                pat: "test".to_string(),
+                target_branch: "main".to_string(),
+                dev_branch: "dev".to_string(),
+                local_repo: None,
+                max_concurrent_network: 5,
+                max_concurrent_processing: 2,
+                parallel_limit: 5,
+            },
+            migration: crate::models::MigrationModeConfig {
+                terminal_states: "Done,Closed".to_string(),
+                include_tagged: false,
+            },
+        };
+
+        let mut state = MigrationDataLoadingState::new(config);
+
+        // Test that loading messages change when git history task is present
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        let msg_without_git = state.get_loading_message();
+        assert_eq!(msg_without_git, "Fetching pull requests...");
+
+        // Simulate git history task being started
+        state.git_history_task = Some(tokio::spawn(async {
+            Ok(crate::git::CommitHistory {
+                commit_hashes: std::collections::HashSet::new(),
+                commit_messages: Vec::new(),
+            })
+        }));
+
+        let msg_with_git = state.get_loading_message();
+        assert_eq!(msg_with_git, "Fetching pull requests and git history...");
     }
 }
