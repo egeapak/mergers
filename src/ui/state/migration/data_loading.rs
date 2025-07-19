@@ -1,6 +1,9 @@
 use crate::{
     api::AzureDevOpsClient,
-    git::{cleanup_migration_worktrees, force_remove_worktree, setup_repository},
+    git::{
+        cleanup_migration_worktrees, force_remove_worktree, get_target_branch_history,
+        setup_repository,
+    },
     migration::MigrationAnalyzer,
     models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
     ui::App,
@@ -15,6 +18,10 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,6 +57,9 @@ pub struct MigrationDataLoadingState {
     total_prs: usize,
     work_items_fetched: usize,
     work_items_total: usize,
+    prs_analyzed: usize,
+    prs_to_analyze: usize,
+    analysis_progress: Option<Arc<AtomicUsize>>,
     migration_id: String,
 
     // Intermediate results
@@ -82,6 +92,9 @@ impl MigrationDataLoadingState {
             work_items_fetched: 0,
             work_items_total: 0,
             migration_id: format!("migration-{}", timestamp),
+            prs_analyzed: 0,
+            prs_to_analyze: 0,
+            analysis_progress: None,
             prs: Vec::new(),
             prs_with_work_items: Vec::new(),
             repo_path: None,
@@ -338,8 +351,14 @@ impl MigrationDataLoadingState {
             (&self.repo_path, &self.terminal_states, &self.config)
         {
             self.loading_stage = LoadingStage::RunningAnalysis;
-            self.status = "Running migration analysis...".to_string();
+            self.prs_to_analyze = self.prs_with_work_items.len();
+            self.prs_analyzed = 0;
+
             self.progress = 0.7;
+
+            // Create shared progress counter
+            let progress_counter = Arc::new(AtomicUsize::new(0));
+            self.analysis_progress = Some(progress_counter.clone());
 
             let prs_with_work_items = self.prs_with_work_items.clone();
             let repo_path = repo_path.clone();
@@ -354,6 +373,7 @@ impl MigrationDataLoadingState {
                     terminal_states,
                     config,
                     migration_id,
+                    progress_counter,
                 )
                 .await
             }));
@@ -367,6 +387,7 @@ impl MigrationDataLoadingState {
         terminal_states: Vec<String>,
         config: AppConfig,
         migration_id: String,
+        progress_counter: Arc<AtomicUsize>,
     ) -> Result<crate::models::MigrationAnalysis, String> {
         // Create client from config
         let client = AzureDevOpsClient::new(
@@ -388,52 +409,24 @@ impl MigrationDataLoadingState {
         )
         .map_err(|e| format!("Failed to calculate git diff: {e:?}"))?;
 
-        // Create network processor for git operations (these can be CPU intensive)
-        let network_processor = NetworkProcessor::new_with_limits(
-            config.shared().max_concurrent_network,
-            config.shared().max_concurrent_processing,
-        );
+        // Pre-fetch complete commit history for target branch (optimization)
+        let commit_history = get_target_branch_history(&repo_path, &config.shared().target_branch)
+            .map_err(|e| format!("Failed to get target branch history: {e:?}"))?;
 
-        // Create analysis operations - git operations will be throttled as processing
-        let analysis_operations: Vec<_> = prs_with_work_items
-            .iter()
-            .map(|pr_with_work_items| {
-                let analyzer = analyzer.clone();
-                let pr_clone = pr_with_work_items.clone();
-                let symmetric_diff_clone = symmetric_diff.clone();
-                let repo_path_clone = repo_path.clone();
-                let target_branch = config.shared().target_branch.clone();
-
-                move || async move {
-                    analyzer
-                        .analyze_single_pr(
-                            &pr_clone,
-                            &symmetric_diff_clone,
-                            &repo_path_clone,
-                            &target_branch,
-                        )
-                        .await
-                }
-            })
-            .collect();
-
-        // Execute git operations with throttling (as they're CPU/disk intensive)
-        let mut analysis_results = Vec::new();
-        for operation in analysis_operations {
-            let result = network_processor
-                .execute_processing_operation(operation)
-                .await;
-            analysis_results.push(result);
-        }
-
-        // Wait for all analyses to complete
-        // Collect all analysis results
+        // Analyze PRs using pre-fetched commit history (no individual git commands per PR)
         let mut pr_analyses = Vec::new();
-        for result in analysis_results {
-            match result {
-                Ok(analysis) => pr_analyses.push(analysis),
-                Err(e) => return Err(format!("Analysis failed: {}", e)),
-            }
+        for pr_with_work_items in prs_with_work_items {
+            let analysis = analyzer
+                .analyze_single_pr(&pr_with_work_items, &symmetric_diff, &commit_history)
+                .await
+                .map_err(|e| {
+                    format!("Analysis failed for PR {}: {}", pr_with_work_items.pr.id, e)
+                })?;
+
+            pr_analyses.push(analysis);
+
+            // Update progress counter
+            progress_counter.fetch_add(1, Ordering::Relaxed);
         }
 
         // Categorize PRs
@@ -470,10 +463,17 @@ impl MigrationDataLoadingState {
                 }
             } else {
                 // Update progress while analysis is running
-                if self.progress < 0.95 {
-                    self.progress += 0.01; // Slowly increment progress
+                if let Some(ref progress_counter) = self.analysis_progress {
+                    self.prs_analyzed = progress_counter.load(Ordering::Relaxed);
                 }
-                self.status = format!("Analyzing {} PRs...", self.total_prs);
+
+                // Calculate progress based on analyzed PRs
+                if self.prs_to_analyze > 0 {
+                    let base_progress = 0.7; // Starting progress for analysis phase
+                    let analysis_progress =
+                        (self.prs_analyzed as f64 / self.prs_to_analyze as f64) * 0.25; // 25% of total progress for analysis
+                    self.progress = base_progress + analysis_progress;
+                }
             }
         }
         Ok(false)
@@ -501,7 +501,10 @@ impl MigrationDataLoadingState {
                 )
             }
             LoadingStage::RunningAnalysis => {
-                format!("Analyzing {} PRs...", self.total_prs)
+                format!(
+                    "Analyzing {}/{} PRs...",
+                    self.prs_analyzed, self.prs_to_analyze
+                )
             }
             LoadingStage::Complete => "Analysis complete".to_string(),
         }

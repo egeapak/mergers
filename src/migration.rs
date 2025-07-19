@@ -1,9 +1,8 @@
 use anyhow::Result;
-use std::path::Path;
 
 use crate::{
     api::AzureDevOpsClient,
-    git::{check_commit_exists_in_branch, check_pr_merged_in_branch},
+    git::{CommitHistory, check_commit_in_history, check_pr_merged_in_history},
     models::{MigrationAnalysis, PRAnalysisResult, PullRequestWithWorkItems, SymmetricDiffResult},
 };
 
@@ -25,8 +24,7 @@ impl MigrationAnalyzer {
         &self,
         pr_with_work_items: &PullRequestWithWorkItems,
         _symmetric_diff: &SymmetricDiffResult,
-        repo_path: &Path,
-        target_branch: &str,
+        commit_history: &CommitHistory,
     ) -> Result<PRAnalysisResult> {
         // Get commit ID from PR
         let commit_id = if let Some(last_merge_commit) = &pr_with_work_items.pr.last_merge_commit {
@@ -46,18 +44,15 @@ impl MigrationAnalyzer {
             });
         };
 
-        // Check if commit exists in target branch
-        let commit_in_target =
-            check_commit_exists_in_branch(repo_path, &commit_id, target_branch).unwrap_or(false);
+        // Check if commit exists in target branch using pre-fetched history
+        let commit_in_target = check_commit_in_history(&commit_id, commit_history);
 
-        // Check if PR was merged using comprehensive PR detection
-        let commit_title_in_target = check_pr_merged_in_branch(
-            repo_path,
+        // Check if PR was merged using comprehensive PR detection with pre-fetched history
+        let commit_title_in_target = check_pr_merged_in_history(
             pr_with_work_items.pr.id,
             &pr_with_work_items.pr.title,
-            target_branch,
-        )
-        .unwrap_or(false);
+            commit_history,
+        );
 
         // Analyze work items
         let (all_work_items_terminal, terminal_work_items, non_terminal_work_items) = self
