@@ -16,6 +16,7 @@ pub struct Config {
     pub parallel_limit: Option<usize>,
     pub max_concurrent_network: Option<usize>,
     pub max_concurrent_processing: Option<usize>,
+    pub tag_prefix: Option<String>,
 }
 
 impl Default for Config {
@@ -32,6 +33,7 @@ impl Default for Config {
             parallel_limit: Some(300),
             max_concurrent_network: Some(100),
             max_concurrent_processing: Some(10),
+            tag_prefix: Some("merged-".to_string()),
         }
     }
 }
@@ -74,6 +76,7 @@ impl Config {
             max_concurrent_processing: std::env::var("MERGERS_MAX_CONCURRENT_PROCESSING")
                 .ok()
                 .and_then(|s| s.parse().ok()),
+            tag_prefix: std::env::var("MERGERS_TAG_PREFIX").ok(),
         }
     }
 
@@ -119,6 +122,7 @@ impl Config {
             max_concurrent_processing: other
                 .max_concurrent_processing
                 .or(self.max_concurrent_processing),
+            tag_prefix: other.tag_prefix.or(self.tag_prefix),
         }
     }
 

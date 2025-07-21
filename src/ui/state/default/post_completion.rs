@@ -135,7 +135,7 @@ impl PostCompletionState {
         let result = match &task_item.task {
             PostCompletionTask::TaggingPR { pr_id, .. } => {
                 let version = app.version.as_ref().unwrap();
-                let tag_name = format!("merged-{}", version);
+                let tag_name = format!("{}{}", app.tag_prefix, version);
                 app.client.add_label_to_pr(*pr_id, &tag_name).await
             }
             PostCompletionTask::UpdatingWorkItem { work_item_id, .. } => {
@@ -274,8 +274,8 @@ impl AppState for PostCompletionState {
                 Line::from("🎉 All post-completion tasks have been processed!"),
                 Line::from(""),
                 Line::from(format!(
-                    "✅ PRs tagged with 'merged-{}'",
-                    app.version.as_ref().unwrap()
+                    "✅ PRs tagged with '{}{}' ",
+                    app.tag_prefix, app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "✅ Work items updated to '{}'",
@@ -303,8 +303,8 @@ impl AppState for PostCompletionState {
                 Line::from("Processing tasks automatically..."),
                 Line::from(""),
                 Line::from(format!(
-                    "🏷️  Tagging PRs with 'merged-{}'",
-                    app.version.as_ref().unwrap()
+                    "🏷️  Tagging PRs with '{}{}' ",
+                    app.tag_prefix, app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "📝 Updating work items to '{}'",

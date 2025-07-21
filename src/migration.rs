@@ -195,13 +195,37 @@ impl MigrationAnalyzer {
         analyses: Vec<PRAnalysisResult>,
         symmetric_diff: SymmetricDiffResult,
     ) -> Result<MigrationAnalysis> {
+        self.categorize_prs_with_overrides(analyses, symmetric_diff, Default::default())
+    }
+
+    pub fn categorize_prs_with_overrides(
+        &self,
+        analyses: Vec<PRAnalysisResult>,
+        symmetric_diff: SymmetricDiffResult,
+        manual_overrides: crate::models::ManualOverrides,
+    ) -> Result<MigrationAnalysis> {
         let mut eligible = Vec::new();
         let mut unsure = Vec::new();
         let mut not_merged = Vec::new();
         let mut unsure_details = Vec::new();
 
         for analysis in &analyses {
-            // Use enhanced logic: PR is actually merged if commit ID OR title is found
+            let pr_id = analysis.pr.pr.id;
+            
+            // Check for manual overrides first
+            if manual_overrides.marked_as_not_eligible.contains(&pr_id) {
+                // Manually marked as not eligible - always goes to not_merged regardless of automatic analysis
+                not_merged.push(analysis.pr.clone());
+                continue;
+            }
+            
+            if manual_overrides.marked_as_eligible.contains(&pr_id) {
+                // Manually marked as eligible - always goes to eligible regardless of automatic analysis
+                eligible.push(analysis.pr.clone());
+                continue;
+            }
+            
+            // Use enhanced logic for automatic categorization: PR is actually merged if commit ID OR title is found
             let actually_merged = analysis.commit_in_target || analysis.commit_title_in_target;
 
             match (analysis.all_work_items_terminal, actually_merged) {
@@ -233,6 +257,7 @@ impl MigrationAnalyzer {
             symmetric_diff,
             unsure_details: unsure_details.clone(),
             all_details: analyses,
+            manual_overrides,
         })
     }
 }
@@ -321,6 +346,8 @@ mod tests {
         assert_eq!(result.unsure_prs.len(), 0);
         assert_eq!(result.not_merged_prs.len(), 0);
         assert_eq!(result.all_details.len(), 1);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
     #[tokio::test]
@@ -413,6 +440,8 @@ mod tests {
         assert_eq!(result.unsure_details.len(), 1);
         assert_eq!(result.all_details.len(), 3);
         assert!(result.unsure_details[0].unsure_reason.is_some());
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
     #[tokio::test]
@@ -464,6 +493,8 @@ mod tests {
         assert_eq!(result.unsure_prs.len(), 0);
         assert_eq!(result.not_merged_prs.len(), 0);
         assert_eq!(result.all_details.len(), 1);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
     #[tokio::test]
@@ -520,6 +551,8 @@ mod tests {
         assert_eq!(result.not_merged_prs.len(), 0);
         assert_eq!(result.unsure_details.len(), 0);
         assert_eq!(result.all_details.len(), 1);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
     #[tokio::test]
@@ -605,6 +638,8 @@ mod tests {
         assert_eq!(result.eligible_prs[0].pr.id, 1);
         // Verify the unsure PR is the one without commit in target
         assert_eq!(result.unsure_prs[0].pr.id, 2);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
     #[tokio::test]
@@ -682,6 +717,8 @@ mod tests {
         assert_eq!(result.unsure_prs.len(), 1);
         assert_eq!(result.not_merged_prs.len(), 1);
         assert_eq!(result.all_details.len(), 2);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
 
         // Verify the not_merged PR has a proper reason
         let not_merged_detail = result.all_details.iter().find(|d| d.pr.pr.id == 1).unwrap();
@@ -795,6 +832,8 @@ mod tests {
         assert_eq!(result.unsure_prs.len(), 0);
         assert_eq!(result.not_merged_prs.len(), 1);
         assert_eq!(result.all_details.len(), 3);
+        assert!(result.manual_overrides.marked_as_eligible.is_empty());
+        assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
 
         // Verify detailed reasons include detection information
         let eligible_1 = result.all_details.iter().find(|d| d.pr.pr.id == 1).unwrap();
@@ -830,5 +869,88 @@ mod tests {
                 .unwrap()
                 .contains("PR title/ID not found in commit history")
         );
+    }
+
+    #[tokio::test]
+    async fn test_manual_overrides() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec![
+            "Closed".to_string(),
+            "Next Closed".to_string(),
+            "Next Merged".to_string(),
+        ];
+        let analyzer = MigrationAnalyzer::new(client, terminal_states);
+
+        let symmetric_diff = SymmetricDiffResult {
+            commits_in_dev_not_target: Vec::new(),
+            commits_in_target_not_dev: Vec::new(),
+            common_commits: Vec::new(),
+        };
+
+        // PR that would naturally be eligible but manually marked as not eligible
+        let naturally_eligible_pr = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(1, "Naturally eligible", Some("abc123".to_string())),
+                work_items: vec![create_test_work_item(1, "Closed")],
+                selected: false,
+            },
+            all_work_items_terminal: true,
+            terminal_work_items: vec![create_test_work_item(1, "Closed")],
+            non_terminal_work_items: Vec::new(),
+            commit_in_target: true,
+            commit_title_in_target: false,
+            commit_id: "abc123".to_string(),
+            unsure_reason: None,
+            reason: Some("Eligible: Work items in terminal state and PR found in target branch".to_string()),
+        };
+
+        // PR that would naturally not be eligible but manually marked as eligible
+        let naturally_not_eligible_pr = PRAnalysisResult {
+            pr: PullRequestWithWorkItems {
+                pr: create_test_pr(2, "Naturally not eligible", Some("def456".to_string())),
+                work_items: vec![create_test_work_item(2, "Active")],
+                selected: false,
+            },
+            all_work_items_terminal: false,
+            terminal_work_items: Vec::new(),
+            non_terminal_work_items: vec![create_test_work_item(2, "Active")],
+            commit_in_target: false,
+            commit_title_in_target: false,
+            commit_id: "def456".to_string(),
+            unsure_reason: None,
+            reason: Some("Not merged: Work items not in terminal state and PR not found in target branch".to_string()),
+        };
+
+        // Create manual overrides
+        let mut manual_overrides = crate::models::ManualOverrides::default();
+        manual_overrides.marked_as_not_eligible.insert(1); // PR 1 manually marked not eligible
+        manual_overrides.marked_as_eligible.insert(2); // PR 2 manually marked eligible
+
+        let analyses = vec![naturally_eligible_pr, naturally_not_eligible_pr];
+        let result = analyzer.categorize_prs_with_overrides(analyses, symmetric_diff, manual_overrides.clone()).unwrap();
+
+        // Verify manual overrides work
+        assert_eq!(result.eligible_prs.len(), 1);
+        assert_eq!(result.unsure_prs.len(), 0);
+        assert_eq!(result.not_merged_prs.len(), 1);
+        assert_eq!(result.all_details.len(), 2);
+
+        // PR 1 should be in not_merged despite being naturally eligible (manual override)
+        assert_eq!(result.not_merged_prs[0].pr.id, 1);
+        // PR 2 should be in eligible despite being naturally not eligible (manual override)
+        assert_eq!(result.eligible_prs[0].pr.id, 2);
+
+        // Verify manual overrides are preserved
+        assert!(result.manual_overrides.marked_as_not_eligible.contains(&1));
+        assert!(result.manual_overrides.marked_as_eligible.contains(&2));
+        assert_eq!(result.manual_overrides.marked_as_not_eligible.len(), 1);
+        assert_eq!(result.manual_overrides.marked_as_eligible.len(), 1);
     }
 }

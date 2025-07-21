@@ -142,6 +142,69 @@ impl MigrationState {
         }
     }
 
+    fn toggle_pr_eligibility(&self, app: &mut App, pr_id: i32) {
+        // Get current manual override state
+        let current_override = app.has_manual_override(pr_id);
+        
+        match self.current_tab {
+            MigrationTab::Eligible => {
+                // In eligible tab: eligible → not eligible → no override (back to eligible)
+                match current_override {
+                    None => {
+                        // No override (naturally eligible) → mark as not eligible
+                        app.mark_pr_as_not_eligible(pr_id);
+                    }
+                    Some(false) => {
+                        // Manually marked not eligible → remove override (back to natural state)
+                        app.remove_manual_override(pr_id);
+                    }
+                    Some(true) => {
+                        // This shouldn't happen in eligible tab, but handle gracefully
+                        // Manually marked eligible → mark as not eligible
+                        app.mark_pr_as_not_eligible(pr_id);
+                    }
+                }
+            }
+            MigrationTab::NotMerged => {
+                // In not merged tab: not eligible → eligible → no override (back to not eligible) 
+                match current_override {
+                    None => {
+                        // No override (naturally not eligible) → mark as eligible
+                        app.mark_pr_as_eligible(pr_id);
+                    }
+                    Some(true) => {
+                        // Manually marked eligible → remove override (back to natural state)
+                        app.remove_manual_override(pr_id);
+                    }
+                    Some(false) => {
+                        // This shouldn't happen in not merged tab, but handle gracefully
+                        // Manually marked not eligible → mark as eligible
+                        app.mark_pr_as_eligible(pr_id);
+                    }
+                }
+            }
+            MigrationTab::Unsure => {
+                // In unsure tab: work like not merged tab
+                // unsure → eligible → no override (back to unsure)
+                match current_override {
+                    None => {
+                        // No override (naturally unsure) → mark as eligible
+                        app.mark_pr_as_eligible(pr_id);
+                    }
+                    Some(true) => {
+                        // Manually marked eligible → remove override (back to natural state)
+                        app.remove_manual_override(pr_id);
+                    }
+                    Some(false) => {
+                        // This shouldn't happen in unsure tab, but handle gracefully
+                        // Manually marked not eligible → mark as eligible
+                        app.mark_pr_as_eligible(pr_id);
+                    }
+                }
+            }
+        }
+    }
+
     fn render_tabs(&self, f: &mut Frame, app: &App, area: Rect) {
         let analysis = app.migration_analysis.as_ref().unwrap();
 
@@ -187,6 +250,34 @@ impl MigrationState {
         let items: Vec<ListItem> = prs
             .iter()
             .map(|pr| {
+                // Check if this PR has a manual override and show what Space will do
+                let (override_indicator, space_action) = match app.has_manual_override(pr.pr.id) {
+                    Some(true) => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " →❌", // will mark not eligible
+                            MigrationTab::Unsure => " →◎", // will reset override  
+                            MigrationTab::NotMerged => " →◎", // will reset override
+                        };
+                        (" [📌 Manual]", action)
+                    },
+                    Some(false) => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " →◎", // will reset override
+                            MigrationTab::Unsure => " →📌", // will mark eligible
+                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                        };
+                        (" [❌ Manual]", action)
+                    },
+                    None => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " →❌", // will mark not eligible
+                            MigrationTab::Unsure => " →📌", // will mark eligible
+                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                        };
+                        ("", action)
+                    }
+                };
+
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(
@@ -197,6 +288,14 @@ impl MigrationState {
                         ),
                         Span::raw(" "),
                         Span::raw(&pr.pr.title),
+                        Span::styled(
+                            override_indicator,
+                            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            space_action,
+                            Style::default().fg(Color::Cyan),
+                        ),
                     ]),
                     Line::from(vec![
                         Span::styled(
@@ -329,11 +428,22 @@ impl MigrationState {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("  ↑/↓ - Navigate PRs"),
-            Line::from("  ←/→ - Switch tabs"),
-            Line::from("  Enter/Space - Open PR in browser"),
-            Line::from("  d - Toggle details"),
-            Line::from("  q - Quit"),
+            Line::from("  ↑/↓ - Navigate PRs | ←/→ - Switch tabs | o - Open PR in browser"),
+            Line::from("  d - Toggle details | q - Quit"),
+            Line::from(vec![Span::styled(
+                "Toggle Eligibility:",
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("  Space - Toggle PR eligibility (cycles through states)"),
+            Line::from(vec![Span::styled(
+                "Next Step:",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from("  Enter - Proceed to Version Input for Tagging"),
         ];
 
         let paragraph = Paragraph::new(help_text)
@@ -407,13 +517,25 @@ impl AppState for MigrationState {
                 self.switch_tab(app, 1);
                 StateChange::Keep
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Char('o') => {
+                // Open PR in browser
                 self.open_current_pr(app);
                 StateChange::Keep
             }
             KeyCode::Char('d') => {
                 self.show_details = !self.show_details;
                 StateChange::Keep
+            }
+            KeyCode::Char(' ') => {
+                // Toggle eligibility based on current tab and override state
+                if let Some(pr) = self.get_current_pr(app) {
+                    self.toggle_pr_eligibility(app, pr.pr.id);
+                }
+                StateChange::Keep
+            }
+            KeyCode::Enter => {
+                // Proceed to version input for tagging
+                StateChange::Change(Box::new(super::MigrationVersionInputState::new()))
             }
             _ => StateChange::Keep,
         }

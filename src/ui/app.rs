@@ -18,6 +18,7 @@ pub struct App {
     pub parallel_limit: usize,
     pub max_concurrent_network: usize,
     pub max_concurrent_processing: usize,
+    pub tag_prefix: String,
     pub client: AzureDevOpsClient,
 
     // Runtime state
@@ -48,6 +49,7 @@ impl App {
         parallel_limit: usize,
         max_concurrent_network: usize,
         max_concurrent_processing: usize,
+        tag_prefix: String,
         client: AzureDevOpsClient,
     ) -> Self {
         Self {
@@ -62,6 +64,7 @@ impl App {
             parallel_limit,
             max_concurrent_network,
             max_concurrent_processing,
+            tag_prefix,
             client,
             version: None,
             repo_path: None,
@@ -117,6 +120,85 @@ impl App {
             let _ = Command::new("cmd").args(&["/C", "start", &url]).spawn();
         }
     }
+
+    /// Mark a PR as manually eligible - moves it to eligible regardless of automatic analysis
+    pub fn mark_pr_as_eligible(&mut self, pr_id: i32) {
+        if let Some(analysis) = &mut self.migration_analysis {
+            // Remove from not eligible set if present
+            analysis.manual_overrides.marked_as_not_eligible.remove(&pr_id);
+            // Add to eligible set
+            analysis.manual_overrides.marked_as_eligible.insert(pr_id);
+            // Recategorize with new overrides
+            self.recategorize_prs();
+        }
+    }
+
+    /// Mark a PR as manually not eligible - moves it to not merged regardless of automatic analysis  
+    pub fn mark_pr_as_not_eligible(&mut self, pr_id: i32) {
+        if let Some(analysis) = &mut self.migration_analysis {
+            // Remove from eligible set if present
+            analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
+            // Add to not eligible set
+            analysis.manual_overrides.marked_as_not_eligible.insert(pr_id);
+            // Recategorize with new overrides
+            self.recategorize_prs();
+        }
+    }
+
+    /// Remove manual override for a PR - returns it to automatic categorization
+    pub fn remove_manual_override(&mut self, pr_id: i32) {
+        if let Some(analysis) = &mut self.migration_analysis {
+            analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
+            analysis.manual_overrides.marked_as_not_eligible.remove(&pr_id);
+            // Recategorize with updated overrides
+            self.recategorize_prs();
+        }
+    }
+
+    /// Check if a PR has a manual override
+    pub fn has_manual_override(&self, pr_id: i32) -> Option<bool> {
+        if let Some(analysis) = &self.migration_analysis {
+            if analysis.manual_overrides.marked_as_eligible.contains(&pr_id) {
+                Some(true) // manually marked eligible
+            } else if analysis.manual_overrides.marked_as_not_eligible.contains(&pr_id) {
+                Some(false) // manually marked not eligible
+            } else {
+                None // no manual override
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Recategorize all PRs with current manual overrides
+    fn recategorize_prs(&mut self) {
+        if let Some(analysis) = self.migration_analysis.take() {
+            // Create a new analyzer instance with the same parameters
+            let analyzer = crate::migration::MigrationAnalyzer::new(
+                self.client.clone(),
+                analysis.terminal_states.clone(),
+            );
+            
+            // Recategorize with current overrides
+            if let Ok(new_analysis) = analyzer.categorize_prs_with_overrides(
+                analysis.all_details.clone(),
+                analysis.symmetric_diff.clone(),
+                analysis.manual_overrides.clone(),
+            ) {
+                self.migration_analysis = Some(new_analysis);
+            } else {
+                // If recategorization fails, restore the original analysis
+                self.migration_analysis = Some(analysis);
+            }
+        }
+    }
+
+    /// Get migration configuration if available
+    pub fn get_migration_config(&self) -> Option<&crate::models::MigrationModeConfig> {
+        // Try to get from initial_state first, then fallback to a stored config
+        // For now, we'll return default values since we don't store the config in App
+        None
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +229,7 @@ mod tests {
             300,
             100,
             10,
+            "merged-".to_string(),
             client.clone(),
         );
         assert_eq!(app_default.parallel_limit, 300);
@@ -164,6 +247,7 @@ mod tests {
             500,
             100,
             20,
+            "merged-".to_string(),
             client,
         );
         assert_eq!(app_custom.parallel_limit, 500);

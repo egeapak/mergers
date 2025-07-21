@@ -50,6 +50,14 @@ pub struct Args {
     #[arg(long)]
     pub include_tagged: bool,
 
+    /// Tag prefix for PR tagging (both default and migration modes)
+    #[arg(long, default_value = "merged-")]
+    pub tag_prefix: Option<String>,
+
+    /// Batch size for tagging operations (migration mode only)
+    #[arg(long, default_value = "50")]
+    pub tag_batch_size: Option<usize>,
+
     /// Maximum number of parallel operations for API calls
     #[arg(long)]
     pub parallel_limit: Option<usize>,
@@ -80,6 +88,7 @@ pub struct SharedConfig {
     pub parallel_limit: usize,
     pub max_concurrent_network: usize,
     pub max_concurrent_processing: usize,
+    pub tag_prefix: String,
 }
 
 /// Configuration specific to default mode
@@ -93,6 +102,7 @@ pub struct DefaultModeConfig {
 pub struct MigrationModeConfig {
     pub terminal_states: String,
     pub include_tagged: bool,
+    pub tag_batch_size: usize,
 }
 
 /// Resolved configuration with mode-specific settings
@@ -144,6 +154,7 @@ impl Args {
             parallel_limit: self.parallel_limit,
             max_concurrent_network: self.max_concurrent_network,
             max_concurrent_processing: self.max_concurrent_processing,
+            tag_prefix: self.tag_prefix.clone(),
         };
 
         // Merge configs: file < env < cli
@@ -178,6 +189,7 @@ impl Args {
             parallel_limit: merged_config.parallel_limit.unwrap_or(300),
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
+            tag_prefix: merged_config.tag_prefix.unwrap_or_else(|| "merged-".to_string()),
         };
 
         // Return appropriate configuration based on mode
@@ -187,6 +199,7 @@ impl Args {
                 migration: MigrationModeConfig {
                     terminal_states: self.terminal_states,
                     include_tagged: self.include_tagged,
+                    tag_batch_size: self.tag_batch_size.unwrap_or(50),
                 },
             })
         } else {
@@ -336,6 +349,13 @@ pub struct MigrationAnalysis {
     pub symmetric_diff: SymmetricDiffResult,
     pub unsure_details: Vec<PRAnalysisResult>,
     pub all_details: Vec<PRAnalysisResult>,
+    pub manual_overrides: ManualOverrides,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ManualOverrides {
+    pub marked_as_eligible: std::collections::HashSet<i32>, // PR IDs manually marked as eligible
+    pub marked_as_not_eligible: std::collections::HashSet<i32>, // PR IDs manually marked as not eligible
 }
 
 #[derive(Debug, Clone)]
