@@ -73,6 +73,10 @@ pub struct Args {
     /// Create a sample configuration file
     #[arg(long)]
     pub create_config: bool,
+
+    /// Limit fetching to items created after this date (e.g., "1mo", "2w", "2025-07-01")
+    #[arg(long)]
+    pub since: Option<String>,
 }
 
 /// Shared configuration used by both modes
@@ -89,6 +93,7 @@ pub struct SharedConfig {
     pub max_concurrent_network: usize,
     pub max_concurrent_processing: usize,
     pub tag_prefix: String,
+    pub since: Option<String>,
 }
 
 /// Configuration specific to default mode
@@ -190,6 +195,7 @@ impl Args {
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
             tag_prefix: merged_config.tag_prefix.unwrap_or_else(|| "merged-".to_string()),
+            since: self.since.clone(),
         };
 
         // Return appropriate configuration based on mode

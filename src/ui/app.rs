@@ -19,6 +19,7 @@ pub struct App {
     pub max_concurrent_network: usize,
     pub max_concurrent_processing: usize,
     pub tag_prefix: String,
+    pub since: Option<String>,
     pub client: AzureDevOpsClient,
 
     // Runtime state
@@ -50,6 +51,7 @@ impl App {
         max_concurrent_network: usize,
         max_concurrent_processing: usize,
         tag_prefix: String,
+        since: Option<String>,
         client: AzureDevOpsClient,
     ) -> Self {
         Self {
@@ -65,6 +67,7 @@ impl App {
             max_concurrent_network,
             max_concurrent_processing,
             tag_prefix,
+            since,
             client,
             version: None,
             repo_path: None,
@@ -230,6 +233,7 @@ mod tests {
             100,
             10,
             "merged-".to_string(),
+            None,
             client.clone(),
         );
         assert_eq!(app_default.parallel_limit, 300);
@@ -248,6 +252,7 @@ mod tests {
             100,
             20,
             "merged-".to_string(),
+            None,
             client,
         );
         assert_eq!(app_custom.parallel_limit, 500);

@@ -113,10 +113,11 @@ impl MigrationDataLoadingState {
 
         let client = app.client.clone();
         let dev_branch = app.dev_branch.clone();
+        let since = app.since.clone();
 
         self.pr_fetch_task = Some(tokio::spawn(async move {
             let prs = client
-                .fetch_pull_requests(&dev_branch)
+                .fetch_pull_requests(&dev_branch, since.as_deref())
                 .await
                 .map_err(|e| format!("Failed to fetch pull requests: {}", e))?;
 
@@ -798,10 +799,13 @@ mod tests {
                 max_concurrent_network: 5,
                 max_concurrent_processing: 2,
                 parallel_limit: 5,
+                tag_prefix: "merged-".to_string(),
+                since: None,
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
                 include_tagged: false,
+                tag_batch_size: 50,
             },
         };
 
@@ -831,10 +835,13 @@ mod tests {
                 max_concurrent_network: 5,
                 max_concurrent_processing: 2,
                 parallel_limit: 5,
+                tag_prefix: "merged-".to_string(),
+                since: None,
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
                 include_tagged: false,
+                tag_batch_size: 50,
             },
         };
 

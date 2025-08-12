@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
         config.shared().max_concurrent_network,
         config.shared().max_concurrent_processing,
         config.shared().tag_prefix.clone(),
+        config.shared().since.clone(),
         client,
     );
 

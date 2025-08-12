@@ -3,8 +3,10 @@ use base64::Engine;
 use reqwest::{Client, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use chrono::{DateTime, Utc};
 
 use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef};
+use crate::utils::parse_since_date;
 
 #[derive(Clone)]
 pub struct AzureDevOpsClient {
@@ -53,12 +55,21 @@ impl AzureDevOpsClient {
     /// regardless of the total number. The Azure DevOps API has default limits on
     /// the number of items returned per request, so we use $top and $skip parameters
     /// to fetch all pages until no more results are available.
-    pub async fn fetch_pull_requests(&self, dev_branch: &str) -> Result<Vec<PullRequest>> {
+    /// 
+    /// If `since` is provided, stops fetching when encountering PRs older than the specified date.
+    pub async fn fetch_pull_requests(&self, dev_branch: &str, since: Option<&str>) -> Result<Vec<PullRequest>> {
         let mut all_prs = Vec::new();
         let mut skip = 0;
         let top = 100; // Number of PRs to fetch per request
         let max_requests = 100; // Safety limit to prevent infinite loops
         let mut request_count = 0;
+
+        // Parse the since date if provided
+        let since_date = if let Some(since_str) = since {
+            Some(parse_since_date(since_str).context("Failed to parse since date")?)
+        } else {
+            None
+        };
 
         #[derive(Deserialize)]
         struct PullRequestsResponse {
@@ -98,7 +109,32 @@ impl AzureDevOpsClient {
                 .with_context(|| format!("Failed to parse PR response: {}", text))?;
 
             let fetched_count = prs.value.len();
-            all_prs.extend(prs.value);
+            
+            // Filter PRs by date if since_date is specified
+            let mut filtered_prs = Vec::new();
+            let mut reached_date_limit = false;
+            
+            for pr in prs.value {
+                if let Some(since_dt) = since_date {
+                    if let Some(closed_date_str) = &pr.closed_date {
+                        if let Ok(closed_date) = DateTime::parse_from_rfc3339(closed_date_str) {
+                            let closed_date_utc = closed_date.with_timezone(&Utc);
+                            if closed_date_utc < since_dt {
+                                reached_date_limit = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                filtered_prs.push(pr);
+            }
+            
+            all_prs.extend(filtered_prs);
+            
+            // If we reached the date limit, stop fetching
+            if reached_date_limit {
+                break;
+            }
 
             // If we received fewer PRs than requested, we've reached the end
             if fetched_count < top {
