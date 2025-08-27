@@ -14,10 +14,15 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState},
 };
+use std::collections::HashSet;
 
 pub struct PullRequestSelectionState {
     table_state: TableState,
     work_item_index: usize,
+    multi_select_mode: bool,
+    available_states: Vec<String>,
+    selected_filter_states: HashSet<String>,
+    state_selection_index: usize,
 }
 
 impl PullRequestSelectionState {
@@ -25,6 +30,10 @@ impl PullRequestSelectionState {
         Self {
             table_state: TableState::default(),
             work_item_index: 0,
+            multi_select_mode: false,
+            available_states: Vec::new(),
+            selected_filter_states: HashSet::new(),
+            state_selection_index: 0,
         }
     }
 
@@ -98,6 +107,90 @@ impl PullRequestSelectionState {
                         self.work_item_index -= 1;
                     }
                 }
+            }
+        }
+    }
+
+    fn collect_distinct_work_item_states(&self, app: &App) -> Vec<String> {
+        let mut states = HashSet::new();
+        
+        for pr in &app.pull_requests {
+            for work_item in &pr.work_items {
+                if let Some(state) = &work_item.fields.state {
+                    states.insert(state.clone());
+                }
+            }
+        }
+        
+        let mut sorted_states: Vec<String> = states.into_iter().collect();
+        sorted_states.sort();
+        sorted_states
+    }
+
+    fn select_all_with_filter_states(&self, app: &mut App) {
+        if self.selected_filter_states.is_empty() {
+            return;
+        }
+
+        for pr in &mut app.pull_requests {
+            if pr.work_items.is_empty() {
+                continue;
+            }
+
+            let all_work_items_match = pr.work_items.iter().all(|work_item| {
+                if let Some(state) = &work_item.fields.state {
+                    self.selected_filter_states.contains(state)
+                } else {
+                    false
+                }
+            });
+
+            pr.selected = all_work_items_match;
+        }
+    }
+
+    fn clear_all_selections(&self, app: &mut App) {
+        for pr in &mut app.pull_requests {
+            pr.selected = false;
+        }
+    }
+
+    fn enter_multi_select_mode(&mut self, app: &App) {
+        self.multi_select_mode = true;
+        self.available_states = self.collect_distinct_work_item_states(app);
+        self.selected_filter_states.clear();
+        self.state_selection_index = 0;
+    }
+
+    fn exit_multi_select_mode(&mut self) {
+        self.multi_select_mode = false;
+        self.available_states.clear();
+        self.selected_filter_states.clear();
+        self.state_selection_index = 0;
+    }
+
+    fn toggle_state_in_filter(&mut self) {
+        if let Some(state) = self.available_states.get(self.state_selection_index) {
+            if self.selected_filter_states.contains(state) {
+                self.selected_filter_states.remove(state);
+            } else {
+                self.selected_filter_states.insert(state.clone());
+            }
+        }
+    }
+
+    fn next_state(&mut self) {
+        if !self.available_states.is_empty() {
+            self.state_selection_index = (self.state_selection_index + 1) % self.available_states.len();
+        }
+    }
+
+    fn previous_state(&mut self) {
+        if !self.available_states.is_empty() {
+            if self.state_selection_index == 0 {
+                self.state_selection_index = self.available_states.len() - 1;
+            } else {
+                self.state_selection_index -= 1;
             }
         }
     }
@@ -485,6 +578,117 @@ impl PullRequestSelectionState {
 
         f.render_widget(history_widget, area);
     }
+
+    fn render_state_selection_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Clear;
+        
+        // Create a centered popup area
+        let popup_area = {
+            let vertical_margin = area.height / 4;
+            let horizontal_margin = area.width / 4;
+            ratatui::layout::Rect {
+                x: area.x + horizontal_margin,
+                y: area.y + vertical_margin,
+                width: area.width - 2 * horizontal_margin,
+                height: area.height - 2 * vertical_margin,
+            }
+        };
+
+        // Clear the area first to ensure no transparency
+        f.render_widget(Clear, popup_area);
+        
+        // Then render a block with solid background
+        let background_block = Block::default()
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::NONE);
+        f.render_widget(background_block, popup_area);
+
+        // Create layout for title, states list, and help
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Min(5),    // States list
+                Constraint::Length(4), // Help text
+            ])
+            .split(popup_area);
+
+        // Render title
+        let title_text = format!(
+            "Select Work Item States ({} selected)",
+            self.selected_filter_states.len()
+        );
+        let title_widget = Paragraph::new(title_text)
+            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center);
+        f.render_widget(title_widget, chunks[0]);
+
+        // Render states list
+        let state_items: Vec<ListItem> = self.available_states
+            .iter()
+            .enumerate()
+            .map(|(i, state)| {
+                let checkbox = if self.selected_filter_states.contains(state) {
+                    "✓"
+                } else {
+                    "☐"
+                };
+                
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!("{} ", checkbox),
+                        Style::default().fg(
+                            if self.selected_filter_states.contains(state) {
+                                Color::Green
+                            } else {
+                                Color::White
+                            }
+                        ).add_modifier(Modifier::BOLD)
+                    ),
+                    Span::styled(
+                        state.clone(),
+                        Style::default().fg(
+                            if i == self.state_selection_index {
+                                Color::Yellow
+                            } else if self.selected_filter_states.contains(state) {
+                                Color::Green
+                            } else {
+                                Color::White
+                            }
+                        )
+                    ),
+                ]);
+                
+                ListItem::new(line).style(
+                    if i == self.state_selection_index {
+                        Style::default().bg(Color::DarkGray)
+                    } else {
+                        Style::default()
+                    }
+                )
+            })
+            .collect();
+
+        let states_list = List::new(state_items)
+            .block(Block::default().borders(Borders::ALL).title("States"))
+            .highlight_style(Style::default().bg(Color::DarkGray))
+            .highlight_symbol("→ ");
+
+        f.render_widget(states_list, chunks[1]);
+
+        // Render help
+        let help_lines = vec![
+            Line::from("↑/↓: Navigate | Space: Toggle state | Enter: Apply filter"),
+            Line::from("c: Clear & apply | a: Select all states | Esc: Cancel"),
+        ];
+        let help_widget = Paragraph::new(help_lines)
+            .style(Style::default().fg(Color::Gray))
+            .block(Block::default().borders(Borders::ALL).title("Help"))
+            .alignment(Alignment::Center);
+        f.render_widget(help_widget, chunks[2]);
+    }
 }
 
 #[async_trait]
@@ -640,76 +844,126 @@ impl AppState for PullRequestSelectionState {
         self.render_work_item_details(f, app, chunks[1]);
 
         let help = List::new(vec![
-            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | r: Refresh | q: Quit"),
+            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"),
         ])
         .block(Block::default().borders(Borders::ALL).title("Help"));
 
         f.render_widget(help, chunks[2]);
+
+        // Render state selection overlay if in multi-select mode
+        if self.multi_select_mode {
+            self.render_state_selection_overlay(f, f.area());
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        match code {
-            KeyCode::Char('q') => StateChange::Exit,
-            KeyCode::Up => {
-                self.previous(app);
-                StateChange::Keep
-            }
-            KeyCode::Down => {
-                self.next(app);
-                StateChange::Keep
-            }
-            KeyCode::Left => {
-                self.previous_work_item(app);
-                StateChange::Keep
-            }
-            KeyCode::Right => {
-                self.next_work_item(app);
-                StateChange::Keep
-            }
-            KeyCode::Char(' ') => {
-                self.toggle_selection(app);
-                StateChange::Keep
-            }
-            KeyCode::Char('p') => {
-                if let Some(i) = self.table_state.selected() {
-                    if let Some(pr) = app.pull_requests.get(i) {
-                        app.open_pr_in_browser(pr.pr.id);
-                    }
+        if self.multi_select_mode {
+            // Handle multi-select mode keys
+            match code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    self.exit_multi_select_mode();
+                    StateChange::Keep
                 }
-                StateChange::Keep
+                KeyCode::Up => {
+                    self.previous_state();
+                    StateChange::Keep
+                }
+                KeyCode::Down => {
+                    self.next_state();
+                    StateChange::Keep
+                }
+                KeyCode::Char(' ') => {
+                    self.toggle_state_in_filter();
+                    StateChange::Keep
+                }
+                KeyCode::Enter => {
+                    self.select_all_with_filter_states(app);
+                    self.exit_multi_select_mode();
+                    StateChange::Keep
+                }
+                KeyCode::Char('c') => {
+                    self.clear_all_selections(app);
+                    self.exit_multi_select_mode();
+                    StateChange::Keep
+                }
+                KeyCode::Char('a') => {
+                    // Select all available states
+                    for state in &self.available_states.clone() {
+                        self.selected_filter_states.insert(state.clone());
+                    }
+                    StateChange::Keep
+                }
+                _ => StateChange::Keep,
             }
-            KeyCode::Char('w') => {
-                if let Some(pr_index) = self.table_state.selected() {
-                    if let Some(pr) = app.pull_requests.get(pr_index) {
-                        if !pr.work_items.is_empty() {
-                            // Ensure work_item_index is within bounds
-                            let work_item_index = if self.work_item_index < pr.work_items.len() {
-                                self.work_item_index
-                            } else {
-                                0
-                            };
+        } else {
+            // Handle normal mode keys
+            match code {
+                KeyCode::Char('q') => StateChange::Exit,
+                KeyCode::Up => {
+                    self.previous(app);
+                    StateChange::Keep
+                }
+                KeyCode::Down => {
+                    self.next(app);
+                    StateChange::Keep
+                }
+                KeyCode::Left => {
+                    self.previous_work_item(app);
+                    StateChange::Keep
+                }
+                KeyCode::Right => {
+                    self.next_work_item(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char(' ') => {
+                    self.toggle_selection(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char('s') => {
+                    self.enter_multi_select_mode(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char('p') => {
+                    if let Some(i) = self.table_state.selected() {
+                        if let Some(pr) = app.pull_requests.get(i) {
+                            app.open_pr_in_browser(pr.pr.id);
+                        }
+                    }
+                    StateChange::Keep
+                }
+                KeyCode::Char('w') => {
+                    if let Some(pr_index) = self.table_state.selected() {
+                        if let Some(pr) = app.pull_requests.get(pr_index) {
+                            if !pr.work_items.is_empty() {
+                                // Ensure work_item_index is within bounds
+                                let work_item_index = if self.work_item_index < pr.work_items.len() {
+                                    self.work_item_index
+                                } else {
+                                    0
+                                };
 
-                            if let Some(work_item) = pr.work_items.get(work_item_index) {
-                                // Open only the currently displayed work item
-                                app.open_work_items_in_browser(&[work_item.clone()]);
+                                if let Some(work_item) = pr.work_items.get(work_item_index) {
+                                    // Open only the currently displayed work item
+                                    app.open_work_items_in_browser(&[work_item.clone()]);
+                                }
                             }
                         }
                     }
-                }
-                StateChange::Keep
-            }
-            KeyCode::Enter => {
-                if app.get_selected_prs().is_empty() {
                     StateChange::Keep
-                } else {
-                    StateChange::Change(Box::new(VersionInputState::new()))
                 }
+                KeyCode::Enter => {
+                    if app.get_selected_prs().is_empty() {
+                        StateChange::Keep
+                    } else {
+                        StateChange::Change(Box::new(VersionInputState::new()))
+                    }
+                }
+                KeyCode::Char('r') => {
+                    // Refresh: go back to data loading state to re-fetch PRs
+                    StateChange::Change(Box::new(DataLoadingState::new()))
+                }
+                _ => StateChange::Keep,
             }
-            KeyCode::Char('r') => {
-                // Refresh: go back to data loading state to re-fetch PRs
-                StateChange::Change(Box::new(DataLoadingState::new()))
-            }
-            _ => StateChange::Keep,
         }
     }
 }
