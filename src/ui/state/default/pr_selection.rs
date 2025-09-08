@@ -191,13 +191,11 @@ impl PullRequestSelectionState {
                     self.search_error_message = Some("No more results".to_string());
                     return;
                 }
+            } else if pos > 0 {
+                pos - 1
             } else {
-                if pos > 0 {
-                    pos - 1
-                } else {
-                    self.search_error_message = Some("No previous results".to_string());
-                    return;
-                }
+                self.search_error_message = Some("No previous results".to_string());
+                return;
             }
         } else {
             // We're not currently on a search result, find the nearest one
@@ -287,35 +285,30 @@ impl PullRequestSelectionState {
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
-        if let Some(i) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get_mut(i) {
+        if let Some(i) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get_mut(i) {
                 pr.selected = !pr.selected;
             }
-        }
     }
 
     fn next_work_item(&mut self, app: &App) {
-        if let Some(pr_index) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get(pr_index) {
-                if !pr.work_items.is_empty() {
+        if let Some(pr_index) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get(pr_index)
+                && !pr.work_items.is_empty() {
                     self.work_item_index = (self.work_item_index + 1) % pr.work_items.len();
                 }
-            }
-        }
     }
 
     fn previous_work_item(&mut self, app: &App) {
-        if let Some(pr_index) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get(pr_index) {
-                if !pr.work_items.is_empty() {
+        if let Some(pr_index) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get(pr_index)
+                && !pr.work_items.is_empty() {
                     if self.work_item_index == 0 {
                         self.work_item_index = pr.work_items.len() - 1;
                     } else {
                         self.work_item_index -= 1;
                     }
                 }
-            }
-        }
     }
 
     fn collect_distinct_work_item_states(&self, app: &App) -> Vec<String> {
@@ -633,15 +626,12 @@ impl PullRequestSelectionState {
             state_changes.sort_by(|a, b| {
                 let get_date_string = |entry: &WorkItemHistory| -> Option<String> {
                     // First try System.ChangedDate
-                    if let Some(fields) = &entry.fields {
-                        if let Some(changed_date) = &fields.changed_date {
-                            if let Some(new_date) = &changed_date.new_value {
-                                if !new_date.starts_with("9999-01-01") {
+                    if let Some(fields) = &entry.fields
+                        && let Some(changed_date) = &fields.changed_date
+                            && let Some(new_date) = &changed_date.new_value
+                                && !new_date.starts_with("9999-01-01") {
                                     return Some(new_date.clone());
                                 }
-                            }
-                        }
-                    }
                     // Fall back to revisedDate if not a placeholder
                     if !entry.revised_date.starts_with("9999-01-01") {
                         Some(entry.revised_date.clone())
@@ -691,9 +681,9 @@ impl PullRequestSelectionState {
                         ));
                     }
 
-                    if let Some(fields) = &history_entry.fields {
-                        if let Some(state_change) = &fields.state {
-                            if let Some(new_state) = &state_change.new_value {
+                    if let Some(fields) = &history_entry.fields
+                        && let Some(state_change) = &fields.state
+                            && let Some(new_state) = &state_change.new_value {
                                 // Add arrow separator between entries (showing chronological flow)
                                 if !history_spans.is_empty() {
                                     history_spans.push(Span::styled(
@@ -771,8 +761,6 @@ impl PullRequestSelectionState {
                                     Style::default().fg(Color::Gray),
                                 ));
                             }
-                        }
-                    }
                 }
             }
         }
@@ -1380,17 +1368,16 @@ impl AppState for PullRequestSelectionState {
                     StateChange::Keep
                 }
                 KeyCode::Char('p') => {
-                    if let Some(i) = self.table_state.selected() {
-                        if let Some(pr) = app.pull_requests.get(i) {
+                    if let Some(i) = self.table_state.selected()
+                        && let Some(pr) = app.pull_requests.get(i) {
                             app.open_pr_in_browser(pr.pr.id);
                         }
-                    }
                     StateChange::Keep
                 }
                 KeyCode::Char('w') => {
-                    if let Some(pr_index) = self.table_state.selected() {
-                        if let Some(pr) = app.pull_requests.get(pr_index) {
-                            if !pr.work_items.is_empty() {
+                    if let Some(pr_index) = self.table_state.selected()
+                        && let Some(pr) = app.pull_requests.get(pr_index)
+                            && !pr.work_items.is_empty() {
                                 // Ensure work_item_index is within bounds
                                 let work_item_index = if self.work_item_index < pr.work_items.len() {
                                     self.work_item_index
@@ -1403,8 +1390,6 @@ impl AppState for PullRequestSelectionState {
                                     app.open_work_items_in_browser(&[work_item.clone()]);
                                 }
                             }
-                        }
-                    }
                     StateChange::Keep
                 }
                 KeyCode::Enter => {

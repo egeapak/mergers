@@ -405,8 +405,7 @@ pub fn get_symmetric_difference(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.trim()
-                .split_whitespace()
+            line.split_whitespace()
                 .next()
                 .unwrap_or("")
                 .to_string()
@@ -451,8 +450,7 @@ pub fn get_symmetric_difference(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.trim()
-                .split_whitespace()
+            line.split_whitespace()
                 .next()
                 .unwrap_or("")
                 .to_string()
@@ -513,8 +511,7 @@ pub fn is_pr_commit_already_in_target(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.trim()
-                .split_whitespace()
+            line.split_whitespace()
                 .next()
                 .unwrap_or("")
                 .to_string()
@@ -571,8 +568,7 @@ pub fn filter_prs_not_in_target(
             .lines()
             .map(|line| {
                 // Extract commit hash from the oneline format (first part before space)
-                line.trim()
-                    .split_whitespace()
+                line.split_whitespace()
                     .next()
                     .unwrap_or("")
                     .to_string()
@@ -1289,13 +1285,11 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     for line in worktree_list.lines() {
         if line.starts_with("worktree ") {
             let path = line.strip_prefix("worktree ").unwrap();
-            if let Some(dir_name) = std::path::Path::new(path).file_name() {
-                if let Some(name) = dir_name.to_str() {
-                    if name.starts_with("next-migration-") {
+            if let Some(dir_name) = std::path::Path::new(path).file_name()
+                && let Some(name) = dir_name.to_str()
+                    && name.starts_with("next-migration-") {
                         migration_worktrees.push(name.strip_prefix("next-").unwrap().to_string());
                     }
-                }
-            }
         }
     }
 

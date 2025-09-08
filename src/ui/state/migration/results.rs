@@ -70,9 +70,7 @@ impl MigrationState {
         let current = current_list.selected().unwrap_or(0);
         let new_index = if direction > 0 {
             (current + 1) % count
-        } else {
-            if current == 0 { count - 1 } else { current - 1 }
-        };
+        } else if current == 0 { count - 1 } else { current - 1 };
         current_list.select(Some(new_index));
     }
 
@@ -381,8 +379,8 @@ impl MigrationState {
             }
 
             // Add general reason for all PRs using all_details
-            if let Some(detail) = analysis.all_details.iter().find(|d| d.pr.pr.id == pr.pr.id) {
-                if let Some(reason) = &detail.reason {
+            if let Some(detail) = analysis.all_details.iter().find(|d| d.pr.pr.id == pr.pr.id)
+                && let Some(reason) = &detail.reason {
                     details.push(Line::from(""));
                     details.push(Line::from(vec![Span::styled(
                         "Reason:",
@@ -392,16 +390,14 @@ impl MigrationState {
                     )]));
                     details.push(Line::from(vec![Span::raw(reason)]));
                 }
-            }
 
             // Add unsure reason for unsure PRs (legacy support)
-            if self.current_tab == MigrationTab::Unsure {
-                if let Some(unsure_detail) = analysis
+            if self.current_tab == MigrationTab::Unsure
+                && let Some(unsure_detail) = analysis
                     .unsure_details
                     .iter()
                     .find(|d| d.pr.pr.id == pr.pr.id)
-                {
-                    if let Some(reason) = &unsure_detail.unsure_reason {
+                    && let Some(reason) = &unsure_detail.unsure_reason {
                         details.push(Line::from(""));
                         details.push(Line::from(vec![Span::styled(
                             "Unsure Reason:",
@@ -409,8 +405,6 @@ impl MigrationState {
                         )]));
                         details.push(Line::from(vec![Span::raw(reason)]));
                     }
-                }
-            }
 
             let paragraph = Paragraph::new(details)
                 .block(Block::default().borders(Borders::ALL).title("Details"))

@@ -115,17 +115,15 @@ impl AzureDevOpsClient {
             let mut reached_date_limit = false;
             
             for pr in prs.value {
-                if let Some(since_dt) = since_date {
-                    if let Some(closed_date_str) = &pr.closed_date {
-                        if let Ok(closed_date) = DateTime::parse_from_rfc3339(closed_date_str) {
+                if let Some(since_dt) = since_date
+                    && let Some(closed_date_str) = &pr.closed_date
+                        && let Ok(closed_date) = DateTime::parse_from_rfc3339(closed_date_str) {
                             let closed_date_utc = closed_date.with_timezone(&Utc);
                             if closed_date_utc < since_dt {
                                 reached_date_limit = true;
                                 break;
                             }
                         }
-                    }
-                }
                 filtered_prs.push(pr);
             }
             

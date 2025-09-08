@@ -159,25 +159,23 @@ impl SetupRepoState {
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
                 self.set_status("Force deleting branch...".to_string());
-                if let Some(repo_path) = &app.local_repo {
-                    if let Err(e) =
+                if let Some(repo_path) = &app.local_repo
+                    && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                     {
                         app.error_message = Some(format!("Failed to force delete branch: {}", e));
                         return StateChange::Change(Box::new(ErrorState::new()));
                     }
-                }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
                 self.set_status("Force removing worktree...".to_string());
-                if let Some(repo_path) = &app.local_repo {
-                    if let Err(e) =
+                if let Some(repo_path) = &app.local_repo
+                    && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                     {
                         app.error_message = Some(format!("Failed to force remove worktree: {}", e));
                         return StateChange::Change(Box::new(ErrorState::new()));
                     }
-                }
             }
             git::RepositorySetupError::Other(_) => {
                 // For other errors, just retry

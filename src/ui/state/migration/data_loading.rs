@@ -129,8 +129,8 @@ impl MigrationDataLoadingState {
     }
 
     async fn check_pr_fetch_progress(&mut self) -> Result<Option<Vec<PullRequest>>, String> {
-        if let Some(task) = &mut self.pr_fetch_task {
-            if task.is_finished() {
+        if let Some(task) = &mut self.pr_fetch_task
+            && task.is_finished() {
                 let task = self.pr_fetch_task.take().unwrap();
                 match task.await {
                     Ok(Ok(prs)) => {
@@ -145,7 +145,6 @@ impl MigrationDataLoadingState {
                     }
                 }
             }
-        }
         Ok(None)
     }
 
@@ -216,8 +215,8 @@ impl MigrationDataLoadingState {
     }
 
     async fn check_repository_setup_progress(&mut self) -> Result<bool, String> {
-        if let Some(task) = &mut self.repo_setup_task {
-            if task.is_finished() {
+        if let Some(task) = &mut self.repo_setup_task
+            && task.is_finished() {
                 let task = self.repo_setup_task.take().unwrap();
                 match task.await {
                     Ok(Ok((repo_path, terminal_states))) => {
@@ -246,7 +245,6 @@ impl MigrationDataLoadingState {
                     }
                 }
             }
-        }
         Ok(false)
     }
 

@@ -274,24 +274,21 @@ impl AppState for CompletionState {
                 StateChange::Keep
             }
             KeyCode::Char('p') => {
-                if let Some(i) = self.list_state.selected() {
-                    if let Some(item) = app.cherry_pick_items.get(i) {
+                if let Some(i) = self.list_state.selected()
+                    && let Some(item) = app.cherry_pick_items.get(i) {
                         app.open_pr_in_browser(item.pr_id);
                     }
-                }
                 StateChange::Keep
             }
             KeyCode::Char('w') => {
-                if let Some(i) = self.list_state.selected() {
-                    if let Some(item) = app.cherry_pick_items.get(i) {
+                if let Some(i) = self.list_state.selected()
+                    && let Some(item) = app.cherry_pick_items.get(i) {
                         // Find the corresponding PR and open its work items
-                        if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id) {
-                            if !pr.work_items.is_empty() {
+                        if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
+                            && !pr.work_items.is_empty() {
                                 app.open_work_items_in_browser(&pr.work_items);
                             }
-                        }
                     }
-                }
                 StateChange::Keep
             }
             KeyCode::Char('t') => {
