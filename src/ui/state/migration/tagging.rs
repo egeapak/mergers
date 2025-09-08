@@ -2,6 +2,7 @@ use crate::{
     ui::App,
     ui::state::{AppState, StateChange},
 };
+use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -32,7 +33,7 @@ pub struct MigrationTaggingState {
     started: bool,
 
     // Task management
-    tagging_tasks: Option<Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>, String>>>>,
+    tagging_tasks: Option<Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>>>,
 }
 
 impl MigrationTaggingState {
@@ -135,7 +136,7 @@ impl MigrationTaggingState {
                                 new_errors.push(TaggingError {
                                     pr_id: 0,
                                     pr_title: format!("Batch {}", i + 1),
-                                    error,
+                                    error: error.to_string(),
                                 });
                             }
                             Err(e) => {

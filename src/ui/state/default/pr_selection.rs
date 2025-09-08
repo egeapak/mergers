@@ -5,6 +5,7 @@ use crate::{
     ui::state::{AppState, StateChange},
     utils::html_to_lines,
 };
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use chrono::DateTime;
 use crossterm::event::KeyCode;
@@ -61,11 +62,11 @@ impl PullRequestSelectionState {
         }
     }
 
-    fn parse_search_query(input: &str) -> Result<SearchQuery, String> {
+    fn parse_search_query(input: &str) -> Result<SearchQuery> {
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
-            return Err("Search query cannot be empty".to_string());
+            bail!("Search query cannot be empty");
         }
 
         // Handle shortcuts: !12345 for PR and #98765 for work item
@@ -73,7 +74,7 @@ impl PullRequestSelectionState {
             if let Ok(pr_id) = pr_id_str.parse::<i32>() {
                 return Ok(SearchQuery::PullRequestId(pr_id));
             } else {
-                return Err("Invalid PR ID format".to_string());
+                bail!("Invalid PR ID format");
             }
         }
 
@@ -81,7 +82,7 @@ impl PullRequestSelectionState {
             if let Ok(wi_id) = wi_id_str.parse::<i32>() {
                 return Ok(SearchQuery::WorkItemId(wi_id));
             } else {
-                return Err("Invalid work item ID format".to_string());
+                bail!("Invalid work item ID format");
             }
         }
 
@@ -91,15 +92,14 @@ impl PullRequestSelectionState {
             let query = trimmed[colon_pos + 1..].trim();
 
             if query.is_empty() {
-                return Err("Query after ':' cannot be empty".to_string());
+                bail!("Query after ':' cannot be empty");
             }
 
             match tag.as_str() {
                 "P" | "PR" => Ok(SearchQuery::PullRequestTitle(query.to_string())),
                 "W" | "WI" => Ok(SearchQuery::WorkItemTitle(query.to_string())),
-                _ => Err(
+                _ => bail!(
                     "Invalid tag. Use 'P'/'PR' for pull requests or 'W'/'WI' for work items"
-                        .to_string(),
                 ),
             }
         } else {
@@ -120,7 +120,7 @@ impl PullRequestSelectionState {
         let query = match Self::parse_search_query(&self.search_input) {
             Ok(q) => q,
             Err(e) => {
-                self.search_error_message = Some(e);
+                self.search_error_message = Some(e.to_string());
                 return;
             }
         };
