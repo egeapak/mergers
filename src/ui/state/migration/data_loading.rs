@@ -130,21 +130,22 @@ impl MigrationDataLoadingState {
 
     async fn check_pr_fetch_progress(&mut self) -> Result<Option<Vec<PullRequest>>, String> {
         if let Some(task) = &mut self.pr_fetch_task
-            && task.is_finished() {
-                let task = self.pr_fetch_task.take().unwrap();
-                match task.await {
-                    Ok(Ok(prs)) => {
-                        self.total_prs = prs.len();
-                        return Ok(Some(prs));
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        return Err(format!("PR fetch task failed: {}", e));
-                    }
+            && task.is_finished()
+        {
+            let task = self.pr_fetch_task.take().unwrap();
+            match task.await {
+                Ok(Ok(prs)) => {
+                    self.total_prs = prs.len();
+                    return Ok(Some(prs));
+                }
+                Ok(Err(e)) => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    return Err(format!("PR fetch task failed: {}", e));
                 }
             }
+        }
         Ok(None)
     }
 
@@ -216,35 +217,35 @@ impl MigrationDataLoadingState {
 
     async fn check_repository_setup_progress(&mut self) -> Result<bool, String> {
         if let Some(task) = &mut self.repo_setup_task
-            && task.is_finished() {
-                let task = self.repo_setup_task.take().unwrap();
-                match task.await {
-                    Ok(Ok((repo_path, terminal_states))) => {
-                        self.repo_path = Some(repo_path.clone());
-                        self.terminal_states = Some(terminal_states);
+            && task.is_finished()
+        {
+            let task = self.repo_setup_task.take().unwrap();
+            match task.await {
+                Ok(Ok((repo_path, terminal_states))) => {
+                    self.repo_path = Some(repo_path.clone());
+                    self.terminal_states = Some(terminal_states);
 
-                        // Start git history fetch in parallel now that repo is ready
-                        if let Some(config) = &self.config {
-                            let repo_path_clone = repo_path.clone();
-                            let target_branch = config.shared().target_branch.clone();
+                    // Start git history fetch in parallel now that repo is ready
+                    if let Some(config) = &self.config {
+                        let repo_path_clone = repo_path.clone();
+                        let target_branch = config.shared().target_branch.clone();
 
-                            self.git_history_task = Some(tokio::spawn(async move {
-                                get_target_branch_history(&repo_path_clone, &target_branch).map_err(
-                                    |e| format!("Failed to get target branch history: {e:?}"),
-                                )
-                            }));
-                        }
+                        self.git_history_task = Some(tokio::spawn(async move {
+                            get_target_branch_history(&repo_path_clone, &target_branch)
+                                .map_err(|e| format!("Failed to get target branch history: {e:?}"))
+                        }));
+                    }
 
-                        return Ok(true);
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        return Err(format!("Repository setup task failed: {}", e));
-                    }
+                    return Ok(true);
+                }
+                Ok(Err(e)) => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    return Err(format!("Repository setup task failed: {}", e));
                 }
             }
+        }
         Ok(false)
     }
 

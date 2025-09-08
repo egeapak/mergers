@@ -67,10 +67,7 @@ impl AppState for CompletionState {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(f.area());
 
         let title = Paragraph::new("🏁 Cherry-pick Process Completed!")
@@ -90,7 +87,7 @@ impl AppState for CompletionState {
 
         // Left side: Commit status list
         let available_width = content_chunks[0].width.saturating_sub(4); // Account for borders
-        
+
         let items: Vec<ListItem> = app
             .cherry_pick_items
             .iter()
@@ -126,7 +123,14 @@ impl AppState for CompletionState {
                 let work_items_text = if work_items.is_empty() {
                     String::new()
                 } else {
-                    format!(" [WI: {}]", work_items.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", "))
+                    format!(
+                        " [WI: {}]",
+                        work_items
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 };
 
                 // Calculate available space for title
@@ -157,7 +161,8 @@ impl AppState for CompletionState {
                 }
 
                 if let CherryPickStatus::Failed(msg) = &item.status {
-                    let max_error_len = (available_width as usize).saturating_sub(used_space + item.pr_title.len() + 3);
+                    let max_error_len = (available_width as usize)
+                        .saturating_sub(used_space + item.pr_title.len() + 3);
                     let error_text = if msg.len() > max_error_len && max_error_len > 3 {
                         format!(" - {}...", &msg[..max_error_len.saturating_sub(6)])
                     } else if max_error_len > 0 {
@@ -166,10 +171,7 @@ impl AppState for CompletionState {
                         String::new()
                     };
                     if !error_text.is_empty() {
-                        spans.push(Span::styled(
-                            error_text,
-                            Style::default().fg(Color::Red),
-                        ));
+                        spans.push(Span::styled(error_text, Style::default().fg(Color::Red)));
                     }
                 }
 
@@ -178,7 +180,11 @@ impl AppState for CompletionState {
             .collect();
 
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Cherry-pick Results"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Cherry-pick Results"),
+            )
             .highlight_style(
                 Style::default()
                     .add_modifier(Modifier::REVERSED)
@@ -200,28 +206,42 @@ impl AppState for CompletionState {
             }
         }
 
-        summary_text.push(Line::from(vec![
-            Span::styled("Summary", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
+        summary_text.push(Line::from(vec![Span::styled(
+            "Summary",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
         summary_text.push(Line::from(""));
         summary_text.push(Line::from(vec![
             Span::raw("✅ Successful: "),
-            Span::styled(format!("{}", successful), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{}", successful),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         summary_text.push(Line::from(vec![
             Span::raw("❌ Failed: "),
-            Span::styled(format!("{}", failed), Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{}", failed),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
         ]));
-        
+
         summary_text.push(Line::from(""));
         summary_text.push(Line::from("─────────────────────"));
         summary_text.push(Line::from(""));
-        
-        summary_text.push(Line::from(vec![
-            Span::styled("Branch Info", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
+
+        summary_text.push(Line::from(vec![Span::styled(
+            "Branch Info",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
         summary_text.push(Line::from(""));
-        
+
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch,
@@ -231,7 +251,7 @@ impl AppState for CompletionState {
             Span::raw("Branch: "),
             Span::styled(branch_name, Style::default().fg(Color::Cyan)),
         ]));
-        
+
         if let Some(repo_path) = &app.repo_path {
             summary_text.push(Line::from(vec![
                 Span::raw("Location: "),
@@ -241,23 +261,33 @@ impl AppState for CompletionState {
                 ),
             ]));
         }
-        
+
         summary_text.push(Line::from(""));
         summary_text.push(Line::from("─────────────────────"));
         summary_text.push(Line::from(""));
-        
-        summary_text.push(Line::from(vec![
-            Span::styled("Actions", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        ]));
+
+        summary_text.push(Line::from(vec![Span::styled(
+            "Actions",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
         summary_text.push(Line::from(""));
         summary_text.push(Line::from("↑/↓ Navigate"));
         summary_text.push(Line::from("'p' Open PR in browser"));
         summary_text.push(Line::from("'w' Open work items"));
-        summary_text.push(Line::from(format!("'t' Tag PRs & update work items to '{}'", app.work_item_state)));
+        summary_text.push(Line::from(format!(
+            "'t' Tag PRs & update work items to '{}'",
+            app.work_item_state
+        )));
         summary_text.push(Line::from("'q' Exit"));
 
         let summary = Paragraph::new(summary_text)
-            .block(Block::default().borders(Borders::ALL).title("Summary & Info"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Summary & Info"),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(summary, content_chunks[1]);
     }
@@ -275,20 +305,23 @@ impl AppState for CompletionState {
             }
             KeyCode::Char('p') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items.get(i) {
-                        app.open_pr_in_browser(item.pr_id);
-                    }
+                    && let Some(item) = app.cherry_pick_items.get(i)
+                {
+                    app.open_pr_in_browser(item.pr_id);
+                }
                 StateChange::Keep
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items.get(i) {
-                        // Find the corresponding PR and open its work items
-                        if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
-                            && !pr.work_items.is_empty() {
-                                app.open_work_items_in_browser(&pr.work_items);
-                            }
+                    && let Some(item) = app.cherry_pick_items.get(i)
+                {
+                    // Find the corresponding PR and open its work items
+                    if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
+                        && !pr.work_items.is_empty()
+                    {
+                        app.open_work_items_in_browser(&pr.work_items);
                     }
+                }
                 StateChange::Keep
             }
             KeyCode::Char('t') => {

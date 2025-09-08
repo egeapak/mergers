@@ -199,12 +199,13 @@ impl HtmlConverter {
 
         // Handle hex colors
         if let Some(color) = color_str.strip_prefix('#')
-            && let Ok(hex) = u32::from_str_radix(color, 16) {
-                let r = ((hex >> 16) & 0xFF) as u8;
-                let g = ((hex >> 8) & 0xFF) as u8;
-                let b = (hex & 0xFF) as u8;
-                return Some(Color::Rgb(r, g, b));
-            }
+            && let Ok(hex) = u32::from_str_radix(color, 16)
+        {
+            let r = ((hex >> 16) & 0xFF) as u8;
+            let g = ((hex >> 8) & 0xFF) as u8;
+            let b = (hex & 0xFF) as u8;
+            return Some(Color::Rgb(r, g, b));
+        }
 
         // Handle named colors
         match color_str.as_str() {

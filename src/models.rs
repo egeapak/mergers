@@ -194,7 +194,9 @@ impl Args {
             parallel_limit: merged_config.parallel_limit.unwrap_or(300),
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
-            tag_prefix: merged_config.tag_prefix.unwrap_or_else(|| "merged-".to_string()),
+            tag_prefix: merged_config
+                .tag_prefix
+                .unwrap_or_else(|| "merged-".to_string()),
             since: self.since.clone(),
         };
 

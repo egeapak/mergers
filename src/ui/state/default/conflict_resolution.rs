@@ -2,7 +2,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::App,
-    ui::state::{AppState, StateChange, CherryPickState},
+    ui::state::{AppState, CherryPickState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -23,9 +23,15 @@ impl ConflictResolutionState {
         Self { conflicted_files }
     }
 
-    fn render_commit_info(&self, f: &mut Frame, area: ratatui::layout::Rect, current_item: &crate::models::CherryPickItem, app: &crate::ui::App) {
+    fn render_commit_info(
+        &self,
+        f: &mut Frame,
+        area: ratatui::layout::Rect,
+        current_item: &crate::models::CherryPickItem,
+        app: &crate::ui::App,
+    ) {
         let mut commit_text = vec![];
-        
+
         // Try to get detailed commit info from git
         if let Some(repo_path) = &app.repo_path {
             match crate::git::get_commit_info(repo_path, &current_item.commit_id) {
@@ -36,12 +42,12 @@ impl ConflictResolutionState {
                     } else {
                         commit_info.hash.clone()
                     };
-                    
+
                     commit_text.push(Line::from(vec![
                         Span::raw("Hash: "),
                         Span::styled(short_hash, Style::default().fg(Color::Yellow)),
                     ]));
-                    
+
                     // Format and display date
                     let date_part = if let Some(space_pos) = commit_info.date.find(' ') {
                         commit_info.date[..space_pos].to_string()
@@ -52,12 +58,12 @@ impl ConflictResolutionState {
                         Span::raw("Date: "),
                         Span::styled(date_part, Style::default().fg(Color::Gray)),
                     ]));
-                    
+
                     commit_text.push(Line::from(vec![
                         Span::raw("Author: "),
                         Span::styled(commit_info.author, Style::default().fg(Color::Green)),
                     ]));
-                    
+
                     commit_text.push(Line::from(""));
                     commit_text.push(Line::from(vec![
                         Span::raw("Title: "),
@@ -71,12 +77,12 @@ impl ConflictResolutionState {
                     } else {
                         &current_item.commit_id
                     };
-                    
+
                     commit_text.push(Line::from(vec![
                         Span::raw("Hash: "),
                         Span::styled(short_hash, Style::default().fg(Color::Yellow)),
                     ]));
-                    
+
                     commit_text.push(Line::from(vec![
                         Span::raw("Title: "),
                         Span::raw(&current_item.pr_title),
@@ -90,12 +96,12 @@ impl ConflictResolutionState {
             } else {
                 &current_item.commit_id
             };
-            
+
             commit_text.push(Line::from(vec![
                 Span::raw("Hash: "),
                 Span::styled(short_hash, Style::default().fg(Color::Yellow)),
             ]));
-            
+
             commit_text.push(Line::from(vec![
                 Span::raw("Title: "),
                 Span::raw(&current_item.pr_title),
@@ -125,32 +131,42 @@ impl ConflictResolutionState {
         f.render_widget(file_list, area);
     }
 
-    fn render_pr_details(&self, f: &mut Frame, area: ratatui::layout::Rect, pr: Option<&crate::models::PullRequest>) {
+    fn render_pr_details(
+        &self,
+        f: &mut Frame,
+        area: ratatui::layout::Rect,
+        pr: Option<&crate::models::PullRequest>,
+    ) {
         let mut pr_text = vec![];
-        
+
         if let Some(pr) = pr {
             pr_text.push(Line::from(vec![
                 Span::raw("PR #"),
-                Span::styled(format!("{}", pr.id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{}", pr.id),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]));
-            
+
             if let Some(date) = &pr.closed_date {
                 pr_text.push(Line::from(vec![
                     Span::raw("Date: "),
                     Span::styled(date, Style::default().fg(Color::Gray)),
                 ]));
             }
-            
+
             pr_text.push(Line::from(vec![
                 Span::raw("Author: "),
-                Span::styled(&pr.created_by.display_name, Style::default().fg(Color::Green)),
+                Span::styled(
+                    &pr.created_by.display_name,
+                    Style::default().fg(Color::Green),
+                ),
             ]));
-            
+
             pr_text.push(Line::from(""));
-            pr_text.push(Line::from(vec![
-                Span::raw("Title: "),
-                Span::raw(&pr.title),
-            ]));
+            pr_text.push(Line::from(vec![Span::raw("Title: "), Span::raw(&pr.title)]));
         } else {
             pr_text.push(Line::from("PR details not found"));
         }
@@ -161,9 +177,14 @@ impl ConflictResolutionState {
         f.render_widget(pr_widget, area);
     }
 
-    fn render_work_item_details(&self, f: &mut Frame, area: ratatui::layout::Rect, work_items: &[crate::models::WorkItem]) {
+    fn render_work_item_details(
+        &self,
+        f: &mut Frame,
+        area: ratatui::layout::Rect,
+        work_items: &[crate::models::WorkItem],
+    ) {
         let mut wi_text = vec![];
-        
+
         if work_items.is_empty() {
             wi_text.push(Line::from("No work items linked"));
         } else {
@@ -173,36 +194,35 @@ impl ConflictResolutionState {
                     wi_text.push(Line::from("─────────────────"));
                     wi_text.push(Line::from(""));
                 }
-                
+
                 wi_text.push(Line::from(vec![
                     Span::styled(
                         wi.fields.work_item_type.as_deref().unwrap_or("Item"),
-                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(" #"),
                     Span::styled(format!("{}", wi.id), Style::default().fg(Color::Cyan)),
                 ]));
-                
+
                 if let Some(state) = &wi.fields.state {
                     wi_text.push(Line::from(vec![
                         Span::raw("State: "),
                         Span::styled(state, Style::default().fg(Color::Yellow)),
                     ]));
                 }
-                
+
                 if let Some(assigned_to) = &wi.fields.assigned_to {
                     wi_text.push(Line::from(vec![
                         Span::raw("Assigned: "),
                         Span::styled(&assigned_to.display_name, Style::default().fg(Color::Green)),
                     ]));
                 }
-                
+
                 if let Some(title) = &wi.fields.title {
                     wi_text.push(Line::from(""));
-                    wi_text.push(Line::from(vec![
-                        Span::raw("Title: "),
-                        Span::raw(title),
-                    ]));
+                    wi_text.push(Line::from(vec![Span::raw("Title: "), Span::raw(title)]));
                 }
             }
         }
@@ -258,9 +278,11 @@ impl AppState for ConflictResolutionState {
 
         // Get current cherry-pick item
         let current_item = &app.cherry_pick_items[app.current_cherry_pick_index];
-        
+
         // Find the corresponding PR and work items
-        let pr_with_work_items = app.pull_requests.iter()
+        let pr_with_work_items = app
+            .pull_requests
+            .iter()
             .find(|pr| pr.pr.id == current_item.pr_id);
 
         // Top-left: Commit Information (20%)
@@ -273,7 +295,9 @@ impl AppState for ConflictResolutionState {
         self.render_pr_details(f, right_chunks[0], pr_with_work_items.map(|p| &p.pr));
 
         // Bottom-right: Work Item Details
-        let work_items = pr_with_work_items.map(|p| p.work_items.as_slice()).unwrap_or(&[]);
+        let work_items = pr_with_work_items
+            .map(|p| p.work_items.as_slice())
+            .unwrap_or(&[]);
         self.render_work_item_details(f, right_chunks[1], work_items);
 
         // Bottom: Instructions and Help
@@ -284,9 +308,10 @@ impl AppState for ConflictResolutionState {
                 Span::styled(format!("{}", repo_path), Style::default().fg(Color::Cyan)),
             ]),
             Line::from("Please resolve conflicts in another terminal and stage the changes."),
-            Line::from(vec![
-                Span::styled("c: Continue (after resolving) | a: Abort", Style::default().fg(Color::Gray)),
-            ]),
+            Line::from(vec![Span::styled(
+                "c: Continue (after resolving) | a: Abort",
+                Style::default().fg(Color::Gray),
+            )]),
         ];
 
         let instructions_widget = Paragraph::new(instructions)
@@ -309,13 +334,17 @@ impl AppState for ConflictResolutionState {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Success;
                                 app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                                StateChange::Change(Box::new(
+                                    CherryPickState::continue_after_conflict(),
+                                ))
                             }
                             Err(e) => {
                                 app.cherry_pick_items[app.current_cherry_pick_index].status =
                                     CherryPickStatus::Failed(e.to_string());
                                 app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                                StateChange::Change(Box::new(
+                                    CherryPickState::continue_after_conflict(),
+                                ))
                             }
                         }
                     }

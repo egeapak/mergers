@@ -53,7 +53,11 @@ impl DataLoadingState {
         self.loading_stage = LoadingStage::FetchingPullRequests;
 
         // Fetch pull requests
-        let prs = match app.client.fetch_pull_requests(&app.dev_branch, app.since.as_deref()).await {
+        let prs = match app
+            .client
+            .fetch_pull_requests(&app.dev_branch, app.since.as_deref())
+            .await
+        {
             Ok(prs) => prs,
             Err(e) => return Err(format!("Failed to fetch pull requests: {}", e)),
         };

@@ -405,10 +405,7 @@ pub fn get_symmetric_difference(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
+            line.split_whitespace().next().unwrap_or("").to_string()
         })
         .filter(|line| !line.is_empty())
         .collect();
@@ -450,10 +447,7 @@ pub fn get_symmetric_difference(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
+            line.split_whitespace().next().unwrap_or("").to_string()
         })
         .filter(|line| !line.is_empty())
         .collect();
@@ -511,10 +505,7 @@ pub fn is_pr_commit_already_in_target(
         .lines()
         .map(|line| {
             // Extract commit hash from the oneline format (first part before space)
-            line.split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
+            line.split_whitespace().next().unwrap_or("").to_string()
         })
         .filter(|line| !line.is_empty())
         .collect();
@@ -568,10 +559,7 @@ pub fn filter_prs_not_in_target(
             .lines()
             .map(|line| {
                 // Extract commit hash from the oneline format (first part before space)
-                line.split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .to_string()
+                line.split_whitespace().next().unwrap_or("").to_string()
             })
             .filter(|line| !line.is_empty())
             .collect();
@@ -1287,9 +1275,10 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
             let path = line.strip_prefix("worktree ").unwrap();
             if let Some(dir_name) = std::path::Path::new(path).file_name()
                 && let Some(name) = dir_name.to_str()
-                    && name.starts_with("next-migration-") {
-                        migration_worktrees.push(name.strip_prefix("next-").unwrap().to_string());
-                    }
+                && name.starts_with("next-migration-")
+            {
+                migration_worktrees.push(name.strip_prefix("next-").unwrap().to_string());
+            }
         }
     }
 

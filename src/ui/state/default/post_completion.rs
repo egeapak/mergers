@@ -275,7 +275,8 @@ impl AppState for PostCompletionState {
                 Line::from(""),
                 Line::from(format!(
                     "✅ PRs tagged with '{}{}' ",
-                    app.tag_prefix, app.version.as_ref().unwrap()
+                    app.tag_prefix,
+                    app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "✅ Work items updated to '{}'",
@@ -304,7 +305,8 @@ impl AppState for PostCompletionState {
                 Line::from(""),
                 Line::from(format!(
                     "🏷️  Tagging PRs with '{}{}' ",
-                    app.tag_prefix, app.version.as_ref().unwrap()
+                    app.tag_prefix,
+                    app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "📝 Updating work items to '{}'",
