@@ -46,17 +46,9 @@ pub struct Args {
     #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
     pub terminal_states: String,
 
-    /// Include all PRs regardless of tags (migration mode only)
-    #[arg(long)]
-    pub include_tagged: bool,
-
     /// Tag prefix for PR tagging (both default and migration modes)
     #[arg(long, default_value = "merged-")]
     pub tag_prefix: Option<String>,
-
-    /// Batch size for tagging operations (migration mode only)
-    #[arg(long, default_value = "50")]
-    pub tag_batch_size: Option<usize>,
 
     /// Maximum number of parallel operations for API calls
     #[arg(long)]
@@ -106,8 +98,6 @@ pub struct DefaultModeConfig {
 #[derive(Debug, Clone)]
 pub struct MigrationModeConfig {
     pub terminal_states: String,
-    pub include_tagged: bool,
-    pub tag_batch_size: usize,
 }
 
 /// Resolved configuration with mode-specific settings
@@ -206,8 +196,6 @@ impl Args {
                 shared,
                 migration: MigrationModeConfig {
                     terminal_states: self.terminal_states,
-                    include_tagged: self.include_tagged,
-                    tag_batch_size: self.tag_batch_size.unwrap_or(50),
                 },
             })
         } else {
@@ -284,20 +272,13 @@ pub struct WorkItemFields {
     pub description: Option<String>,
     #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
     pub repro_steps: Option<String>,
-    #[serde(rename = "System.CreatedDate", default)]
-    pub created_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkItemHistory {
-    pub id: i32,
-    #[serde(rename = "workItemId")]
-    pub work_item_id: i32,
     pub rev: i32,
     #[serde(rename = "revisedDate")]
     pub revised_date: String,
-    #[serde(rename = "revisedBy")]
-    pub revised_by: Option<CreatedBy>,
     #[serde(rename = "fields")]
     pub fields: Option<WorkItemHistoryFields>,
 }
@@ -314,8 +295,6 @@ pub struct WorkItemHistoryFields {
 pub struct WorkItemFieldChange {
     #[serde(rename = "newValue")]
     pub new_value: Option<String>,
-    #[serde(rename = "oldValue")]
-    pub old_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -802,8 +802,6 @@ mod tests {
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
-                include_tagged: false,
-                tag_batch_size: 50,
             },
         };
 
@@ -838,8 +836,6 @@ mod tests {
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
-                include_tagged: false,
-                tag_batch_size: 50,
             },
         };
 

@@ -213,12 +213,6 @@ impl App {
         }
     }
 
-    /// Get migration configuration if available
-    pub fn get_migration_config(&self) -> Option<&crate::models::MigrationModeConfig> {
-        // Try to get from initial_state first, then fallback to a stored config
-        // For now, we'll return default values since we don't store the config in App
-        None
-    }
 }
 
 #[cfg(test)]
