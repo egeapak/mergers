@@ -22,7 +22,7 @@ impl CherryPickState {
     pub fn new() -> Self {
         Self { processing: true }
     }
-    
+
     pub fn continue_after_conflict() -> Self {
         Self { processing: false }
     }
@@ -42,7 +42,11 @@ impl AppState for CherryPickState {
             .split(f.area());
 
         let title = Paragraph::new("Cherry-picking Commits")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(title, chunks[0]);
 
@@ -81,7 +85,7 @@ impl AppState for CherryPickState {
                     format!("PR #{}: ", item.pr_id),
                     Style::default().fg(Color::Cyan),
                 ));
-                
+
                 // Truncate title if too long
                 let title = if item.pr_title.len() > 40 {
                     format!("{}...", &item.pr_title[..37])
@@ -101,24 +105,26 @@ impl AppState for CherryPickState {
 
         // Right side: Details
         let mut details_text = vec![];
-        
+
         if app.current_cherry_pick_index < app.cherry_pick_items.len() {
             let current_item = &app.cherry_pick_items[app.current_cherry_pick_index];
-            
+
             details_text.push(Line::from(vec![
                 Span::raw("Current PR: "),
                 Span::styled(
                     format!("#{}", current_item.pr_id),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]));
-            
+
             details_text.push(Line::from(""));
             details_text.push(Line::from(vec![
                 Span::raw("Title: "),
                 Span::raw(&current_item.pr_title),
             ]));
-            
+
             details_text.push(Line::from(""));
             details_text.push(Line::from(vec![
                 Span::raw("Commit: "),
@@ -127,7 +133,7 @@ impl AppState for CherryPickState {
                     Style::default().fg(Color::Yellow),
                 ),
             ]));
-            
+
             details_text.push(Line::from(""));
             details_text.push(Line::from(vec![
                 Span::raw("Status: "),
@@ -148,7 +154,7 @@ impl AppState for CherryPickState {
                     }),
                 ),
             ]));
-            
+
             if let CherryPickStatus::Failed(msg) = &current_item.status {
                 details_text.push(Line::from(""));
                 details_text.push(Line::from(vec![
@@ -157,22 +163,22 @@ impl AppState for CherryPickState {
                 ]));
             }
         }
-        
+
         details_text.push(Line::from(""));
         details_text.push(Line::from("─────────────────────"));
         details_text.push(Line::from(""));
-        
+
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch,
             app.version.as_ref().unwrap()
         );
-        
+
         details_text.push(Line::from(vec![
             Span::raw("Branch: "),
             Span::styled(branch_name, Style::default().fg(Color::Cyan)),
         ]));
-        
+
         if let Some(repo_path) = &app.repo_path {
             details_text.push(Line::from(vec![
                 Span::raw("Location: "),

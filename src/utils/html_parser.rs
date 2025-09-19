@@ -2,7 +2,7 @@ use ego_tree::NodeRef;
 use ratatui::prelude::*;
 use scraper::{ElementRef, Html, Node};
 
-pub fn html_to_lines(html: &str) -> Vec<Line> {
+pub fn html_to_lines(html: &str) -> Vec<Line<'_>> {
     let document = Html::parse_fragment(html);
     let mut converter = HtmlConverter::new();
     converter.process_document(&document);
@@ -198,13 +198,13 @@ impl HtmlConverter {
         let color_str = color_str.trim().to_lowercase();
 
         // Handle hex colors
-        if let Some(color) = color_str.strip_prefix('#') {
-            if let Ok(hex) = u32::from_str_radix(color, 16) {
-                let r = ((hex >> 16) & 0xFF) as u8;
-                let g = ((hex >> 8) & 0xFF) as u8;
-                let b = (hex & 0xFF) as u8;
-                return Some(Color::Rgb(r, g, b));
-            }
+        if let Some(color) = color_str.strip_prefix('#')
+            && let Ok(hex) = u32::from_str_radix(color, 16)
+        {
+            let r = ((hex >> 16) & 0xFF) as u8;
+            let g = ((hex >> 8) & 0xFF) as u8;
+            let b = (hex & 0xFF) as u8;
+            return Some(Color::Rgb(r, g, b));
         }
 
         // Handle named colors

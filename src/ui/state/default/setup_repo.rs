@@ -129,12 +129,14 @@ impl SetupRepoState {
                     StateChange::Change(Box::new(ErrorState::new()))
                 } else {
                     app.cherry_pick_items = cherry_pick_items;
-                    
+
                     // Create branch for cherry-picking
                     self.set_status("Creating branch...".to_string());
                     let branch_name = format!("patch/{}-{}", app.target_branch, version);
-                    
-                    if let Err(e) = git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name) {
+
+                    if let Err(e) =
+                        git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name)
+                    {
                         app.error_message = Some(format!("Failed to create branch: {}", e));
                         StateChange::Change(Box::new(ErrorState::new()))
                     } else {
@@ -159,24 +161,22 @@ impl SetupRepoState {
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
                 self.set_status("Force deleting branch...".to_string());
-                if let Some(repo_path) = &app.local_repo {
-                    if let Err(e) =
+                if let Some(repo_path) = &app.local_repo
+                    && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
-                    {
-                        app.error_message = Some(format!("Failed to force delete branch: {}", e));
-                        return StateChange::Change(Box::new(ErrorState::new()));
-                    }
+                {
+                    app.error_message = Some(format!("Failed to force delete branch: {}", e));
+                    return StateChange::Change(Box::new(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
                 self.set_status("Force removing worktree...".to_string());
-                if let Some(repo_path) = &app.local_repo {
-                    if let Err(e) =
+                if let Some(repo_path) = &app.local_repo
+                    && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
-                    {
-                        app.error_message = Some(format!("Failed to force remove worktree: {}", e));
-                        return StateChange::Change(Box::new(ErrorState::new()));
-                    }
+                {
+                    app.error_message = Some(format!("Failed to force remove worktree: {}", e));
+                    return StateChange::Change(Box::new(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::Other(_) => {

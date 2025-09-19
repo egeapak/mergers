@@ -6,6 +6,7 @@ use crate::{
     ui::App,
     ui::state::{AppState, StateChange},
 };
+use anyhow::{Result, Context, bail};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -23,7 +24,7 @@ pub struct DataLoadingState {
     commit_info_fetched: usize,
     commit_info_total: usize,
     work_items_tasks:
-        Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>), String>>>>,
+        Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>)>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,19 +50,23 @@ impl DataLoadingState {
         }
     }
 
-    async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<(), String> {
+    async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingPullRequests;
 
         // Fetch pull requests
-        let prs = match app.client.fetch_pull_requests(&app.dev_branch, app.since.as_deref()).await {
+        let prs = match app
+            .client
+            .fetch_pull_requests(&app.dev_branch, app.since.as_deref())
+            .await
+        {
             Ok(prs) => prs,
-            Err(e) => return Err(format!("Failed to fetch pull requests: {}", e)),
+            Err(e) => return Err(e).context("Failed to fetch pull requests"),
         };
 
         let filtered_prs = api::filter_prs_without_merged_tag(prs);
 
         if filtered_prs.is_empty() {
-            return Err("No pull requests found without merged tags.".to_string());
+            bail!("No pull requests found without merged tags.");
         }
 
         // Initialize PRs with empty work items for now
@@ -103,7 +108,7 @@ impl DataLoadingState {
                             client
                                 .fetch_work_items_with_history_for_pr(pr_id)
                                 .await
-                                .map_err(|e| format!("Failed to fetch work items: {}", e))
+                                .context("Failed to fetch work items")
                         })
                         .await;
 
@@ -120,7 +125,7 @@ impl DataLoadingState {
         self.work_items_tasks = Some(tasks);
     }
 
-    async fn check_work_items_progress(&mut self, app: &mut App) -> Result<bool, String> {
+    async fn check_work_items_progress(&mut self, app: &mut App) -> Result<bool> {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
@@ -133,10 +138,10 @@ impl DataLoadingState {
                             completed.push((index, work_items));
                         }
                         Ok(Err(e)) => {
-                            return Err(format!("Failed to fetch work items: {}", e));
+                            return Err(e).context("Failed to fetch work items");
                         }
                         Err(e) => {
-                            return Err(format!("Work items task failed: {}", e));
+                            return Err(e).context("Work items task failed");
                         }
                     }
                 } else {
@@ -166,7 +171,7 @@ impl DataLoadingState {
         }
     }
 
-    async fn fetch_commit_info(&mut self, app: &mut App) -> Result<(), String> {
+    async fn fetch_commit_info(&mut self, app: &mut App) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingCommitInfo;
         self.commit_info_total = app
             .pull_requests
@@ -182,9 +187,9 @@ impl DataLoadingState {
                         pr_with_wi.pr.last_merge_commit = Some(commit_info);
                     }
                     Err(e) => {
-                        return Err(format!(
-                            "Failed to fetch commit for PR #{}: {}",
-                            pr_with_wi.pr.id, e
+                        return Err(e).with_context(|| format!(
+                            "Failed to fetch commit for PR #{}",
+                            pr_with_wi.pr.id
                         ));
                     }
                 }
@@ -248,7 +253,7 @@ impl AppState for DataLoadingState {
             match self.loading_stage {
                 LoadingStage::NotStarted => {
                     if let Err(e) = self.fetch_pull_requests(app).await {
-                        app.error_message = Some(e);
+                        app.error_message = Some(e.to_string());
                         return StateChange::Change(Box::new(ErrorState::new()));
                     }
                     return StateChange::Keep;
@@ -269,7 +274,7 @@ impl AppState for DataLoadingState {
                         Ok(true) => {
                             // All work items fetched, move to commit info
                             if let Err(e) = self.fetch_commit_info(app).await {
-                                app.error_message = Some(e);
+                                app.error_message = Some(e.to_string());
                                 return StateChange::Change(Box::new(ErrorState::new()));
                             }
                         }
@@ -277,7 +282,7 @@ impl AppState for DataLoadingState {
                             // Still waiting for work items, continue
                         }
                         Err(e) => {
-                            app.error_message = Some(e);
+                            app.error_message = Some(e.to_string());
                             return StateChange::Change(Box::new(ErrorState::new()));
                         }
                     }

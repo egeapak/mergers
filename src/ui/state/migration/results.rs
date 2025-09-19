@@ -70,8 +70,10 @@ impl MigrationState {
         let current = current_list.selected().unwrap_or(0);
         let new_index = if direction > 0 {
             (current + 1) % count
+        } else if current == 0 {
+            count - 1
         } else {
-            if current == 0 { count - 1 } else { current - 1 }
+            current - 1
         };
         current_list.select(Some(new_index));
     }
@@ -145,7 +147,7 @@ impl MigrationState {
     fn toggle_pr_eligibility(&self, app: &mut App, pr_id: i32) {
         // Get current manual override state
         let current_override = app.has_manual_override(pr_id);
-        
+
         match self.current_tab {
             MigrationTab::Eligible => {
                 // In eligible tab: eligible → not eligible → no override (back to eligible)
@@ -166,7 +168,7 @@ impl MigrationState {
                 }
             }
             MigrationTab::NotMerged => {
-                // In not merged tab: not eligible → eligible → no override (back to not eligible) 
+                // In not merged tab: not eligible → eligible → no override (back to not eligible)
                 match current_override {
                     None => {
                         // No override (naturally not eligible) → mark as eligible
@@ -255,23 +257,23 @@ impl MigrationState {
                     Some(true) => {
                         let action = match self.current_tab {
                             MigrationTab::Eligible => " →❌", // will mark not eligible
-                            MigrationTab::Unsure => " →◎", // will reset override  
+                            MigrationTab::Unsure => " →◎",    // will reset override
                             MigrationTab::NotMerged => " →◎", // will reset override
                         };
                         (" [📌 Manual]", action)
-                    },
+                    }
                     Some(false) => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →◎", // will reset override
-                            MigrationTab::Unsure => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " →◎",   // will reset override
+                            MigrationTab::Unsure => " →📌",    // will mark eligible
                             MigrationTab::NotMerged => " →📌", // will mark eligible
                         };
                         (" [❌ Manual]", action)
-                    },
+                    }
                     None => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →❌", // will mark not eligible
-                            MigrationTab::Unsure => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " →❌",  // will mark not eligible
+                            MigrationTab::Unsure => " →📌",    // will mark eligible
                             MigrationTab::NotMerged => " →📌", // will mark eligible
                         };
                         ("", action)
@@ -290,12 +292,11 @@ impl MigrationState {
                         Span::raw(&pr.pr.title),
                         Span::styled(
                             override_indicator,
-                            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
                         ),
-                        Span::styled(
-                            space_action,
-                            Style::default().fg(Color::Cyan),
-                        ),
+                        Span::styled(space_action, Style::default().fg(Color::Cyan)),
                     ]),
                     Line::from(vec![
                         Span::styled(
@@ -381,35 +382,33 @@ impl MigrationState {
             }
 
             // Add general reason for all PRs using all_details
-            if let Some(detail) = analysis.all_details.iter().find(|d| d.pr.pr.id == pr.pr.id) {
-                if let Some(reason) = &detail.reason {
-                    details.push(Line::from(""));
-                    details.push(Line::from(vec![Span::styled(
-                        "Reason:",
-                        Style::default()
-                            .fg(Color::Blue)
-                            .add_modifier(Modifier::BOLD),
-                    )]));
-                    details.push(Line::from(vec![Span::raw(reason)]));
-                }
+            if let Some(detail) = analysis.all_details.iter().find(|d| d.pr.pr.id == pr.pr.id)
+                && let Some(reason) = &detail.reason
+            {
+                details.push(Line::from(""));
+                details.push(Line::from(vec![Span::styled(
+                    "Reason:",
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                details.push(Line::from(vec![Span::raw(reason)]));
             }
 
             // Add unsure reason for unsure PRs (legacy support)
-            if self.current_tab == MigrationTab::Unsure {
-                if let Some(unsure_detail) = analysis
+            if self.current_tab == MigrationTab::Unsure
+                && let Some(unsure_detail) = analysis
                     .unsure_details
                     .iter()
                     .find(|d| d.pr.pr.id == pr.pr.id)
-                {
-                    if let Some(reason) = &unsure_detail.unsure_reason {
-                        details.push(Line::from(""));
-                        details.push(Line::from(vec![Span::styled(
-                            "Unsure Reason:",
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                        )]));
-                        details.push(Line::from(vec![Span::raw(reason)]));
-                    }
-                }
+                && let Some(reason) = &unsure_detail.unsure_reason
+            {
+                details.push(Line::from(""));
+                details.push(Line::from(vec![Span::styled(
+                    "Unsure Reason:",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )]));
+                details.push(Line::from(vec![Span::raw(reason)]));
             }
 
             let paragraph = Paragraph::new(details)

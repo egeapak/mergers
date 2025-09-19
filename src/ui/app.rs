@@ -128,7 +128,10 @@ impl App {
     pub fn mark_pr_as_eligible(&mut self, pr_id: i32) {
         if let Some(analysis) = &mut self.migration_analysis {
             // Remove from not eligible set if present
-            analysis.manual_overrides.marked_as_not_eligible.remove(&pr_id);
+            analysis
+                .manual_overrides
+                .marked_as_not_eligible
+                .remove(&pr_id);
             // Add to eligible set
             analysis.manual_overrides.marked_as_eligible.insert(pr_id);
             // Recategorize with new overrides
@@ -142,7 +145,10 @@ impl App {
             // Remove from eligible set if present
             analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
             // Add to not eligible set
-            analysis.manual_overrides.marked_as_not_eligible.insert(pr_id);
+            analysis
+                .manual_overrides
+                .marked_as_not_eligible
+                .insert(pr_id);
             // Recategorize with new overrides
             self.recategorize_prs();
         }
@@ -152,7 +158,10 @@ impl App {
     pub fn remove_manual_override(&mut self, pr_id: i32) {
         if let Some(analysis) = &mut self.migration_analysis {
             analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
-            analysis.manual_overrides.marked_as_not_eligible.remove(&pr_id);
+            analysis
+                .manual_overrides
+                .marked_as_not_eligible
+                .remove(&pr_id);
             // Recategorize with updated overrides
             self.recategorize_prs();
         }
@@ -161,9 +170,17 @@ impl App {
     /// Check if a PR has a manual override
     pub fn has_manual_override(&self, pr_id: i32) -> Option<bool> {
         if let Some(analysis) = &self.migration_analysis {
-            if analysis.manual_overrides.marked_as_eligible.contains(&pr_id) {
+            if analysis
+                .manual_overrides
+                .marked_as_eligible
+                .contains(&pr_id)
+            {
                 Some(true) // manually marked eligible
-            } else if analysis.manual_overrides.marked_as_not_eligible.contains(&pr_id) {
+            } else if analysis
+                .manual_overrides
+                .marked_as_not_eligible
+                .contains(&pr_id)
+            {
                 Some(false) // manually marked not eligible
             } else {
                 None // no manual override
@@ -181,7 +198,7 @@ impl App {
                 self.client.clone(),
                 analysis.terminal_states.clone(),
             );
-            
+
             // Recategorize with current overrides
             if let Ok(new_analysis) = analyzer.categorize_prs_with_overrides(
                 analysis.all_details.clone(),
@@ -196,12 +213,6 @@ impl App {
         }
     }
 
-    /// Get migration configuration if available
-    pub fn get_migration_config(&self) -> Option<&crate::models::MigrationModeConfig> {
-        // Try to get from initial_state first, then fallback to a stored config
-        // For now, we'll return default values since we don't store the config in App
-        None
-    }
 }
 
 #[cfg(test)]

@@ -211,20 +211,20 @@ impl MigrationAnalyzer {
 
         for analysis in &analyses {
             let pr_id = analysis.pr.pr.id;
-            
+
             // Check for manual overrides first
             if manual_overrides.marked_as_not_eligible.contains(&pr_id) {
                 // Manually marked as not eligible - always goes to not_merged regardless of automatic analysis
                 not_merged.push(analysis.pr.clone());
                 continue;
             }
-            
+
             if manual_overrides.marked_as_eligible.contains(&pr_id) {
                 // Manually marked as eligible - always goes to eligible regardless of automatic analysis
                 eligible.push(analysis.pr.clone());
                 continue;
             }
-            
+
             // Use enhanced logic for automatic categorization: PR is actually merged if commit ID OR title is found
             let actually_merged = analysis.commit_in_target || analysis.commit_title_in_target;
 
@@ -908,7 +908,9 @@ mod tests {
             commit_title_in_target: false,
             commit_id: "abc123".to_string(),
             unsure_reason: None,
-            reason: Some("Eligible: Work items in terminal state and PR found in target branch".to_string()),
+            reason: Some(
+                "Eligible: Work items in terminal state and PR found in target branch".to_string(),
+            ),
         };
 
         // PR that would naturally not be eligible but manually marked as eligible
@@ -925,7 +927,10 @@ mod tests {
             commit_title_in_target: false,
             commit_id: "def456".to_string(),
             unsure_reason: None,
-            reason: Some("Not merged: Work items not in terminal state and PR not found in target branch".to_string()),
+            reason: Some(
+                "Not merged: Work items not in terminal state and PR not found in target branch"
+                    .to_string(),
+            ),
         };
 
         // Create manual overrides
@@ -934,7 +939,9 @@ mod tests {
         manual_overrides.marked_as_eligible.insert(2); // PR 2 manually marked eligible
 
         let analyses = vec![naturally_eligible_pr, naturally_not_eligible_pr];
-        let result = analyzer.categorize_prs_with_overrides(analyses, symmetric_diff, manual_overrides.clone()).unwrap();
+        let result = analyzer
+            .categorize_prs_with_overrides(analyses, symmetric_diff, manual_overrides.clone())
+            .unwrap();
 
         // Verify manual overrides work
         assert_eq!(result.eligible_prs.len(), 1);

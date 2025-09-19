@@ -2,6 +2,7 @@ use crate::{
     ui::App,
     ui::state::{AppState, StateChange},
 };
+use anyhow::Result;
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -30,15 +31,15 @@ pub struct MigrationTaggingState {
     start_time: Option<Instant>,
     tag_name: String,
     started: bool,
-    
+
     // Task management
-    tagging_tasks: Option<Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>, String>>>>,
+    tagging_tasks: Option<Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>>>,
 }
 
 impl MigrationTaggingState {
     pub fn new(version: String, tag_prefix: String) -> Self {
         let tag_name = format!("{}{}", tag_prefix, version);
-        
+
         Self {
             total_prs: 0,
             tagged_prs: 0,
@@ -53,11 +54,6 @@ impl MigrationTaggingState {
         }
     }
 
-    pub fn new_with_batch_size(version: String, tag_prefix: String, _batch_size: usize) -> Self {
-        // For now, we'll use the same implementation. The batch size will be used in start_tagging
-        Self::new(version, tag_prefix)
-    }
-
     pub async fn start_tagging(&mut self, app: &App) {
         if self.started {
             return;
@@ -66,7 +62,7 @@ impl MigrationTaggingState {
         if let Some(analysis) = &app.migration_analysis {
             let eligible_prs = &analysis.eligible_prs;
             self.total_prs = eligible_prs.len();
-            
+
             if self.total_prs == 0 {
                 self.is_complete = true;
                 return;
@@ -75,7 +71,7 @@ impl MigrationTaggingState {
             // Get batch size - we'll pass it as parameter since we don't have direct access to config here
             let batch_size = 50; // Will be passed from version input state
 
-            self.total_batches = (self.total_prs + batch_size - 1) / batch_size;
+            self.total_batches = self.total_prs.div_ceil(batch_size);
             self.start_time = Some(Instant::now());
 
             // Create batches
@@ -86,14 +82,14 @@ impl MigrationTaggingState {
 
             // Start tagging tasks
             let mut tasks = Vec::new();
-            
-            for (_batch_idx, batch) in batches.into_iter().enumerate() {
+
+            for batch in batches.into_iter() {
                 let client = app.client.clone();
                 let tag_name = self.tag_name.clone();
-                
+
                 let task = tokio::spawn(async move {
                     let mut batch_errors = Vec::new();
-                    
+
                     for pr in batch {
                         match client.add_label_to_pr(pr.pr.id, &tag_name).await {
                             Ok(_) => {
@@ -108,13 +104,13 @@ impl MigrationTaggingState {
                             }
                         }
                     }
-                    
+
                     Ok(batch_errors)
                 });
-                
+
                 tasks.push(task);
             }
-            
+
             self.tagging_tasks = Some(tasks);
         }
     }
@@ -123,12 +119,12 @@ impl MigrationTaggingState {
         if let Some(tasks) = &mut self.tagging_tasks {
             let mut completed_count = 0;
             let mut new_errors = Vec::new();
-            
+
             // Check each task
             for (i, task) in tasks.iter_mut().enumerate() {
                 if task.is_finished() {
                     completed_count += 1;
-                    
+
                     // If this batch just completed, collect results
                     if i >= self.current_batch {
                         match task.await {
@@ -140,7 +136,7 @@ impl MigrationTaggingState {
                                 new_errors.push(TaggingError {
                                     pr_id: 0,
                                     pr_title: format!("Batch {}", i + 1),
-                                    error,
+                                    error: error.to_string(),
                                 });
                             }
                             Err(e) => {
@@ -152,25 +148,23 @@ impl MigrationTaggingState {
                                 });
                             }
                         }
-                        
+
                         self.current_batch = i + 1;
                         // Estimate tagged PRs based on completed batches
                         let batch_size = if self.total_prs > 0 && self.total_batches > 0 {
-                            (self.total_prs + self.total_batches - 1) / self.total_batches
+                            self.total_prs.div_ceil(self.total_batches)
                         } else {
                             50
                         };
-                        self.tagged_prs = std::cmp::min(
-                            self.current_batch * batch_size,
-                            self.total_prs
-                        );
+                        self.tagged_prs =
+                            std::cmp::min(self.current_batch * batch_size, self.total_prs);
                     }
                 }
             }
-            
+
             // Add new errors
             self.errors.extend(new_errors);
-            
+
             // Check if all tasks are complete
             if completed_count == self.total_batches {
                 self.is_complete = true;
@@ -178,7 +172,7 @@ impl MigrationTaggingState {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -190,7 +184,11 @@ impl MigrationTaggingState {
         };
 
         let gauge = Gauge::default()
-            .block(Block::default().borders(Borders::ALL).title("Tagging Progress"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Tagging Progress"),
+            )
             .gauge_style(Style::default().fg(Color::Green))
             .percent(progress as u16)
             .label(format!("Tagged {}/{} PRs", self.tagged_prs, self.total_prs));
@@ -202,46 +200,75 @@ impl MigrationTaggingState {
         let status_text = if self.is_complete {
             if self.errors.is_empty() {
                 vec![
-                    Line::from(vec![
-                        Span::styled("✅ Tagging Complete!", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
-                    ]),
+                    Line::from(vec![Span::styled(
+                        "✅ Tagging Complete!",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
                     Line::from(""),
-                    Line::from(vec![
-                        Span::styled(format!("Successfully tagged {} PRs with '{}'", self.total_prs, self.tag_name), 
-                            Style::default().fg(Color::White))
-                    ]),
+                    Line::from(vec![Span::styled(
+                        format!(
+                            "Successfully tagged {} PRs with '{}'",
+                            self.total_prs, self.tag_name
+                        ),
+                        Style::default().fg(Color::White),
+                    )]),
                 ]
             } else {
                 vec![
-                    Line::from(vec![
-                        Span::styled("⚠️  Tagging Complete with Errors", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                    ]),
+                    Line::from(vec![Span::styled(
+                        "⚠️  Tagging Complete with Errors",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
                     Line::from(""),
                     Line::from(vec![
-                        Span::styled(format!("Tagged: {} PRs", self.total_prs - self.errors.len()), Style::default().fg(Color::Green)),
+                        Span::styled(
+                            format!("Tagged: {} PRs", self.total_prs - self.errors.len()),
+                            Style::default().fg(Color::Green),
+                        ),
                         Span::styled(" | ", Style::default().fg(Color::Gray)),
-                        Span::styled(format!("Errors: {} PRs", self.errors.len()), Style::default().fg(Color::Red)),
+                        Span::styled(
+                            format!("Errors: {} PRs", self.errors.len()),
+                            Style::default().fg(Color::Red),
+                        ),
                     ]),
-                    Line::from(vec![
-                        Span::styled(format!("Tag: '{}'", self.tag_name), Style::default().fg(Color::Cyan))
-                    ]),
+                    Line::from(vec![Span::styled(
+                        format!("Tag: '{}'", self.tag_name),
+                        Style::default().fg(Color::Cyan),
+                    )]),
                 ]
             }
         } else {
-            let elapsed = self.start_time.map(|start| start.elapsed().as_secs()).unwrap_or(0);
+            let elapsed = self
+                .start_time
+                .map(|start| start.elapsed().as_secs())
+                .unwrap_or(0);
             vec![
-                Line::from(vec![
-                    Span::styled("🏃 Tagging in Progress...", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-                ]),
+                Line::from(vec![Span::styled(
+                    "🏃 Tagging in Progress...",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled(format!("Batch: {}/{}", self.current_batch, self.total_batches), Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        format!("Batch: {}/{}", self.current_batch, self.total_batches),
+                        Style::default().fg(Color::Cyan),
+                    ),
                     Span::styled(" | ", Style::default().fg(Color::Gray)),
-                    Span::styled(format!("Time: {}s", elapsed), Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!("Time: {}s", elapsed),
+                        Style::default().fg(Color::Gray),
+                    ),
                 ]),
-                Line::from(vec![
-                    Span::styled(format!("Tag: '{}'", self.tag_name), Style::default().fg(Color::Cyan))
-                ]),
+                Line::from(vec![Span::styled(
+                    format!("Tag: '{}'", self.tag_name),
+                    Style::default().fg(Color::Cyan),
+                )]),
             ]
         };
 
@@ -254,17 +281,17 @@ impl MigrationTaggingState {
 
     fn render_errors(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         if self.errors.is_empty() {
-            let no_errors = Paragraph::new(vec![
-                Line::from(vec![
-                    Span::styled("✅ No errors", Style::default().fg(Color::Green))
-                ])
-            ])
+            let no_errors = Paragraph::new(vec![Line::from(vec![Span::styled(
+                "✅ No errors",
+                Style::default().fg(Color::Green),
+            )])])
             .block(Block::default().borders(Borders::ALL).title("Errors"))
             .alignment(Alignment::Center);
-            
+
             f.render_widget(no_errors, area);
         } else {
-            let error_lines: Vec<Line> = self.errors
+            let error_lines: Vec<Line> = self
+                .errors
                 .iter()
                 .map(|err| {
                     Line::from(vec![
@@ -282,7 +309,7 @@ impl MigrationTaggingState {
                     Block::default()
                         .borders(Borders::ALL)
                         .title(format!("Errors ({})", self.errors.len()))
-                        .border_style(Style::default().fg(Color::Red))
+                        .border_style(Style::default().fg(Color::Red)),
                 )
                 .wrap(Wrap { trim: true });
 
@@ -292,9 +319,9 @@ impl MigrationTaggingState {
 
     fn render_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let help_text = if self.is_complete {
-            vec![
-                Line::from("Press any key to exit tagging and return to results"),
-            ]
+            vec![Line::from(
+                "Press any key to exit tagging and return to results",
+            )]
         } else {
             vec![
                 Line::from("Tagging PRs in parallel batches..."),
@@ -318,10 +345,10 @@ impl AppState for MigrationTaggingState {
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(3),  // Progress bar
-                Constraint::Length(6),  // Status
-                Constraint::Min(4),     // Errors
-                Constraint::Length(3),  // Help
+                Constraint::Length(3), // Progress bar
+                Constraint::Length(6), // Status
+                Constraint::Min(4),    // Errors
+                Constraint::Length(3), // Help
             ])
             .split(f.area());
 

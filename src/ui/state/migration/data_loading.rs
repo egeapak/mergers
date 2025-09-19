@@ -10,6 +10,7 @@ use crate::{
     ui::state::{AppState, StateChange},
     utils::throttle::NetworkProcessor,
 };
+use anyhow::{Result, Context, bail};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -45,13 +46,13 @@ pub struct MigrationDataLoadingState {
     config: Option<AppConfig>,
 
     // Task management
-    pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>, String>>>,
+    pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>>>>,
     repo_setup_task:
-        Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>), String>>>,
-    git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory, String>>>,
-    work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>), String>>>>,
+        Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>)>>>,
+    git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory>>>,
+    work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>)>>>>,
     analysis_task:
-        Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis, String>>>,
+        Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis>>>,
     network_processor: Option<NetworkProcessor>,
 
     // Progress tracking
@@ -106,7 +107,7 @@ impl MigrationDataLoadingState {
         }
     }
 
-    async fn start_pr_fetching(&mut self, app: &App) -> Result<(), String> {
+    async fn start_pr_fetching(&mut self, app: &App) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingPullRequests;
         self.status = "Fetching pull requests...".to_string();
         self.progress = 0.1;
@@ -119,7 +120,7 @@ impl MigrationDataLoadingState {
             let prs = client
                 .fetch_pull_requests(&dev_branch, since.as_deref())
                 .await
-                .map_err(|e| format!("Failed to fetch pull requests: {}", e))?;
+                .context("Failed to fetch pull requests")?;
 
             // For migration mode, we want all PRs, not just untagged ones
             Ok(prs)
@@ -128,28 +129,28 @@ impl MigrationDataLoadingState {
         Ok(())
     }
 
-    async fn check_pr_fetch_progress(&mut self) -> Result<Option<Vec<PullRequest>>, String> {
-        if let Some(task) = &mut self.pr_fetch_task {
-            if task.is_finished() {
-                let task = self.pr_fetch_task.take().unwrap();
-                match task.await {
-                    Ok(Ok(prs)) => {
-                        self.total_prs = prs.len();
-                        return Ok(Some(prs));
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        return Err(format!("PR fetch task failed: {}", e));
-                    }
+    async fn check_pr_fetch_progress(&mut self) -> Result<Option<Vec<PullRequest>>> {
+        if let Some(task) = &mut self.pr_fetch_task
+            && task.is_finished()
+        {
+            let task = self.pr_fetch_task.take().unwrap();
+            match task.await {
+                Ok(Ok(prs)) => {
+                    self.total_prs = prs.len();
+                    return Ok(Some(prs));
+                }
+                Ok(Err(e)) => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    return Err(e).context("PR fetch task failed");
                 }
             }
         }
         Ok(None)
     }
 
-    async fn start_repository_setup(&mut self) -> Result<(), String> {
+    async fn start_repository_setup(&mut self) -> Result<()> {
         if let Some(config) = &self.config {
             self.loading_stage = LoadingStage::SettingUpRepository;
             self.status = "Setting up repository and preparing git history fetch...".to_string();
@@ -167,7 +168,7 @@ impl MigrationDataLoadingState {
     async fn perform_repository_setup(
         config: AppConfig,
         migration_id: String,
-    ) -> Result<(std::path::PathBuf, Vec<String>), String> {
+    ) -> Result<(std::path::PathBuf, Vec<String>)> {
         // Create client from config
         let client = AzureDevOpsClient::new(
             config.shared().organization.clone(),
@@ -175,13 +176,13 @@ impl MigrationDataLoadingState {
             config.shared().repository.clone(),
             config.shared().pat.clone(),
         )
-        .map_err(|e| format!("Failed to create client: {}", e))?;
+        .context("Failed to create client")?;
 
         // Setup repository for analysis
         let repo_details = client
             .fetch_repo_details()
             .await
-            .map_err(|e| format!("Failed to fetch repository details: {}", e))?;
+            .context("Failed to fetch repository details")?;
 
         // If using local repo, attempt to clean up any existing migration worktrees
         if let Some(local_repo) = &config.shared().local_repo {
@@ -197,7 +198,7 @@ impl MigrationDataLoadingState {
             &config.shared().target_branch,
             &migration_id,
         )
-        .map_err(|e| format!("Failed to setup repository: {}", e))?;
+        .context("Failed to setup repository")?;
 
         let repo_path = match &repo_setup {
             crate::git::RepositorySetup::Local(path) => path.to_path_buf(),
@@ -209,41 +210,40 @@ impl MigrationDataLoadingState {
             AppConfig::Migration { migration, .. } => {
                 AzureDevOpsClient::parse_terminal_states(&migration.terminal_states)
             }
-            _ => return Err("Migration mode should have migration config".to_string()),
+            _ => bail!("Migration mode should have migration config"),
         };
 
         Ok((repo_path, terminal_states))
     }
 
-    async fn check_repository_setup_progress(&mut self) -> Result<bool, String> {
-        if let Some(task) = &mut self.repo_setup_task {
-            if task.is_finished() {
-                let task = self.repo_setup_task.take().unwrap();
-                match task.await {
-                    Ok(Ok((repo_path, terminal_states))) => {
-                        self.repo_path = Some(repo_path.clone());
-                        self.terminal_states = Some(terminal_states);
+    async fn check_repository_setup_progress(&mut self) -> Result<bool> {
+        if let Some(task) = &mut self.repo_setup_task
+            && task.is_finished()
+        {
+            let task = self.repo_setup_task.take().unwrap();
+            match task.await {
+                Ok(Ok((repo_path, terminal_states))) => {
+                    self.repo_path = Some(repo_path.clone());
+                    self.terminal_states = Some(terminal_states);
 
-                        // Start git history fetch in parallel now that repo is ready
-                        if let Some(config) = &self.config {
-                            let repo_path_clone = repo_path.clone();
-                            let target_branch = config.shared().target_branch.clone();
+                    // Start git history fetch in parallel now that repo is ready
+                    if let Some(config) = &self.config {
+                        let repo_path_clone = repo_path.clone();
+                        let target_branch = config.shared().target_branch.clone();
 
-                            self.git_history_task = Some(tokio::spawn(async move {
-                                get_target_branch_history(&repo_path_clone, &target_branch).map_err(
-                                    |e| format!("Failed to get target branch history: {e:?}"),
-                                )
-                            }));
-                        }
+                        self.git_history_task = Some(tokio::spawn(async move {
+                            get_target_branch_history(&repo_path_clone, &target_branch)
+                                .context("Failed to get target branch history")
+                        }));
+                    }
 
-                        return Ok(true);
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        return Err(format!("Repository setup task failed: {}", e));
-                    }
+                    return Ok(true);
+                }
+                Ok(Err(e)) => {
+                    return Err(e);
+                }
+                Err(e) => {
+                    return Err(e).context("Repository setup task failed");
                 }
             }
         }
@@ -286,7 +286,7 @@ impl MigrationDataLoadingState {
                             client
                                 .fetch_work_items_with_history_for_pr(pr_id)
                                 .await
-                                .map_err(|e| format!("Failed to fetch work items: {}", e))
+                                .context("Failed to fetch work items")
                         })
                         .await;
 
@@ -303,7 +303,7 @@ impl MigrationDataLoadingState {
         self.work_items_tasks = Some(tasks);
     }
 
-    async fn check_work_items_progress(&mut self, _app: &App) -> Result<bool, String> {
+    async fn check_work_items_progress(&mut self, _app: &App) -> Result<bool> {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
@@ -316,10 +316,10 @@ impl MigrationDataLoadingState {
                             completed.push((index, work_items));
                         }
                         Ok(Err(e)) => {
-                            return Err(format!("Failed to fetch work items: {}", e));
+                            return Err(e).context("Failed to fetch work items");
                         }
                         Err(e) => {
-                            return Err(format!("Work items task failed: {}", e));
+                            return Err(e).context("Work items task failed");
                         }
                     }
                 } else {
@@ -363,7 +363,7 @@ impl MigrationDataLoadingState {
         }
     }
 
-    async fn start_migration_analysis(&mut self) -> Result<(), String> {
+    async fn start_migration_analysis(&mut self) -> Result<()> {
         if !self.prs_with_work_items.is_empty() {
             // Wait for git history fetch to complete if still running
             if let Some(task) = self.git_history_task.take() {
@@ -376,14 +376,14 @@ impl MigrationDataLoadingState {
                         return Err(e);
                     }
                     Err(e) => {
-                        return Err(format!("Git history fetch task failed: {}", e));
+                        return Err(e).context("Git history fetch task failed");
                     }
                 }
             }
 
             // Ensure we have the commit history
             if self.commit_history.is_none() {
-                return Err("Commit history not available for analysis".to_string());
+                bail!("Commit history not available for analysis");
             }
 
             self.loading_stage = LoadingStage::RunningAnalysis;
@@ -427,7 +427,7 @@ impl MigrationDataLoadingState {
         config: AppConfig,
         migration_id: String,
         progress_counter: Arc<AtomicUsize>,
-    ) -> Result<crate::models::MigrationAnalysis, String> {
+    ) -> Result<crate::models::MigrationAnalysis> {
         // Create client from config
         let client = AzureDevOpsClient::new(
             config.shared().organization.clone(),
@@ -435,7 +435,7 @@ impl MigrationDataLoadingState {
             config.shared().repository.clone(),
             config.shared().pat.clone(),
         )
-        .map_err(|e| format!("Failed to create client: {e:?}"))?;
+        .context("Failed to create client")?;
 
         // Create migration analyzer
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
@@ -446,7 +446,7 @@ impl MigrationDataLoadingState {
             &config.shared().dev_branch,
             &config.shared().target_branch,
         )
-        .map_err(|e| format!("Failed to calculate git diff: {e:?}"))?;
+        .context("Failed to calculate git diff")?;
 
         // Analyze PRs using pre-fetched commit history (no individual git commands per PR)
         let mut pr_analyses = Vec::new();
@@ -454,9 +454,7 @@ impl MigrationDataLoadingState {
             let analysis = analyzer
                 .analyze_single_pr(&pr_with_work_items, &symmetric_diff, &commit_history)
                 .await
-                .map_err(|e| {
-                    format!("Analysis failed for PR {}: {}", pr_with_work_items.pr.id, e)
-                })?;
+                .with_context(|| format!("Analysis failed for PR {}", pr_with_work_items.pr.id))?;
 
             pr_analyses.push(analysis);
 
@@ -467,7 +465,7 @@ impl MigrationDataLoadingState {
         // Categorize PRs
         let analysis = analyzer
             .categorize_prs(pr_analyses, symmetric_diff)
-            .map_err(|e| format!("Failed to categorize PRs: {}", e))?;
+            .context("Failed to categorize PRs")?;
 
         // Clean up migration worktree
         if let Some(local_repo) = &config.shared().local_repo {
@@ -477,7 +475,7 @@ impl MigrationDataLoadingState {
         Ok(analysis)
     }
 
-    async fn check_analysis_progress(&mut self, app: &mut App) -> Result<bool, String> {
+    async fn check_analysis_progress(&mut self, app: &mut App) -> Result<bool> {
         if let Some(task) = &mut self.analysis_task {
             if task.is_finished() {
                 let task = self.analysis_task.take().unwrap();
@@ -493,7 +491,7 @@ impl MigrationDataLoadingState {
                         return Err(e);
                     }
                     Err(e) => {
-                        return Err(format!("Analysis task failed: {}", e));
+                        return Err(e).context("Analysis task failed");
                     }
                 }
             } else {
@@ -658,7 +656,7 @@ impl AppState for MigrationDataLoadingState {
         if !self.loaded && code == KeyCode::Null {
             self.loaded = true;
             if let Err(e) = self.start_pr_fetching(app).await {
-                self.error = Some(e);
+                self.error = Some(e.to_string());
                 return StateChange::Keep;
             }
             return StateChange::Keep;
@@ -672,14 +670,14 @@ impl AppState for MigrationDataLoadingState {
                         Ok(Some(prs)) => {
                             self.prs = prs;
                             if let Err(e) = self.start_repository_setup().await {
-                                self.error = Some(e);
+                                self.error = Some(e.to_string());
                             }
                         }
                         Ok(None) => {
                             // Still fetching, continue
                         }
                         Err(e) => {
-                            self.error = Some(e);
+                            self.error = Some(e.to_string());
                         }
                     }
                     return StateChange::Keep;
@@ -694,7 +692,7 @@ impl AppState for MigrationDataLoadingState {
                             // Still setting up, continue
                         }
                         Err(e) => {
-                            self.error = Some(e);
+                            self.error = Some(e.to_string());
                         }
                     }
                     return StateChange::Keep;
@@ -708,14 +706,14 @@ impl AppState for MigrationDataLoadingState {
                         Ok(true) => {
                             // Work items complete, start migration analysis
                             if let Err(e) = self.start_migration_analysis().await {
-                                self.error = Some(e);
+                                self.error = Some(e.to_string());
                             }
                         }
                         Ok(false) => {
                             // Still fetching work items, continue
                         }
                         Err(e) => {
-                            self.error = Some(e);
+                            self.error = Some(e.to_string());
                         }
                     }
                     return StateChange::Keep;
@@ -732,7 +730,7 @@ impl AppState for MigrationDataLoadingState {
                             // Still analyzing, continue
                         }
                         Err(e) => {
-                            self.error = Some(e);
+                            self.error = Some(e.to_string());
                         }
                     }
                     return StateChange::Keep;
@@ -804,8 +802,6 @@ mod tests {
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
-                include_tagged: false,
-                tag_batch_size: 50,
             },
         };
 
@@ -840,8 +836,6 @@ mod tests {
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
-                include_tagged: false,
-                tag_batch_size: 50,
             },
         };
 

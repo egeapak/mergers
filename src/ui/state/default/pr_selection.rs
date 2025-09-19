@@ -5,6 +5,7 @@ use crate::{
     ui::state::{AppState, StateChange},
     utils::html_to_lines,
 };
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use chrono::DateTime;
 use crossterm::event::KeyCode;
@@ -16,6 +17,14 @@ use ratatui::{
 };
 use std::collections::HashSet;
 
+#[derive(Debug, Clone)]
+enum SearchQuery {
+    PullRequestTitle(String),
+    WorkItemTitle(String),
+    PullRequestId(i32),
+    WorkItemId(i32),
+}
+
 pub struct PullRequestSelectionState {
     table_state: TableState,
     work_item_index: usize,
@@ -23,6 +32,14 @@ pub struct PullRequestSelectionState {
     available_states: Vec<String>,
     selected_filter_states: HashSet<String>,
     state_selection_index: usize,
+    // Search functionality
+    search_mode: bool,
+    search_input: String,
+    search_results: Vec<usize>,
+    current_search_index: usize,
+    search_error_message: Option<String>,
+    search_iteration_mode: bool,
+    last_search_query: String, // Store the last executed search query
 }
 
 impl PullRequestSelectionState {
@@ -34,7 +51,216 @@ impl PullRequestSelectionState {
             available_states: Vec::new(),
             selected_filter_states: HashSet::new(),
             state_selection_index: 0,
+            // Search functionality
+            search_mode: false,
+            search_input: String::new(),
+            search_results: Vec::new(),
+            current_search_index: 0,
+            search_error_message: None,
+            search_iteration_mode: false,
+            last_search_query: String::new(),
         }
+    }
+
+    fn parse_search_query(input: &str) -> Result<SearchQuery> {
+        let trimmed = input.trim();
+
+        if trimmed.is_empty() {
+            bail!("Search query cannot be empty");
+        }
+
+        // Handle shortcuts: !12345 for PR and #98765 for work item
+        if let Some(pr_id_str) = trimmed.strip_prefix('!') {
+            if let Ok(pr_id) = pr_id_str.parse::<i32>() {
+                return Ok(SearchQuery::PullRequestId(pr_id));
+            } else {
+                bail!("Invalid PR ID format");
+            }
+        }
+
+        if let Some(wi_id_str) = trimmed.strip_prefix('#') {
+            if let Ok(wi_id) = wi_id_str.parse::<i32>() {
+                return Ok(SearchQuery::WorkItemId(wi_id));
+            } else {
+                bail!("Invalid work item ID format");
+            }
+        }
+
+        // Handle tag:query format
+        if let Some(colon_pos) = trimmed.find(':') {
+            let tag = trimmed[..colon_pos].to_uppercase();
+            let query = trimmed[colon_pos + 1..].trim();
+
+            if query.is_empty() {
+                bail!("Query after ':' cannot be empty");
+            }
+
+            match tag.as_str() {
+                "P" | "PR" => Ok(SearchQuery::PullRequestTitle(query.to_string())),
+                "W" | "WI" => Ok(SearchQuery::WorkItemTitle(query.to_string())),
+                _ => bail!(
+                    "Invalid tag. Use 'P'/'PR' for pull requests or 'W'/'WI' for work items"
+                ),
+            }
+        } else {
+            // Default to PR title search if no tag is specified
+            Ok(SearchQuery::PullRequestTitle(trimmed.to_string()))
+        }
+    }
+
+    fn execute_search(&mut self, app: &App) {
+        self.search_results.clear();
+        self.current_search_index = 0;
+        self.search_error_message = None;
+        self.search_iteration_mode = false;
+
+        // Store the search query for display in status bar
+        self.last_search_query = self.search_input.clone();
+
+        let query = match Self::parse_search_query(&self.search_input) {
+            Ok(q) => q,
+            Err(e) => {
+                self.search_error_message = Some(e.to_string());
+                return;
+            }
+        };
+
+        match query {
+            SearchQuery::PullRequestId(pr_id) => {
+                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                    if pr_with_wi.pr.id == pr_id {
+                        self.search_results.push(idx);
+                        break; // Only one PR with this ID should exist
+                    }
+                }
+            }
+            SearchQuery::WorkItemId(wi_id) => {
+                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                    if pr_with_wi.work_items.iter().any(|wi| wi.id == wi_id) {
+                        self.search_results.push(idx);
+                    }
+                }
+            }
+            SearchQuery::PullRequestTitle(search_term) => {
+                let search_term_lower = search_term.to_lowercase();
+                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                    if pr_with_wi
+                        .pr
+                        .title
+                        .to_lowercase()
+                        .contains(&search_term_lower)
+                    {
+                        self.search_results.push(idx);
+                    }
+                }
+            }
+            SearchQuery::WorkItemTitle(search_term) => {
+                let search_term_lower = search_term.to_lowercase();
+                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                    let has_matching_work_item = pr_with_wi.work_items.iter().any(|wi| {
+                        wi.fields
+                            .title
+                            .as_ref()
+                            .map(|title| title.to_lowercase().contains(&search_term_lower))
+                            .unwrap_or(false)
+                    });
+                    if has_matching_work_item {
+                        self.search_results.push(idx);
+                    }
+                }
+            }
+        }
+
+        if self.search_results.is_empty() {
+            self.search_error_message = Some("No matching items found".to_string());
+        } else {
+            // Jump to first result and enter search iteration mode
+            self.search_iteration_mode = true;
+            self.current_search_index = 0;
+            self.table_state.select(Some(self.search_results[0]));
+            self.work_item_index = 0; // Reset work item selection
+        }
+    }
+
+    fn navigate_search_results(&mut self, direction: i32) {
+        if self.search_results.is_empty() || !self.search_iteration_mode {
+            return;
+        }
+
+        // Find the current selection in the search results
+        let current_table_selection = self.table_state.selected().unwrap_or(0);
+        let current_search_pos = self
+            .search_results
+            .iter()
+            .position(|&idx| idx == current_table_selection);
+
+        let new_search_pos = if let Some(pos) = current_search_pos {
+            // We're currently on a search result, navigate from here
+            if direction > 0 {
+                if pos + 1 < self.search_results.len() {
+                    pos + 1
+                } else {
+                    self.search_error_message = Some("No more results".to_string());
+                    return;
+                }
+            } else if pos > 0 {
+                pos - 1
+            } else {
+                self.search_error_message = Some("No previous results".to_string());
+                return;
+            }
+        } else {
+            // We're not currently on a search result, find the nearest one
+            if direction > 0 {
+                // Find the first search result after the current selection
+                match self
+                    .search_results
+                    .iter()
+                    .position(|&idx| idx > current_table_selection)
+                {
+                    Some(pos) => pos,
+                    None => {
+                        self.search_error_message = Some("No more results".to_string());
+                        return;
+                    }
+                }
+            } else {
+                // Find the last search result before the current selection
+                match self
+                    .search_results
+                    .iter()
+                    .rposition(|&idx| idx < current_table_selection)
+                {
+                    Some(pos) => pos,
+                    None => {
+                        self.search_error_message = Some("No previous results".to_string());
+                        return;
+                    }
+                }
+            }
+        };
+
+        // Update both the current search index and table selection
+        self.current_search_index = new_search_pos;
+        self.table_state
+            .select(Some(self.search_results[new_search_pos]));
+        self.work_item_index = 0; // Reset work item selection
+        self.search_error_message = None; // Clear any previous error messages
+    }
+
+    fn enter_search_mode(&mut self) {
+        self.search_mode = true;
+        self.search_input.clear();
+        self.search_results.clear();
+        self.search_error_message = None;
+        self.search_iteration_mode = false;
+    }
+
+    fn exit_search_mode(&mut self) {
+        self.search_mode = false;
+        self.search_iteration_mode = false;
+        self.search_results.clear();
+        self.search_error_message = None;
     }
 
     fn initialize_selection(&mut self, app: &App) {
@@ -80,40 +306,38 @@ impl PullRequestSelectionState {
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
-        if let Some(i) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get_mut(i) {
-                pr.selected = !pr.selected;
-            }
+        if let Some(i) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get_mut(i)
+        {
+            pr.selected = !pr.selected;
         }
     }
 
     fn next_work_item(&mut self, app: &App) {
-        if let Some(pr_index) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get(pr_index) {
-                if !pr.work_items.is_empty() {
-                    self.work_item_index = (self.work_item_index + 1) % pr.work_items.len();
-                }
-            }
+        if let Some(pr_index) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get(pr_index)
+            && !pr.work_items.is_empty()
+        {
+            self.work_item_index = (self.work_item_index + 1) % pr.work_items.len();
         }
     }
 
     fn previous_work_item(&mut self, app: &App) {
-        if let Some(pr_index) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get(pr_index) {
-                if !pr.work_items.is_empty() {
-                    if self.work_item_index == 0 {
-                        self.work_item_index = pr.work_items.len() - 1;
-                    } else {
-                        self.work_item_index -= 1;
-                    }
-                }
+        if let Some(pr_index) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests.get(pr_index)
+            && !pr.work_items.is_empty()
+        {
+            if self.work_item_index == 0 {
+                self.work_item_index = pr.work_items.len() - 1;
+            } else {
+                self.work_item_index -= 1;
             }
         }
     }
 
     fn collect_distinct_work_item_states(&self, app: &App) -> Vec<String> {
         let mut states = HashSet::new();
-        
+
         for pr in &app.pull_requests {
             for work_item in &pr.work_items {
                 if let Some(state) = &work_item.fields.state {
@@ -121,7 +345,7 @@ impl PullRequestSelectionState {
                 }
             }
         }
-        
+
         let mut sorted_states: Vec<String> = states.into_iter().collect();
         sorted_states.sort();
         sorted_states
@@ -181,7 +405,8 @@ impl PullRequestSelectionState {
 
     fn next_state(&mut self) {
         if !self.available_states.is_empty() {
-            self.state_selection_index = (self.state_selection_index + 1) % self.available_states.len();
+            self.state_selection_index =
+                (self.state_selection_index + 1) % self.available_states.len();
         }
     }
 
@@ -426,14 +651,12 @@ impl PullRequestSelectionState {
             state_changes.sort_by(|a, b| {
                 let get_date_string = |entry: &WorkItemHistory| -> Option<String> {
                     // First try System.ChangedDate
-                    if let Some(fields) = &entry.fields {
-                        if let Some(changed_date) = &fields.changed_date {
-                            if let Some(new_date) = &changed_date.new_value {
-                                if !new_date.starts_with("9999-01-01") {
-                                    return Some(new_date.clone());
-                                }
-                            }
-                        }
+                    if let Some(fields) = &entry.fields
+                        && let Some(changed_date) = &fields.changed_date
+                        && let Some(new_date) = &changed_date.new_value
+                        && !new_date.starts_with("9999-01-01")
+                    {
+                        return Some(new_date.clone());
                     }
                     // Fall back to revisedDate if not a placeholder
                     if !entry.revised_date.starts_with("9999-01-01") {
@@ -484,87 +707,79 @@ impl PullRequestSelectionState {
                         ));
                     }
 
-                    if let Some(fields) = &history_entry.fields {
-                        if let Some(state_change) = &fields.state {
-                            if let Some(new_state) = &state_change.new_value {
-                                // Add arrow separator between entries (showing chronological flow)
-                                if !history_spans.is_empty() {
-                                    history_spans.push(Span::styled(
-                                        " → ",
-                                        Style::default().fg(Color::Gray),
-                                    ));
-                                }
+                    if let Some(fields) = &history_entry.fields
+                        && let Some(state_change) = &fields.state
+                        && let Some(new_state) = &state_change.new_value
+                    {
+                        // Add arrow separator between entries (showing chronological flow)
+                        if !history_spans.is_empty() {
+                            history_spans
+                                .push(Span::styled(" → ", Style::default().fg(Color::Gray)));
+                        }
 
-                                // Format date - use System.ChangedDate as primary source
-                                let date_str = {
-                                    // First try System.ChangedDate
-                                    if let Some(fields) = &history_entry.fields {
-                                        if let Some(changed_date) = &fields.changed_date {
-                                            if let Some(new_date) = &changed_date.new_value {
-                                                if !new_date.starts_with("9999-01-01") {
-                                                    // Extract date part from System.ChangedDate
-                                                    if let Some(t_pos) = new_date.find('T') {
-                                                        &new_date[..t_pos]
-                                                    } else {
-                                                        new_date
-                                                    }
-                                                } else {
-                                                    "Unknown date"
-                                                }
+                        // Format date - use System.ChangedDate as primary source
+                        let date_str = {
+                            // First try System.ChangedDate
+                            if let Some(fields) = &history_entry.fields {
+                                if let Some(changed_date) = &fields.changed_date {
+                                    if let Some(new_date) = &changed_date.new_value {
+                                        if !new_date.starts_with("9999-01-01") {
+                                            // Extract date part from System.ChangedDate
+                                            if let Some(t_pos) = new_date.find('T') {
+                                                &new_date[..t_pos]
                                             } else {
-                                                "Unknown date"
-                                            }
-                                        } else {
-                                            // No System.ChangedDate, try revisedDate
-                                            if !history_entry.revised_date.starts_with("9999-01-01")
-                                            {
-                                                if let Some(t_pos) =
-                                                    history_entry.revised_date.find('T')
-                                                {
-                                                    &history_entry.revised_date[..t_pos]
-                                                } else {
-                                                    &history_entry.revised_date
-                                                }
-                                            } else {
-                                                "Unknown date"
-                                            }
-                                        }
-                                    } else {
-                                        // No fields, try revisedDate
-                                        if !history_entry.revised_date.starts_with("9999-01-01") {
-                                            if let Some(t_pos) =
-                                                history_entry.revised_date.find('T')
-                                            {
-                                                &history_entry.revised_date[..t_pos]
-                                            } else {
-                                                &history_entry.revised_date
+                                                new_date
                                             }
                                         } else {
                                             "Unknown date"
                                         }
+                                    } else {
+                                        "Unknown date"
                                     }
-                                };
-
-                                // Get color for the state
-                                let state_color = get_state_color(new_state);
-
-                                history_spans.push(Span::styled(
-                                    "●",
-                                    Style::default()
-                                        .fg(state_color)
-                                        .add_modifier(Modifier::BOLD),
-                                ));
-                                history_spans.push(Span::raw(" "));
-                                history_spans.push(Span::styled(
-                                    new_state.clone(),
-                                    Style::default().fg(state_color),
-                                ));
-                                history_spans.push(Span::styled(
-                                    format!(" ({})", date_str),
-                                    Style::default().fg(Color::Gray),
-                                ));
+                                } else {
+                                    // No System.ChangedDate, try revisedDate
+                                    if !history_entry.revised_date.starts_with("9999-01-01") {
+                                        if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                            &history_entry.revised_date[..t_pos]
+                                        } else {
+                                            &history_entry.revised_date
+                                        }
+                                    } else {
+                                        "Unknown date"
+                                    }
+                                }
+                            } else {
+                                // No fields, try revisedDate
+                                if !history_entry.revised_date.starts_with("9999-01-01") {
+                                    if let Some(t_pos) = history_entry.revised_date.find('T') {
+                                        &history_entry.revised_date[..t_pos]
+                                    } else {
+                                        &history_entry.revised_date
+                                    }
+                                } else {
+                                    "Unknown date"
+                                }
                             }
-                        }
+                        };
+
+                        // Get color for the state
+                        let state_color = get_state_color(new_state);
+
+                        history_spans.push(Span::styled(
+                            "●",
+                            Style::default()
+                                .fg(state_color)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                        history_spans.push(Span::raw(" "));
+                        history_spans.push(Span::styled(
+                            new_state.clone(),
+                            Style::default().fg(state_color),
+                        ));
+                        history_spans.push(Span::styled(
+                            format!(" ({})", date_str),
+                            Style::default().fg(Color::Gray),
+                        ));
                     }
                 }
             }
@@ -579,10 +794,160 @@ impl PullRequestSelectionState {
         f.render_widget(history_widget, area);
     }
 
+    fn render_search_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        use ratatui::text::{Line, Span};
+
+        let search_query = if let Ok(query) = Self::parse_search_query(&self.last_search_query) {
+            match query {
+                SearchQuery::PullRequestId(id) => format!("PR ID: {}", id),
+                SearchQuery::WorkItemId(id) => format!("Work Item ID: {}", id),
+                SearchQuery::PullRequestTitle(title) => format!("PR Title: \"{}\"", title),
+                SearchQuery::WorkItemTitle(title) => format!("Work Item Title: \"{}\"", title),
+            }
+        } else {
+            self.last_search_query.clone()
+        };
+
+        let results_info = if !self.search_results.is_empty() {
+            format!(
+                "Result {} of {}",
+                self.current_search_index + 1,
+                self.search_results.len()
+            )
+        } else {
+            "No results".to_string()
+        };
+
+        let status_line = Line::from(vec![
+            Span::styled(
+                "Search: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(search_query, Style::default().fg(Color::White)),
+            Span::styled(" | ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                results_info,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+
+        let search_status = Paragraph::new(vec![status_line])
+            .style(Style::default())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Search Status"),
+            )
+            .alignment(Alignment::Left);
+
+        f.render_widget(search_status, area);
+    }
+
+    fn render_search_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Clear;
+
+        // Create a centered popup area - smaller than state selection overlay
+        let popup_area = {
+            let vertical_margin = area.height / 3;
+            let horizontal_margin = area.width / 3;
+            ratatui::layout::Rect {
+                x: area.x + horizontal_margin,
+                y: area.y + vertical_margin,
+                width: area.width - 2 * horizontal_margin,
+                height: std::cmp::min(10, area.height - 2 * vertical_margin), // Fixed height
+            }
+        };
+
+        // Clear the area first to ensure no transparency
+        f.render_widget(Clear, popup_area);
+
+        // Then render a block with solid background
+        let background_block = Block::default()
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::NONE);
+        f.render_widget(background_block, popup_area);
+
+        // Create layout for title, input field, status, and help
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(3), // Input field
+                Constraint::Length(2), // Status/Error message
+                Constraint::Length(2), // Help text
+            ])
+            .split(popup_area);
+
+        // Render title
+        let title_widget = Paragraph::new("Search Pull Requests and Work Items")
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(Alignment::Center);
+        f.render_widget(title_widget, chunks[0]);
+
+        // Render input field
+        let input_widget = Paragraph::new(self.search_input.as_str())
+            .style(Style::default().fg(Color::White))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Query")
+                    .title_style(Style::default().fg(Color::Yellow)),
+            );
+        f.render_widget(input_widget, chunks[1]);
+
+        // Render status/error message or search results info
+        let status_text = if let Some(error) = &self.search_error_message {
+            Line::from(Span::styled(error, Style::default().fg(Color::Red)))
+        } else if self.search_iteration_mode {
+            let results_count = self.search_results.len();
+            let current_pos = self.current_search_index + 1;
+            Line::from(Span::styled(
+                format!("Result {} of {}", current_pos, results_count),
+                Style::default().fg(Color::Green),
+            ))
+        } else if !self.search_results.is_empty() {
+            Line::from(Span::styled(
+                format!("{} results found", self.search_results.len()),
+                Style::default().fg(Color::Green),
+            ))
+        } else {
+            Line::from(Span::styled(
+                "Enter search query and press Enter",
+                Style::default().fg(Color::Gray),
+            ))
+        };
+
+        let status_widget = Paragraph::new(vec![status_text])
+            .style(Style::default())
+            .alignment(Alignment::Center);
+        f.render_widget(status_widget, chunks[2]);
+
+        // Render help
+        let help_text = if self.search_iteration_mode {
+            "n: Next | N: Previous | Esc/Enter: Exit search"
+        } else {
+            "!123: PR ID | #456: Work Item ID | PR:text | WI:text | Esc: Cancel"
+        };
+        let help_widget = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        f.render_widget(help_widget, chunks[3]);
+    }
+
     fn render_state_selection_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         use ratatui::text::{Line, Span};
         use ratatui::widgets::Clear;
-        
+
         // Create a centered popup area
         let popup_area = {
             let vertical_margin = area.height / 4;
@@ -597,7 +962,7 @@ impl PullRequestSelectionState {
 
         // Clear the area first to ensure no transparency
         f.render_widget(Clear, popup_area);
-        
+
         // Then render a block with solid background
         let background_block = Block::default()
             .style(Style::default().bg(Color::Black))
@@ -620,13 +985,18 @@ impl PullRequestSelectionState {
             self.selected_filter_states.len()
         );
         let title_widget = Paragraph::new(title_text)
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL))
             .alignment(Alignment::Center);
         f.render_widget(title_widget, chunks[0]);
 
         // Render states list
-        let state_items: Vec<ListItem> = self.available_states
+        let state_items: Vec<ListItem> = self
+            .available_states
             .iter()
             .enumerate()
             .map(|(i, state)| {
@@ -635,39 +1005,35 @@ impl PullRequestSelectionState {
                 } else {
                     "☐"
                 };
-                
+
                 let line = Line::from(vec![
                     Span::styled(
                         format!("{} ", checkbox),
-                        Style::default().fg(
-                            if self.selected_filter_states.contains(state) {
+                        Style::default()
+                            .fg(if self.selected_filter_states.contains(state) {
                                 Color::Green
                             } else {
                                 Color::White
-                            }
-                        ).add_modifier(Modifier::BOLD)
+                            })
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         state.clone(),
-                        Style::default().fg(
-                            if i == self.state_selection_index {
-                                Color::Yellow
-                            } else if self.selected_filter_states.contains(state) {
-                                Color::Green
-                            } else {
-                                Color::White
-                            }
-                        )
+                        Style::default().fg(if i == self.state_selection_index {
+                            Color::Yellow
+                        } else if self.selected_filter_states.contains(state) {
+                            Color::Green
+                        } else {
+                            Color::White
+                        }),
                     ),
                 ]);
-                
-                ListItem::new(line).style(
-                    if i == self.state_selection_index {
-                        Style::default().bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    }
-                )
+
+                ListItem::new(line).style(if i == self.state_selection_index {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                })
             })
             .collect();
 
@@ -712,18 +1078,37 @@ impl AppState for PullRequestSelectionState {
             return;
         }
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(1)
-            .constraints(
-                [
+        // Add search status line if in search iteration mode
+        let chunks = if self.search_iteration_mode {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3),      // Search status line
+                    Constraint::Percentage(47), // PR table (slightly smaller)
+                    Constraint::Percentage(37), // Work item details (slightly smaller)
+                    Constraint::Length(3),      // Help section
+                ])
+                .split(f.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
                     Constraint::Percentage(50), // Top half for PR table
                     Constraint::Percentage(40), // Bottom half for work item details
                     Constraint::Length(3),      // Help section
-                ]
-                .as_ref(),
-            )
-            .split(f.area());
+                ])
+                .split(f.area())
+        };
+
+        let mut chunk_idx = 0;
+
+        // Render search status line if in search iteration mode
+        if self.search_iteration_mode {
+            self.render_search_status(f, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
         // Create table headers
         let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
             .iter()
@@ -740,7 +1125,8 @@ impl AppState for PullRequestSelectionState {
         let rows: Vec<Row> = app
             .pull_requests
             .iter()
-            .map(|pr_with_wi| {
+            .enumerate()
+            .map(|(pr_index, pr_with_wi)| {
                 let selected = if pr_with_wi.selected { "✓" } else { " " };
 
                 let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
@@ -767,9 +1153,19 @@ impl AppState for PullRequestSelectionState {
                     String::new()
                 };
 
-                // Apply background highlighting for selected items
+                // Check if this row is a search result
+                let is_search_result = self.search_results.contains(&pr_index);
+                let is_current_search_result = self.search_iteration_mode
+                    && !self.search_results.is_empty()
+                    && self.search_results.get(self.current_search_index) == Some(&pr_index);
+
+                // Apply background highlighting for selected items and search results
                 let row_style = if pr_with_wi.selected {
                     Style::default().bg(Color::DarkGray)
+                } else if is_current_search_result {
+                    Style::default().bg(Color::Blue)
+                } else if is_search_result {
+                    Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
                 } else {
                     Style::default()
                 };
@@ -838,26 +1234,111 @@ impl AppState for PullRequestSelectionState {
         .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
-        f.render_stateful_widget(table, chunks[0], &mut self.table_state);
+        f.render_stateful_widget(table, chunks[chunk_idx], &mut self.table_state);
+        chunk_idx += 1;
 
         // Render work item details
-        self.render_work_item_details(f, app, chunks[1]);
+        self.render_work_item_details(f, app, chunks[chunk_idx]);
+        chunk_idx += 1;
 
-        let help = List::new(vec![
-            ListItem::new("↑/↓: Navigate PRs | ←/→: Navigate Work Items | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"),
-        ])
-        .block(Block::default().borders(Borders::ALL).title("Help"));
+        let help_text = if self.search_iteration_mode {
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
+        } else {
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"
+        };
 
-        f.render_widget(help, chunks[2]);
+        let help = List::new(vec![ListItem::new(help_text)])
+            .block(Block::default().borders(Borders::ALL).title("Help"));
+
+        f.render_widget(help, chunks[chunk_idx]);
 
         // Render state selection overlay if in multi-select mode
         if self.multi_select_mode {
             self.render_state_selection_overlay(f, f.area());
         }
+
+        // Render search overlay if in search mode
+        if self.search_mode {
+            self.render_search_overlay(f, f.area());
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if self.multi_select_mode {
+        // Handle search iteration mode first (even when search_mode is false)
+        if self.search_iteration_mode && !self.search_mode {
+            match code {
+                KeyCode::Char('n') => {
+                    self.navigate_search_results(1);
+                    return StateChange::Keep;
+                }
+                KeyCode::Char('N') => {
+                    self.navigate_search_results(-1);
+                    return StateChange::Keep;
+                }
+                KeyCode::Esc => {
+                    self.exit_search_mode();
+                    return StateChange::Keep;
+                }
+                KeyCode::Enter => {
+                    // In search iteration mode, Enter should NOT go to version input
+                    // but should exit search mode
+                    self.exit_search_mode();
+                    return StateChange::Keep;
+                }
+                _ => {
+                    // For other keys, fall through to normal handling
+                }
+            }
+        }
+
+        if self.search_mode {
+            // Handle search mode keys
+            if self.search_iteration_mode {
+                // In search result navigation mode
+                match code {
+                    KeyCode::Char('n') => {
+                        self.navigate_search_results(1);
+                        StateChange::Keep
+                    }
+                    KeyCode::Char('N') => {
+                        self.navigate_search_results(-1);
+                        StateChange::Keep
+                    }
+                    KeyCode::Esc | KeyCode::Enter => {
+                        self.exit_search_mode();
+                        StateChange::Keep
+                    }
+                    _ => StateChange::Keep,
+                }
+            } else {
+                // In search input mode
+                match code {
+                    KeyCode::Char(c) => {
+                        self.search_input.push(c);
+                        StateChange::Keep
+                    }
+                    KeyCode::Backspace => {
+                        self.search_input.pop();
+                        StateChange::Keep
+                    }
+                    KeyCode::Enter => {
+                        if !self.search_input.trim().is_empty() {
+                            self.execute_search(app);
+                            if !self.search_results.is_empty() {
+                                // Close search dialog if we found results and entered iteration mode
+                                self.search_mode = false;
+                            }
+                        }
+                        StateChange::Keep
+                    }
+                    KeyCode::Esc => {
+                        self.exit_search_mode();
+                        StateChange::Keep
+                    }
+                    _ => StateChange::Keep,
+                }
+            }
+        } else if self.multi_select_mode {
             // Handle multi-select mode keys
             match code {
                 KeyCode::Char('q') | KeyCode::Esc => {
@@ -923,30 +1404,33 @@ impl AppState for PullRequestSelectionState {
                     self.enter_multi_select_mode(app);
                     StateChange::Keep
                 }
+                KeyCode::Char('/') => {
+                    self.enter_search_mode();
+                    StateChange::Keep
+                }
                 KeyCode::Char('p') => {
-                    if let Some(i) = self.table_state.selected() {
-                        if let Some(pr) = app.pull_requests.get(i) {
-                            app.open_pr_in_browser(pr.pr.id);
-                        }
+                    if let Some(i) = self.table_state.selected()
+                        && let Some(pr) = app.pull_requests.get(i)
+                    {
+                        app.open_pr_in_browser(pr.pr.id);
                     }
                     StateChange::Keep
                 }
                 KeyCode::Char('w') => {
-                    if let Some(pr_index) = self.table_state.selected() {
-                        if let Some(pr) = app.pull_requests.get(pr_index) {
-                            if !pr.work_items.is_empty() {
-                                // Ensure work_item_index is within bounds
-                                let work_item_index = if self.work_item_index < pr.work_items.len() {
-                                    self.work_item_index
-                                } else {
-                                    0
-                                };
+                    if let Some(pr_index) = self.table_state.selected()
+                        && let Some(pr) = app.pull_requests.get(pr_index)
+                        && !pr.work_items.is_empty()
+                    {
+                        // Ensure work_item_index is within bounds
+                        let work_item_index = if self.work_item_index < pr.work_items.len() {
+                            self.work_item_index
+                        } else {
+                            0
+                        };
 
-                                if let Some(work_item) = pr.work_items.get(work_item_index) {
-                                    // Open only the currently displayed work item
-                                    app.open_work_items_in_browser(&[work_item.clone()]);
-                                }
-                            }
+                        if let Some(work_item) = pr.work_items.get(work_item_index) {
+                            // Open only the currently displayed work item
+                            app.open_work_items_in_browser(&[work_item.clone()]);
                         }
                     }
                     StateChange::Keep

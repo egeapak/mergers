@@ -5,7 +5,8 @@
       "Bash(cargo:*)",
       "Bash(rg:*)",
       "WebFetch(domain:learn.microsoft.com)",
-      "Bash(./target/debug/merge-tool:*)"
+      "Bash(./target/debug/merge-tool:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
