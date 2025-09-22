@@ -462,9 +462,6 @@ pub fn get_symmetric_difference(
     })
 }
 
-
-
-
 pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Result<Vec<String>> {
     let git_cmd = format!("git merge-base {} {}", branch1, branch2);
     let merge_base_output = Command::new("git")
@@ -531,9 +528,6 @@ pub fn get_common_commits(repo_path: &Path, branch1: &str, branch2: &str) -> Res
 
     Ok(commits)
 }
-
-
-
 
 /// Structure to hold pre-fetched commit history for optimized PR analysis
 #[derive(Debug, Clone)]
@@ -862,7 +856,6 @@ fn normalize_title(title: &str) -> String {
         .to_string()
 }
 
-
 pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     // List all worktrees
     let list_output = Command::new("git")
@@ -923,7 +916,11 @@ mod tests {
             .args(["init"])
             .output()
             .unwrap();
-        assert!(init_output.status.success(), "Git init failed: {}", String::from_utf8_lossy(&init_output.stderr));
+        assert!(
+            init_output.status.success(),
+            "Git init failed: {}",
+            String::from_utf8_lossy(&init_output.stderr)
+        );
 
         // Configure git user
         Command::new("git")
@@ -961,7 +958,11 @@ mod tests {
             .args(["checkout", "-b", "main"])
             .output()
             .unwrap();
-        assert!(branch_output.status.success(), "Creating main branch failed: {}", String::from_utf8_lossy(&branch_output.stderr));
+        assert!(
+            branch_output.status.success(),
+            "Creating main branch failed: {}",
+            String::from_utf8_lossy(&branch_output.stderr)
+        );
 
         (temp_dir, repo_path)
     }
@@ -982,17 +983,23 @@ mod tests {
             .args(["add", "."])
             .output()
             .unwrap();
-        assert!(add_output.status.success(), "Git add failed: {}", String::from_utf8_lossy(&add_output.stderr));
+        assert!(
+            add_output.status.success(),
+            "Git add failed: {}",
+            String::from_utf8_lossy(&add_output.stderr)
+        );
 
         let commit_output = Command::new("git")
             .current_dir(repo_path)
             .args(["commit", "-m", message])
             .output()
             .unwrap();
-        assert!(commit_output.status.success(), "Git commit failed: {}", String::from_utf8_lossy(&commit_output.stderr));
+        assert!(
+            commit_output.status.success(),
+            "Git commit failed: {}",
+            String::from_utf8_lossy(&commit_output.stderr)
+        );
     }
-
-
 
     #[test]
     fn test_get_target_branch_history() {

@@ -54,7 +54,9 @@ fn get_legacy_regex() -> &'static Regex {
 }
 
 /// Extract Azure DevOps configuration from a git repository's remote URL
-pub fn detect_azure_devops_config<P: AsRef<Path>>(repo_path: P) -> Result<Option<AzureDevOpsConfig>> {
+pub fn detect_azure_devops_config<P: AsRef<Path>>(
+    repo_path: P,
+) -> Result<Option<AzureDevOpsConfig>> {
     let repo_path = repo_path.as_ref();
 
     // Verify this is a git repository
@@ -249,5 +251,4 @@ mod tests {
         assert_eq!(config.project, "EclinicsFrontend");
         assert_eq!(config.repository, "EclinicsFrontend");
     }
-
 }

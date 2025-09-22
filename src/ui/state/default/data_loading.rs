@@ -6,7 +6,7 @@ use crate::{
     ui::App,
     ui::state::{AppState, StateChange},
 };
-use anyhow::{Result, Context, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -187,10 +187,9 @@ impl DataLoadingState {
                         pr_with_wi.pr.last_merge_commit = Some(commit_info);
                     }
                     Err(e) => {
-                        return Err(e).with_context(|| format!(
-                            "Failed to fetch commit for PR #{}",
-                            pr_with_wi.pr.id
-                        ));
+                        return Err(e).with_context(|| {
+                            format!("Failed to fetch commit for PR #{}", pr_with_wi.pr.id)
+                        });
                     }
                 }
                 self.commit_info_fetched += 1;

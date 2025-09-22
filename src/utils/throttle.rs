@@ -28,7 +28,6 @@ impl Throttler {
         // Execute operation
         operation().await
     }
-
 }
 
 /// Network and Processing Manager for separating concerns
@@ -49,9 +48,7 @@ impl NetworkProcessor {
             None
         };
 
-        Self {
-            network_throttler,
-        }
+        Self { network_throttler }
     }
 
     /// Execute network operations with throttling
@@ -66,7 +63,6 @@ impl NetworkProcessor {
             operation().await
         }
     }
-
 }
 
 #[cfg(test)]
@@ -109,5 +105,4 @@ mod tests {
         // Should never exceed our concurrency limit of 2
         assert!(max_concurrent.load(Ordering::SeqCst) <= 2);
     }
-
 }

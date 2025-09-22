@@ -98,9 +98,9 @@ impl PullRequestSelectionState {
             match tag.as_str() {
                 "P" | "PR" => Ok(SearchQuery::PullRequestTitle(query.to_string())),
                 "W" | "WI" => Ok(SearchQuery::WorkItemTitle(query.to_string())),
-                _ => bail!(
-                    "Invalid tag. Use 'P'/'PR' for pull requests or 'W'/'WI' for work items"
-                ),
+                _ => {
+                    bail!("Invalid tag. Use 'P'/'PR' for pull requests or 'W'/'WI' for work items")
+                }
             }
         } else {
             // Default to PR title search if no tag is specified

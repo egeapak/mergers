@@ -212,7 +212,6 @@ impl App {
             }
         }
     }
-
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use crate::{
     ui::state::{AppState, StateChange},
     utils::throttle::NetworkProcessor,
 };
-use anyhow::{Result, Context, bail};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -47,12 +47,10 @@ pub struct MigrationDataLoadingState {
 
     // Task management
     pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>>>>,
-    repo_setup_task:
-        Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>)>>>,
+    repo_setup_task: Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>)>>>,
     git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory>>>,
     work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>)>>>>,
-    analysis_task:
-        Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis>>>,
+    analysis_task: Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis>>>,
     network_processor: Option<NetworkProcessor>,
 
     // Progress tracking

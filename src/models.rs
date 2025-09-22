@@ -171,7 +171,10 @@ impl Args {
         };
 
         // Merge configs: file < git_remote < env < cli
-        let merged_config = file_config.merge(git_config).merge(env_config).merge(cli_config);
+        let merged_config = file_config
+            .merge(git_config)
+            .merge(env_config)
+            .merge(cli_config);
 
         // Validate required shared fields
         let organization = merged_config.organization
