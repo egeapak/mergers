@@ -69,7 +69,6 @@ impl NetworkProcessor {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use tokio::time::Instant;
 
     #[tokio::test]
     async fn test_throttling_limits_concurrency() {

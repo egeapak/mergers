@@ -6,6 +6,21 @@ use crate::{
 use std::process::Command;
 use tempfile::TempDir;
 
+#[derive(Debug, Clone)]
+pub struct AppConfiguration {
+    pub organization: String,
+    pub project: String,
+    pub repository: String,
+    pub dev_branch: String,
+    pub target_branch: String,
+    pub local_repo: Option<String>,
+    pub work_item_state: String,
+    pub max_concurrent_network: usize,
+    pub max_concurrent_processing: usize,
+    pub tag_prefix: String,
+    pub since: Option<String>,
+}
+
 pub struct App {
     pub pull_requests: Vec<PullRequestWithWorkItems>,
     pub organization: String,
@@ -15,7 +30,6 @@ pub struct App {
     pub target_branch: String,
     pub local_repo: Option<String>,
     pub work_item_state: String,
-    pub parallel_limit: usize,
     pub max_concurrent_network: usize,
     pub max_concurrent_processing: usize,
     pub tag_prefix: String,
@@ -40,34 +54,22 @@ pub struct App {
 impl App {
     pub fn new(
         pull_requests: Vec<PullRequestWithWorkItems>,
-        organization: String,
-        project: String,
-        repository: String,
-        dev_branch: String,
-        target_branch: String,
-        local_repo: Option<String>,
-        work_item_state: String,
-        parallel_limit: usize,
-        max_concurrent_network: usize,
-        max_concurrent_processing: usize,
-        tag_prefix: String,
-        since: Option<String>,
+        config: AppConfiguration,
         client: AzureDevOpsClient,
     ) -> Self {
         Self {
             pull_requests,
-            organization,
-            project,
-            repository,
-            dev_branch,
-            target_branch,
-            local_repo,
-            work_item_state,
-            parallel_limit,
-            max_concurrent_network,
-            max_concurrent_processing,
-            tag_prefix,
-            since,
+            organization: config.organization,
+            project: config.project,
+            repository: config.repository,
+            dev_branch: config.dev_branch,
+            target_branch: config.target_branch,
+            local_repo: config.local_repo,
+            work_item_state: config.work_item_state,
+            max_concurrent_network: config.max_concurrent_network,
+            max_concurrent_processing: config.max_concurrent_processing,
+            tag_prefix: config.tag_prefix,
+            since: config.since,
             client,
             version: None,
             repo_path: None,
@@ -202,7 +204,6 @@ impl App {
             // Recategorize with current overrides
             if let Ok(new_analysis) = analyzer.categorize_prs_with_overrides(
                 analysis.all_details.clone(),
-                analysis.symmetric_diff.clone(),
                 analysis.manual_overrides.clone(),
             ) {
                 self.migration_analysis = Some(new_analysis);
@@ -229,42 +230,40 @@ mod tests {
         )
         .unwrap();
 
-        // Test default parallel limit
-        let app_default = App::new(
-            Vec::new(),
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "dev".to_string(),
-            "next".to_string(),
-            None,
-            "Next Merged".to_string(),
-            300,
-            100,
-            10,
-            "merged-".to_string(),
-            None,
-            client.clone(),
-        );
-        assert_eq!(app_default.parallel_limit, 300);
+        // Test default configuration
+        let config_default = AppConfiguration {
+            organization: "test_org".to_string(),
+            project: "test_project".to_string(),
+            repository: "test_repo".to_string(),
+            dev_branch: "dev".to_string(),
+            target_branch: "next".to_string(),
+            local_repo: None,
+            work_item_state: "Next Merged".to_string(),
+            max_concurrent_network: 100,
+            max_concurrent_processing: 10,
+            tag_prefix: "merged-".to_string(),
+            since: None,
+        };
+        let app_default = App::new(Vec::new(), config_default, client.clone());
+        assert_eq!(app_default.max_concurrent_network, 100);
+        assert_eq!(app_default.max_concurrent_processing, 10);
 
-        // Test custom parallel limit
-        let app_custom = App::new(
-            Vec::new(),
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "dev".to_string(),
-            "next".to_string(),
-            None,
-            "Next Merged".to_string(),
-            500,
-            100,
-            20,
-            "merged-".to_string(),
-            None,
-            client,
-        );
-        assert_eq!(app_custom.parallel_limit, 500);
+        // Test custom configuration
+        let config_custom = AppConfiguration {
+            organization: "test_org".to_string(),
+            project: "test_project".to_string(),
+            repository: "test_repo".to_string(),
+            dev_branch: "dev".to_string(),
+            target_branch: "next".to_string(),
+            local_repo: None,
+            work_item_state: "Next Merged".to_string(),
+            max_concurrent_network: 150,
+            max_concurrent_processing: 20,
+            tag_prefix: "merged-".to_string(),
+            since: None,
+        };
+        let app_custom = App::new(Vec::new(), config_custom, client);
+        assert_eq!(app_custom.max_concurrent_network, 150);
+        assert_eq!(app_custom.max_concurrent_processing, 20);
     }
 }

@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::{
     api::AzureDevOpsClient,
     git::{CommitHistory, check_commit_in_history, check_pr_merged_in_history},
-    models::{MigrationAnalysis, PRAnalysisResult, PullRequestWithWorkItems, SymmetricDiffResult},
+    models::{MigrationAnalysis, PRAnalysisResult, PullRequestWithWorkItems},
 };
 
 #[derive(Clone)]
@@ -23,7 +23,6 @@ impl MigrationAnalyzer {
     pub async fn analyze_single_pr(
         &self,
         pr_with_work_items: &PullRequestWithWorkItems,
-        _symmetric_diff: &SymmetricDiffResult,
         commit_history: &CommitHistory,
     ) -> Result<PRAnalysisResult> {
         // Get commit ID from PR
@@ -34,11 +33,8 @@ impl MigrationAnalyzer {
             return Ok(PRAnalysisResult {
                 pr: pr_with_work_items.clone(),
                 all_work_items_terminal: false,
-                terminal_work_items: Vec::new(),
-                non_terminal_work_items: pr_with_work_items.work_items.clone(),
                 commit_in_target: false,
                 commit_title_in_target: false,
-                commit_id: String::new(),
                 unsure_reason: Some("No lastMergeCommit available".to_string()),
                 reason: Some("No lastMergeCommit available".to_string()),
             });
@@ -55,7 +51,7 @@ impl MigrationAnalyzer {
         );
 
         // Analyze work items
-        let (all_work_items_terminal, terminal_work_items, non_terminal_work_items) = self
+        let (all_work_items_terminal, non_terminal_work_items) = self
             .client
             .analyze_work_items_for_pr(pr_with_work_items, &self.terminal_states);
 
@@ -158,11 +154,8 @@ impl MigrationAnalyzer {
         Ok(PRAnalysisResult {
             pr: pr_with_work_items.clone(),
             all_work_items_terminal: work_items_requirement_met,
-            terminal_work_items,
-            non_terminal_work_items,
             commit_in_target,
             commit_title_in_target,
-            commit_id,
             unsure_reason,
             reason,
         })
@@ -190,18 +183,13 @@ impl MigrationAnalyzer {
         }
     }
 
-    pub fn categorize_prs(
-        &self,
-        analyses: Vec<PRAnalysisResult>,
-        symmetric_diff: SymmetricDiffResult,
-    ) -> Result<MigrationAnalysis> {
-        self.categorize_prs_with_overrides(analyses, symmetric_diff, Default::default())
+    pub fn categorize_prs(&self, analyses: Vec<PRAnalysisResult>) -> Result<MigrationAnalysis> {
+        self.categorize_prs_with_overrides(analyses, Default::default())
     }
 
     pub fn categorize_prs_with_overrides(
         &self,
         analyses: Vec<PRAnalysisResult>,
-        symmetric_diff: SymmetricDiffResult,
         manual_overrides: crate::models::ManualOverrides,
     ) -> Result<MigrationAnalysis> {
         let mut eligible = Vec::new();
@@ -254,7 +242,6 @@ impl MigrationAnalyzer {
             unsure_prs: unsure,
             not_merged_prs: not_merged,
             terminal_states: self.terminal_states.clone(),
-            symmetric_diff,
             unsure_details: unsure_details.clone(),
             all_details: analyses,
             manual_overrides,
@@ -313,12 +300,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test eligible PR (terminal work items + commit in target)
         let eligible_pr = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -327,11 +308,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(1, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some(
                 "Eligible: Work items in terminal state and PR found in target branch".to_string(),
@@ -339,7 +317,7 @@ mod tests {
         };
 
         let analyses = vec![eligible_pr];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         assert_eq!(result.eligible_prs.len(), 1);
         assert_eq!(result.unsure_prs.len(), 0);
@@ -366,12 +344,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test case 1: PR with title match but no commit ID match (should be eligible)
         let title_match_pr = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -380,11 +352,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(1, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: false,
             commit_title_in_target: true,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some(
                 "Eligible: Work items in terminal state and PR found in target branch".to_string(),
@@ -399,11 +368,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(2, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "def456".to_string(),
             unsure_reason: Some(
                 "Work items are in terminal state but PR not found in target branch".to_string(),
             ),
@@ -421,17 +387,14 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: vec![create_test_work_item(3, "Active")],
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "ghi789".to_string(),
             unsure_reason: None,
             reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #3 (Active)".to_string()),
         };
 
         let analyses = vec![title_match_pr, unsure_pr, non_terminal_but_merged_pr];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         assert_eq!(result.eligible_prs.len(), 2);
         assert_eq!(result.unsure_prs.len(), 1);
@@ -460,12 +423,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test PR with no work items but in target branch (should be eligible)
         let no_work_items_pr = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -474,11 +431,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true, // Should be true because no work items = skip check
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: Vec::new(),
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some(
                 "Eligible: PR found in target branch and no work items to check".to_string(),
@@ -486,7 +440,7 @@ mod tests {
         };
 
         let analyses = vec![no_work_items_pr];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         assert_eq!(result.eligible_prs.len(), 1);
         assert_eq!(result.unsure_prs.len(), 0);
@@ -513,12 +467,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test PR with non-terminal work items but in target branch (should be unsure with details)
         let non_terminal_work_items = vec![
             create_test_work_item(1, "Active"),
@@ -532,17 +480,14 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items,
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #1 (Active), #2 (In Progress)".to_string()),
         };
 
         let analyses = vec![pr_with_non_terminal_work_items];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         // Now this should be eligible since commit is in target branch
         assert_eq!(result.eligible_prs.len(), 1);
@@ -571,12 +516,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test PR with non-terminal work items but commit in target branch (should be eligible)
         let pr_with_commit_in_target = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -588,14 +527,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: vec![
-                create_test_work_item(1, "Active"),
-                create_test_work_item(2, "In Progress"),
-            ],
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some("Eligible: PR found in target branch (work items not in terminal state but overridden): #1 (Active), #2 (In Progress)".to_string()),
         };
@@ -608,11 +541,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(3, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "def456".to_string(),
             unsure_reason: Some(
                 "Work items are in terminal state but PR not found in target branch".to_string(),
             ),
@@ -623,7 +553,7 @@ mod tests {
         };
 
         let analyses = vec![pr_with_commit_in_target, pr_not_in_target];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         // First PR should be eligible because commit is in target (overrides work item state)
         // Second PR should be unsure because work items are terminal but commit not in target
@@ -658,12 +588,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test PR with non-terminal work items and NOT in target branch (should be not_merged)
         let pr_not_merged_with_wi = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -675,14 +599,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: vec![
-                create_test_work_item(1, "Active"),
-                create_test_work_item(2, "In Progress"),
-            ],
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some("Not merged: Work items not in terminal state and PR not found in target branch: #1 (Active), #2 (In Progress)".to_string()),
         };
@@ -695,11 +613,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true, // true because no work items
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: Vec::new(),
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "def456".to_string(),
             unsure_reason: Some(
                 "No work items found and PR not found in target branch".to_string(),
             ),
@@ -709,7 +624,7 @@ mod tests {
         };
 
         let analyses = vec![pr_not_merged_with_wi, pr_not_merged_no_wi];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         // First PR should be not_merged, second should be unsure
         assert_eq!(result.eligible_prs.len(), 0);
@@ -767,12 +682,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // Test PR found by commit ID
         let pr_found_by_commit = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -781,11 +690,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(1, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some("Eligible: Work items in terminal state and PR found in target branch. Detection: Commit 'abc123' found in target branch".to_string()),
         };
@@ -798,11 +704,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(2, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: false,
             commit_title_in_target: true,
-            commit_id: "def456".to_string(),
             unsure_reason: None,
             reason: Some("Eligible: Work items in terminal state and PR found in target branch. Detection: PR pattern found in commit history (commit ID not directly found)".to_string()),
         };
@@ -815,17 +718,14 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: vec![create_test_work_item(3, "Active")],
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "ghi789".to_string(),
             unsure_reason: None,
             reason: Some("Not merged: Work items not in terminal state and PR not found in target branch: #3 (Active). Detection attempts: commit ID 'ghi789' not found in target, PR title/ID not found in commit history".to_string()),
         };
 
         let analyses = vec![pr_found_by_commit, pr_found_by_title, pr_not_found];
-        let result = analyzer.categorize_prs(analyses, symmetric_diff).unwrap();
+        let result = analyzer.categorize_prs(analyses).unwrap();
 
         assert_eq!(result.eligible_prs.len(), 2);
         assert_eq!(result.unsure_prs.len(), 0);
@@ -887,12 +787,6 @@ mod tests {
         ];
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        let symmetric_diff = SymmetricDiffResult {
-            commits_in_dev_not_target: Vec::new(),
-            commits_in_target_not_dev: Vec::new(),
-            common_commits: Vec::new(),
-        };
-
         // PR that would naturally be eligible but manually marked as not eligible
         let naturally_eligible_pr = PRAnalysisResult {
             pr: PullRequestWithWorkItems {
@@ -901,11 +795,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: true,
-            terminal_work_items: vec![create_test_work_item(1, "Closed")],
-            non_terminal_work_items: Vec::new(),
             commit_in_target: true,
             commit_title_in_target: false,
-            commit_id: "abc123".to_string(),
             unsure_reason: None,
             reason: Some(
                 "Eligible: Work items in terminal state and PR found in target branch".to_string(),
@@ -920,11 +811,8 @@ mod tests {
                 selected: false,
             },
             all_work_items_terminal: false,
-            terminal_work_items: Vec::new(),
-            non_terminal_work_items: vec![create_test_work_item(2, "Active")],
             commit_in_target: false,
             commit_title_in_target: false,
-            commit_id: "def456".to_string(),
             unsure_reason: None,
             reason: Some(
                 "Not merged: Work items not in terminal state and PR not found in target branch"
@@ -939,7 +827,7 @@ mod tests {
 
         let analyses = vec![naturally_eligible_pr, naturally_not_eligible_pr];
         let result = analyzer
-            .categorize_prs_with_overrides(analyses, symmetric_diff, manual_overrides.clone())
+            .categorize_prs_with_overrides(analyses, manual_overrides.clone())
             .unwrap();
 
         // Verify manual overrides work

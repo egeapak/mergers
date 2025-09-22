@@ -16,6 +16,16 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
+
+#[derive(Debug, Clone)]
+pub struct WorkItemsResult {
+    pub pr_index: usize,
+    pub work_items: Vec<crate::models::WorkItem>,
+}
+
+type WorkItemsTaskHandle = AsyncTaskHandle<WorkItemsResult>;
+
 pub struct DataLoadingState {
     loading_stage: LoadingStage,
     loaded: bool,
@@ -23,8 +33,7 @@ pub struct DataLoadingState {
     work_items_total: usize,
     commit_info_fetched: usize,
     commit_info_total: usize,
-    work_items_tasks:
-        Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<crate::models::WorkItem>)>>>>,
+    work_items_tasks: Option<Vec<WorkItemsTaskHandle>>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +122,10 @@ impl DataLoadingState {
                         .await;
 
                     match result {
-                        Ok(work_items) => Ok((index, work_items)),
+                        Ok(work_items) => Ok(WorkItemsResult {
+                            pr_index: index,
+                            work_items,
+                        }),
                         Err(e) => Err(e),
                     }
                 });
@@ -134,8 +146,8 @@ impl DataLoadingState {
             for task in tasks.drain(..) {
                 if task.is_finished() {
                     match task.await {
-                        Ok(Ok((index, work_items))) => {
-                            completed.push((index, work_items));
+                        Ok(Ok(result)) => {
+                            completed.push(result);
                         }
                         Ok(Err(e)) => {
                             return Err(e).context("Failed to fetch work items");
@@ -150,9 +162,9 @@ impl DataLoadingState {
             }
 
             // Update completed work items
-            for (index, work_items) in completed {
-                if let Some(pr_with_wi) = app.pull_requests.get_mut(index) {
-                    pr_with_wi.work_items = work_items;
+            for result in completed {
+                if let Some(pr_with_wi) = app.pull_requests.get_mut(result.pr_index) {
+                    pr_with_wi.work_items = result.work_items;
                     self.work_items_fetched += 1;
                 }
             }

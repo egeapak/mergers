@@ -1430,7 +1430,7 @@ impl AppState for PullRequestSelectionState {
 
                         if let Some(work_item) = pr.work_items.get(work_item_index) {
                             // Open only the currently displayed work item
-                            app.open_work_items_in_browser(&[work_item.clone()]);
+                            app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
                     }
                     StateChange::Keep

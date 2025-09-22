@@ -355,7 +355,6 @@ pub struct MigrationAnalysis {
     pub unsure_prs: Vec<PullRequestWithWorkItems>,
     pub not_merged_prs: Vec<PullRequestWithWorkItems>,
     pub terminal_states: Vec<String>,
-    pub symmetric_diff: SymmetricDiffResult,
     pub unsure_details: Vec<PRAnalysisResult>,
     pub all_details: Vec<PRAnalysisResult>,
     pub manual_overrides: ManualOverrides,
@@ -368,21 +367,11 @@ pub struct ManualOverrides {
 }
 
 #[derive(Debug, Clone)]
-pub struct SymmetricDiffResult {
-    pub commits_in_dev_not_target: Vec<String>,
-    pub commits_in_target_not_dev: Vec<String>,
-    pub common_commits: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
 pub struct PRAnalysisResult {
     pub pr: PullRequestWithWorkItems,
     pub all_work_items_terminal: bool,
-    pub terminal_work_items: Vec<WorkItem>,
-    pub non_terminal_work_items: Vec<WorkItem>,
     pub commit_in_target: bool,
     pub commit_title_in_target: bool,
-    pub commit_id: String,
     pub unsure_reason: Option<String>,
     pub reason: Option<String>,
 }

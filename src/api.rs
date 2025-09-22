@@ -387,20 +387,18 @@ impl AzureDevOpsClient {
         &self,
         pr_with_work_items: &crate::models::PullRequestWithWorkItems,
         terminal_states: &[String],
-    ) -> (bool, Vec<WorkItem>, Vec<WorkItem>) {
-        let mut terminal_items = Vec::new();
+    ) -> (bool, Vec<WorkItem>) {
         let mut non_terminal_items = Vec::new();
 
         for work_item in &pr_with_work_items.work_items {
-            if self.is_work_item_in_terminal_state(work_item, terminal_states) {
-                terminal_items.push(work_item.clone());
-            } else {
+            if !self.is_work_item_in_terminal_state(work_item, terminal_states) {
                 non_terminal_items.push(work_item.clone());
             }
         }
 
-        let all_terminal = non_terminal_items.is_empty() && !terminal_items.is_empty();
-        (all_terminal, terminal_items, non_terminal_items)
+        let all_terminal =
+            non_terminal_items.is_empty() && !pr_with_work_items.work_items.is_empty();
+        (all_terminal, non_terminal_items)
     }
 
     pub fn parse_terminal_states(terminal_states_str: &str) -> Vec<String> {

@@ -57,26 +57,26 @@ async fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Create app
-    let mut app = App::new(
-        pr_with_work_items,
-        config.shared().organization.clone(),
-        config.shared().project.clone(),
-        config.shared().repository.clone(),
-        config.shared().dev_branch.clone(),
-        config.shared().target_branch.clone(),
-        config.shared().local_repo.clone(),
-        match &config {
+    // Create app configuration
+    let app_config = ui::AppConfiguration {
+        organization: config.shared().organization.clone(),
+        project: config.shared().project.clone(),
+        repository: config.shared().repository.clone(),
+        dev_branch: config.shared().dev_branch.clone(),
+        target_branch: config.shared().target_branch.clone(),
+        local_repo: config.shared().local_repo.clone(),
+        work_item_state: match &config {
             AppConfig::Default { default, .. } => default.work_item_state.clone(),
             AppConfig::Migration { .. } => "Next Merged".to_string(), // Default fallback for migration mode
         },
-        config.shared().parallel_limit,
-        config.shared().max_concurrent_network,
-        config.shared().max_concurrent_processing,
-        config.shared().tag_prefix.clone(),
-        config.shared().since.clone(),
-        client,
-    );
+        max_concurrent_network: config.shared().max_concurrent_network,
+        max_concurrent_processing: config.shared().max_concurrent_processing,
+        tag_prefix: config.shared().tag_prefix.clone(),
+        since: config.shared().since.clone(),
+    };
+
+    // Create app
+    let mut app = App::new(pr_with_work_items, app_config, client);
 
     // Set the initial state based on the configuration
     app.initial_state = Some(create_initial_state(Some(config)));

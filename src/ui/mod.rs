@@ -5,7 +5,7 @@ use state::{AppState, DataLoadingState, StateChange};
 mod app;
 pub mod state;
 
-pub use app::App;
+pub use app::{App, AppConfiguration};
 
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,

@@ -26,6 +26,23 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
+
+#[derive(Debug, Clone)]
+pub struct RepoSetupResult {
+    pub repo_path: std::path::PathBuf,
+    pub branches: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkItemsResult {
+    pub pr_index: usize,
+    pub work_items: Vec<WorkItem>,
+}
+
+type RepoSetupTaskHandle = AsyncTaskHandle<RepoSetupResult>;
+type WorkItemsTaskHandle = AsyncTaskHandle<WorkItemsResult>;
+
 #[derive(Debug, Clone, PartialEq)]
 enum LoadingStage {
     NotStarted,
@@ -47,9 +64,9 @@ pub struct MigrationDataLoadingState {
 
     // Task management
     pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>>>>,
-    repo_setup_task: Option<tokio::task::JoinHandle<Result<(std::path::PathBuf, Vec<String>)>>>,
+    repo_setup_task: Option<RepoSetupTaskHandle>,
     git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory>>>,
-    work_items_tasks: Option<Vec<tokio::task::JoinHandle<Result<(usize, Vec<WorkItem>)>>>>,
+    work_items_tasks: Option<Vec<WorkItemsTaskHandle>>,
     analysis_task: Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis>>>,
     network_processor: Option<NetworkProcessor>,
 
@@ -166,7 +183,7 @@ impl MigrationDataLoadingState {
     async fn perform_repository_setup(
         config: AppConfig,
         migration_id: String,
-    ) -> Result<(std::path::PathBuf, Vec<String>)> {
+    ) -> Result<RepoSetupResult> {
         // Create client from config
         let client = AzureDevOpsClient::new(
             config.shared().organization.clone(),
@@ -211,7 +228,10 @@ impl MigrationDataLoadingState {
             _ => bail!("Migration mode should have migration config"),
         };
 
-        Ok((repo_path, terminal_states))
+        Ok(RepoSetupResult {
+            repo_path,
+            branches: terminal_states,
+        })
     }
 
     async fn check_repository_setup_progress(&mut self) -> Result<bool> {
@@ -220,13 +240,13 @@ impl MigrationDataLoadingState {
         {
             let task = self.repo_setup_task.take().unwrap();
             match task.await {
-                Ok(Ok((repo_path, terminal_states))) => {
-                    self.repo_path = Some(repo_path.clone());
-                    self.terminal_states = Some(terminal_states);
+                Ok(Ok(result)) => {
+                    self.repo_path = Some(result.repo_path.clone());
+                    self.terminal_states = Some(result.branches);
 
                     // Start git history fetch in parallel now that repo is ready
                     if let Some(config) = &self.config {
-                        let repo_path_clone = repo_path.clone();
+                        let repo_path_clone = result.repo_path.clone();
                         let target_branch = config.shared().target_branch.clone();
 
                         self.git_history_task = Some(tokio::spawn(async move {
@@ -289,7 +309,10 @@ impl MigrationDataLoadingState {
                         .await;
 
                     match result {
-                        Ok(work_items) => Ok((index, work_items)),
+                        Ok(work_items) => Ok(WorkItemsResult {
+                            pr_index: index,
+                            work_items,
+                        }),
                         Err(e) => Err(e),
                     }
                 });
@@ -310,8 +333,8 @@ impl MigrationDataLoadingState {
             for task in tasks.drain(..) {
                 if task.is_finished() {
                     match task.await {
-                        Ok(Ok((index, work_items))) => {
-                            completed.push((index, work_items));
+                        Ok(Ok(result)) => {
+                            completed.push(result);
                         }
                         Ok(Err(e)) => {
                             return Err(e).context("Failed to fetch work items");
@@ -326,11 +349,11 @@ impl MigrationDataLoadingState {
             }
 
             // Update completed work items
-            for (index, work_items) in completed {
-                if let Some(pr) = self.prs.get(index) {
+            for result in completed {
+                if let Some(pr) = self.prs.get(result.pr_index) {
                     self.prs_with_work_items.push(PullRequestWithWorkItems {
                         pr: pr.clone(),
-                        work_items,
+                        work_items: result.work_items,
                         selected: false,
                     });
                     self.work_items_fetched += 1;
@@ -419,7 +442,7 @@ impl MigrationDataLoadingState {
 
     async fn perform_migration_analysis(
         prs_with_work_items: Vec<PullRequestWithWorkItems>,
-        repo_path: std::path::PathBuf,
+        _repo_path: std::path::PathBuf,
         terminal_states: Vec<String>,
         commit_history: crate::git::CommitHistory,
         config: AppConfig,
@@ -438,19 +461,11 @@ impl MigrationDataLoadingState {
         // Create migration analyzer
         let analyzer = MigrationAnalyzer::new(client, terminal_states);
 
-        // Calculate git symmetric difference
-        let symmetric_diff = crate::git::get_symmetric_difference(
-            &repo_path,
-            &config.shared().dev_branch,
-            &config.shared().target_branch,
-        )
-        .context("Failed to calculate git diff")?;
-
         // Analyze PRs using pre-fetched commit history (no individual git commands per PR)
         let mut pr_analyses = Vec::new();
         for pr_with_work_items in prs_with_work_items {
             let analysis = analyzer
-                .analyze_single_pr(&pr_with_work_items, &symmetric_diff, &commit_history)
+                .analyze_single_pr(&pr_with_work_items, &commit_history)
                 .await
                 .with_context(|| format!("Analysis failed for PR {}", pr_with_work_items.pr.id))?;
 
@@ -462,7 +477,7 @@ impl MigrationDataLoadingState {
 
         // Categorize PRs
         let analysis = analyzer
-            .categorize_prs(pr_analyses, symmetric_diff)
+            .categorize_prs(pr_analyses)
             .context("Failed to categorize PRs")?;
 
         // Clean up migration worktree
