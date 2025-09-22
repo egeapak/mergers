@@ -918,11 +918,12 @@ mod tests {
         let repo_path = temp_dir.path().to_path_buf();
 
         // Initialize git repo
-        Command::new("git")
+        let init_output = Command::new("git")
             .current_dir(&repo_path)
             .args(["init"])
             .output()
             .unwrap();
+        assert!(init_output.status.success(), "Git init failed: {}", String::from_utf8_lossy(&init_output.stderr));
 
         // Configure git user
         Command::new("git")
@@ -937,33 +938,58 @@ mod tests {
             .output()
             .unwrap();
 
-        // Set default branch to main
+        // Disable commit signing and verification for deterministic tests
         Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "commit.gpgsign", "false"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "tag.gpgsign", "false"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "push.gpgsign", "false"])
+            .output()
+            .unwrap();
+
+        // Set default branch to main
+        let branch_output = Command::new("git")
             .current_dir(&repo_path)
             .args(["checkout", "-b", "main"])
             .output()
             .unwrap();
+        assert!(branch_output.status.success(), "Creating main branch failed: {}", String::from_utf8_lossy(&branch_output.stderr));
 
         (temp_dir, repo_path)
     }
 
     fn create_commit_with_message(repo_path: &Path, message: &str) {
-        // Create a test file with unique content based on message
-        let content = format!("test content for: {}", message);
-        fs::write(repo_path.join("test.txt"), content).unwrap();
+        // Create a unique test file for each commit to ensure content changes
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let content = format!("test content for: {} (timestamp: {})", message, timestamp);
+        let filename = format!("test_{}.txt", timestamp);
+        fs::write(repo_path.join(&filename), content).unwrap();
 
         // Add and commit
-        Command::new("git")
+        let add_output = Command::new("git")
             .current_dir(repo_path)
             .args(["add", "."])
             .output()
             .unwrap();
+        assert!(add_output.status.success(), "Git add failed: {}", String::from_utf8_lossy(&add_output.stderr));
 
-        Command::new("git")
+        let commit_output = Command::new("git")
             .current_dir(repo_path)
             .args(["commit", "-m", message])
             .output()
             .unwrap();
+        assert!(commit_output.status.success(), "Git commit failed: {}", String::from_utf8_lossy(&commit_output.stderr));
     }
 
 

@@ -1,5 +1,7 @@
 # Merge Tool
 
+[![CI](https://github.com/egeapak/merge-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/merge-tool/actions/workflows/ci.yml)
+
 A command-line interface (CLI) tool written in Rust to help streamline the process of merging multiple Azure DevOps pull requests (PRs) into a target branch via cherry-picking. It provides a Text-based User Interface (TUI) for selecting PRs.
 
 ## Features
@@ -110,3 +112,41 @@ To build the project, you'll need to have Rust and Cargo installed. If you don't
     cargo build
     ```
     The executable will be located at `target/debug/merge-tool`.
+
+## Testing
+
+This project uses cargo-nextest for faster test execution and cargo-llvm-cov for code coverage.
+
+### Running Tests
+
+**Standard tests:**
+```bash
+cargo test
+```
+
+**With nextest (faster, parallel execution):**
+```bash
+cargo nextest run
+```
+
+**With coverage:**
+```bash
+cargo llvm-cov nextest
+```
+
+**Generate HTML coverage report:**
+```bash
+cargo llvm-cov nextest --html
+```
+
+**Generate LCOV coverage report for CI:**
+```bash
+cargo llvm-cov nextest --lcov --output-path lcov.info
+```
+
+### Test Configuration
+
+Tests are configured via `.config/nextest.toml` with different profiles:
+- `default`: Standard development settings
+- `ci`: Optimized for CI environments with longer timeouts and more retries
+- `dev`: Verbose output for local development

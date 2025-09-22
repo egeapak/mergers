@@ -1,0 +1,40 @@
+[profile.default]
+# Set test-threads to the number of logical cores on the machine
+test-threads = "num-cpus"
+
+# Timeout for slow tests
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+# Retry flaky tests
+retries = { backoff = "exponential", count = 2, delay = "1s" }
+
+# Show test output on failure
+failure-output = "immediate-final"
+
+# Only show failing tests by default
+success-output = "never"
+
+[profile.ci]
+# CI-specific configuration
+failure-output = "immediate-final"
+success-output = "never"
+
+# More aggressive timeout for CI
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+# More retries for flaky tests in CI
+retries = { backoff = "exponential", count = 3, delay = "2s" }
+
+# Use all available cores in CI
+test-threads = "num-cpus"
+
+[profile.dev]
+# Development profile - more verbose output
+failure-output = "immediate-final"
+success-output = "immediate"
+
+# Shorter timeout for development
+slow-timeout = { period = "10s", terminate-after = 1 }
+
+# No retries in development to catch flaky tests early
+retries = 0

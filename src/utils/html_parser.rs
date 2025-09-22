@@ -64,10 +64,8 @@ impl HtmlConverter {
         if !self.current_spans.is_empty() {
             let spans = std::mem::take(&mut self.current_spans);
             self.lines.push(Line::from(spans));
-        } else {
-            // Empty line
-            self.lines.push(Line::from(""));
         }
+        // Don't create empty lines for br tags - they should just finish the current line
     }
 
     fn process_element(&mut self, element: ElementRef) {
