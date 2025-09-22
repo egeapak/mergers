@@ -1,0 +1,9 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      run: cargo fmt --check
+      fail_text: "Please run 'cargo fmt' to format your code"
+    clippy:
+      run: cargo clippy -- -D warnings
+      fail_text: "Please fix clippy warnings before committing"
