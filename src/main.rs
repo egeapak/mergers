@@ -1,6 +1,7 @@
 mod api;
 mod config;
 mod git;
+mod git_config;
 mod migration;
 mod models;
 mod ui;

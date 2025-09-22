@@ -291,7 +291,6 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
-                created_date: None,
             },
             history: Vec::new(),
         }

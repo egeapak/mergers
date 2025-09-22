@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use crate::git_config;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -54,6 +55,27 @@ impl Config {
             .with_context(|| format!("Failed to parse config file: {}", config_path.display()))?;
 
         Ok(config)
+    }
+
+    /// Detect configuration from git remote if repository is Azure DevOps
+    pub fn detect_from_git_remote<P: AsRef<std::path::Path>>(repo_path: P) -> Self {
+        match git_config::detect_azure_devops_config(repo_path) {
+            Ok(Some(azure_config)) => Self {
+                organization: Some(azure_config.organization),
+                project: Some(azure_config.project),
+                repository: Some(azure_config.repository),
+                pat: None,
+                dev_branch: None,
+                target_branch: None,
+                local_repo: None,
+                work_item_state: None,
+                parallel_limit: None,
+                max_concurrent_network: None,
+                max_concurrent_processing: None,
+                tag_prefix: None,
+            },
+            _ => Self::default(),
+        }
     }
 
     /// Load configuration from environment variables

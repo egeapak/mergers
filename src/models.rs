@@ -6,6 +6,9 @@ use serde::Deserialize;
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
+    /// Local repository path (optional positional argument)
+    pub path: Option<String>,
+
     /// Azure DevOps organization
     #[arg(short, long)]
     pub organization: Option<String>,
@@ -69,6 +72,10 @@ pub struct Args {
     /// Limit fetching to items created after this date (e.g., "1mo", "2w", "2025-07-01")
     #[arg(long)]
     pub since: Option<String>,
+
+    /// Skip the settings confirmation page and proceed directly
+    #[arg(long)]
+    pub skip_confirmation: bool,
 }
 
 /// Shared configuration used by both modes
@@ -86,6 +93,7 @@ pub struct SharedConfig {
     pub max_concurrent_processing: usize,
     pub tag_prefix: String,
     pub since: Option<String>,
+    pub skip_confirmation: bool,
 }
 
 /// Configuration specific to default mode
@@ -127,14 +135,24 @@ impl AppConfig {
 }
 
 impl Args {
-    /// Resolve configuration from CLI args, environment variables, and config file
-    /// Priority: CLI args > environment variables > config file > defaults
+    /// Resolve configuration from CLI args, environment variables, config file, and git remote
+    /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
+        // Determine local_repo path (positional arg takes precedence over --local-repo flag)
+        let local_repo_path = self.path.clone().or(self.local_repo.clone());
+
         // Load from config file (lowest priority)
         let file_config = Config::load_from_file()?;
 
-        // Load from environment variables (medium priority)
+        // Load from environment variables
         let env_config = Config::load_from_env();
+
+        // Try to detect from git remote if we have a local repo path
+        let git_config = if let Some(ref repo_path) = local_repo_path {
+            Config::detect_from_git_remote(repo_path)
+        } else {
+            Config::default()
+        };
 
         // Convert CLI args to config format (highest priority)
         let cli_config = Config {
@@ -144,7 +162,7 @@ impl Args {
             pat: self.pat.clone(),
             dev_branch: self.dev_branch.clone(),
             target_branch: self.target_branch.clone(),
-            local_repo: self.local_repo.clone(),
+            local_repo: local_repo_path.clone(),
             work_item_state: self.work_item_state.clone(),
             parallel_limit: self.parallel_limit,
             max_concurrent_network: self.max_concurrent_network,
@@ -152,8 +170,8 @@ impl Args {
             tag_prefix: self.tag_prefix.clone(),
         };
 
-        // Merge configs: file < env < cli
-        let merged_config = file_config.merge(env_config).merge(cli_config);
+        // Merge configs: file < git_remote < env < cli
+        let merged_config = file_config.merge(git_config).merge(env_config).merge(cli_config);
 
         // Validate required shared fields
         let organization = merged_config.organization
@@ -180,7 +198,7 @@ impl Args {
             target_branch: merged_config
                 .target_branch
                 .unwrap_or_else(|| "next".to_string()),
-            local_repo: merged_config.local_repo,
+            local_repo: local_repo_path,
             parallel_limit: merged_config.parallel_limit.unwrap_or(300),
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
@@ -188,6 +206,7 @@ impl Args {
                 .tag_prefix
                 .unwrap_or_else(|| "merged-".to_string()),
             since: self.since.clone(),
+            skip_confirmation: self.skip_confirmation,
         };
 
         // Return appropriate configuration based on mode

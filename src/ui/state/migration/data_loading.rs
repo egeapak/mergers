@@ -799,6 +799,7 @@ mod tests {
                 parallel_limit: 5,
                 tag_prefix: "merged-".to_string(),
                 since: None,
+                skip_confirmation: false,
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),
@@ -833,6 +834,7 @@ mod tests {
                 parallel_limit: 5,
                 tag_prefix: "merged-".to_string(),
                 since: None,
+                skip_confirmation: false,
             },
             migration: crate::models::MigrationModeConfig {
                 terminal_states: "Done,Closed".to_string(),

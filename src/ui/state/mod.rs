@@ -26,12 +26,18 @@ pub trait AppState: Send + Sync {
 /// Factory function to create the initial state based on app configuration
 pub fn create_initial_state(config: Option<crate::models::AppConfig>) -> Box<dyn AppState> {
     if let Some(config) = config {
-        if config.is_migration_mode() {
-            Box::new(MigrationDataLoadingState::new(config))
+        // Skip confirmation if the flag is set
+        if config.shared().skip_confirmation {
+            if config.is_migration_mode() {
+                Box::new(MigrationDataLoadingState::new(config))
+            } else {
+                Box::new(DataLoadingState::new())
+            }
         } else {
-            Box::new(DataLoadingState::new())
+            Box::new(SettingsConfirmationState::new(config))
         }
     } else {
+        // This shouldn't happen in normal flow since we always resolve config
         Box::new(DataLoadingState::new())
     }
 }

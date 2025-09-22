@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn test_old_vs_new_implementation_consistency() {
+    fn test_implementation_consistency() {
         let (_temp_dir, repo_path) = setup_test_repo();
 
         // Create test commits with known patterns
@@ -1160,7 +1160,7 @@ mod tests {
 
         let history = get_target_branch_history(&repo_path, "main").unwrap();
 
-        // Test cases that should work with both implementations
+        // Test cases that should work
         let test_cases = vec![
             (123, "Fix authentication bug", true), // Should match Azure DevOps pattern
             (456, "Some feature", true),           // Should match GitHub pattern
@@ -1169,31 +1169,11 @@ mod tests {
         ];
 
         for (pr_id, pr_title, expected) in test_cases {
-            // Test new implementation
-            let new_result = check_pr_merged_in_history(pr_id, pr_title, &history);
-
-            // Test old implementation
-            let old_result =
-                check_pr_merged_in_branch(&repo_path, pr_id, pr_title, "main").unwrap_or(false);
-
-            // Both should give the same result
+            let result = check_pr_merged_in_history(pr_id, pr_title, &history);
             assert_eq!(
-                new_result, expected,
-                "New implementation failed for PR {} with title '{}'. Expected {}, got {}",
-                pr_id, pr_title, expected, new_result
-            );
-
-            assert_eq!(
-                old_result, expected,
-                "Old implementation failed for PR {} with title '{}'. Expected {}, got {}",
-                pr_id, pr_title, expected, old_result
-            );
-
-            // Most importantly, both implementations should agree
-            assert_eq!(
-                new_result, old_result,
-                "Implementation mismatch for PR {} with title '{}'. New: {}, Old: {}",
-                pr_id, pr_title, new_result, old_result
+                result, expected,
+                "Implementation failed for PR {} with title '{}'. Expected {}, got {}",
+                pr_id, pr_title, expected, result
             );
         }
     }

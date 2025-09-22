@@ -6,7 +6,9 @@
       "Bash(rg:*)",
       "WebFetch(domain:learn.microsoft.com)",
       "Bash(./target/debug/merge-tool:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(rustc:*)"
     ],
     "deny": []
   }
