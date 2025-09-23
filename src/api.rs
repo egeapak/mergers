@@ -13,7 +13,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use merge_tool::AzureDevOpsClient;
+//! use mergers::AzureDevOpsClient;
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {

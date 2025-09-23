@@ -1,4 +1,4 @@
-//! # Merge Tool Library
+//! # Mergers Library
 //!
 //! A comprehensive library for managing Azure DevOps pull request merging and migration workflows.
 //! This library provides tools for:
@@ -12,7 +12,7 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use merge_tool::{AzureDevOpsClient, Config};
+//! use mergers::{AzureDevOpsClient, Config};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {

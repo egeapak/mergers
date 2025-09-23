@@ -1,4 +1,4 @@
-//! Configuration management for the merge tool.
+//! Configuration management for mergers.
 //!
 //! This module handles loading configuration from multiple sources:
 //! - TOML configuration files following XDG Base Directory specification
@@ -8,7 +8,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use merge_tool::Config;
+//! use mergers::Config;
 //!
 //! // Load configuration from file, with fallback to defaults
 //! let config = Config::load_from_file().unwrap();
