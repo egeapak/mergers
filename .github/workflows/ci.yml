@@ -45,6 +45,12 @@ jobs:
             lcov.info
             target/llvm-cov-target/debug/coverage/
 
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+
   lint:
     name: Lint and Format Check
     runs-on: ubuntu-latest
@@ -95,7 +101,7 @@ jobs:
 
       - name: Install cargo-nextest (Windows)
         if: runner.os == 'Windows'
-        run: cargo install cargo-nextest --locked
+        run: winget install nextest.cargo-nextest
 
       - name: Build
         run: cargo build --verbose --all-features

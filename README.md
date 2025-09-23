@@ -1,6 +1,7 @@
 # Merge Tool
 
-[![CI](https://github.com/egeapak/merge-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/merge-tool/actions/workflows/ci.yml)
+[![CI](https://github.com/egeapak/mergers/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/mergers/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/egeapak/mergers/branch/master/graph/badge.svg)](https://codecov.io/gh/egeapak/mergers)
 
 A command-line interface (CLI) tool written in Rust to help streamline the process of merging multiple Azure DevOps pull requests (PRs) into a target branch via cherry-picking. It provides a Text-based User Interface (TUI) for selecting PRs.
 
