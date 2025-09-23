@@ -27,3 +27,8 @@ ego-tree = "0.10.0"
 toml = "0.8"
 dirs = "5.0"
 regex = "1.10"
+
+[dev-dependencies]
+mockito = "1.7"
+tokio-test = "0.4"
+tempfile = "3.23"
