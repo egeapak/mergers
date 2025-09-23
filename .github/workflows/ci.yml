@@ -101,7 +101,7 @@ jobs:
 
       - name: Install cargo-nextest (Windows)
         if: runner.os == 'Windows'
-        run: winget install nextest.cargo-nextest
+        run: winget install nextest.cargo-nextest --accept-package-agreements --accept-source-agreements
 
       - name: Build
         run: cargo build --verbose --all-features
