@@ -46,6 +46,12 @@ enum LoadingStage {
     Complete,
 }
 
+impl Default for DataLoadingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataLoadingState {
     pub fn new() -> Self {
         Self {

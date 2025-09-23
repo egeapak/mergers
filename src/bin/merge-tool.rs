@@ -1,12 +1,3 @@
-mod api;
-mod config;
-mod git;
-mod git_config;
-mod migration;
-mod models;
-mod ui;
-mod utils;
-
 use anyhow::Result;
 use clap::Parser;
 use crossterm::{
@@ -16,14 +7,10 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
-use ui::run_app;
 
-use crate::{
-    api::AzureDevOpsClient,
-    config::Config,
-    models::{AppConfig, Args},
-    ui::App,
-    ui::state::create_initial_state,
+use merge_tool::{
+    AppConfig, Args, AzureDevOpsClient, Config,
+    ui::{App, AppConfiguration, run_app, state::create_initial_state},
 };
 
 #[tokio::main]
@@ -58,7 +45,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Create app configuration
-    let app_config = ui::AppConfiguration {
+    let app_config = AppConfiguration {
         organization: config.shared().organization.clone(),
         project: config.shared().project.clone(),
         repository: config.shared().repository.clone(),

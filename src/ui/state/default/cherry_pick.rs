@@ -18,6 +18,12 @@ pub struct CherryPickState {
     processing: bool,
 }
 
+impl Default for CherryPickState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CherryPickState {
     pub fn new() -> Self {
         Self { processing: true }

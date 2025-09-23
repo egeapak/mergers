@@ -42,6 +42,12 @@ pub struct PullRequestSelectionState {
     last_search_query: String, // Store the last executed search query
 }
 
+impl Default for PullRequestSelectionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PullRequestSelectionState {
     pub fn new() -> Self {
         Self {

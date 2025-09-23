@@ -17,6 +17,12 @@ pub struct CompletionState {
     list_state: ListState,
 }
 
+impl Default for CompletionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompletionState {
     pub fn new() -> Self {
         let mut state = Self {

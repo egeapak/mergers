@@ -46,6 +46,12 @@ pub struct PostCompletionState {
     total_tasks: usize,
 }
 
+impl Default for PostCompletionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PostCompletionState {
     pub fn new() -> Self {
         Self {

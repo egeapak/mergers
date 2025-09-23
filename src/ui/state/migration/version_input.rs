@@ -17,6 +17,12 @@ pub struct MigrationVersionInputState {
     input: String,
 }
 
+impl Default for MigrationVersionInputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationVersionInputState {
     pub fn new() -> Self {
         Self {

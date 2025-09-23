@@ -29,6 +29,12 @@ pub struct SetupRepoState {
     started: bool,
 }
 
+impl Default for SetupRepoState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SetupRepoState {
     pub fn new() -> Self {
         Self {

@@ -1,3 +1,26 @@
+//! Configuration management for the merge tool.
+//!
+//! This module handles loading configuration from multiple sources:
+//! - TOML configuration files following XDG Base Directory specification
+//! - Environment variables
+//! - Git remote detection for Azure DevOps repositories
+//!
+//! ## Example
+//!
+//! ```rust
+//! use merge_tool::Config;
+//!
+//! // Load configuration from file, with fallback to defaults
+//! let config = Config::load_from_file().unwrap();
+//! println!("Dev branch: {:?}", config.dev_branch);
+//!
+//! // Load from environment variables
+//! let env_config = Config::load_from_env();
+//!
+//! // Merge configurations (env takes precedence)
+//! let merged = config.merge(env_config);
+//! ```
+
 use crate::git_config;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

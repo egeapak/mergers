@@ -16,6 +16,12 @@ pub struct VersionInputState {
     input: String,
 }
 
+impl Default for VersionInputState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VersionInputState {
     pub fn new() -> Self {
         Self {

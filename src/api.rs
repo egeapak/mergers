@@ -1,3 +1,40 @@
+//! Azure DevOps API client for pull request and work item management.
+//!
+//! This module provides a comprehensive client for interacting with Azure DevOps APIs,
+//! specifically for managing pull requests and work items in merge workflows.
+//!
+//! ## Features
+//!
+//! - Pull request fetching with pagination support
+//! - Work item retrieval and state management
+//! - Terminal state analysis for migration workflows
+//! - PR labeling and tagging
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use merge_tool::AzureDevOpsClient;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = AzureDevOpsClient::new(
+//!     "my-org".to_string(),
+//!     "my-project".to_string(),
+//!     "my-repo".to_string(),
+//!     "my-pat".to_string(),
+//! )?;
+//!
+//! // Fetch pull requests from the main branch
+//! let prs = client.fetch_pull_requests("main", None).await?;
+//! println!("Found {} pull requests", prs.len());
+//!
+//! // Parse terminal states for migration analysis
+//! let states = AzureDevOpsClient::parse_terminal_states("Closed,Done");
+//! assert_eq!(states, vec!["Closed", "Done"]);
+//! # Ok(())
+//! # }
+//! ```
+
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{DateTime, Utc};
@@ -429,7 +466,7 @@ mod tests {
     use mockito::Server;
     use serde_json::json;
 
-    fn create_test_client(server_url: &str) -> AzureDevOpsClient {
+    fn create_test_client(_server_url: &str) -> AzureDevOpsClient {
         AzureDevOpsClient {
             client: reqwest::Client::new(),
             organization: "test-org".to_string(),
@@ -495,10 +532,10 @@ mod tests {
             .create_async()
             .await;
 
-        let client = create_test_client(&server.url());
+        let _client = create_test_client(&server.url());
 
         // We need to modify the client to use our mock server URL
-        let modified_client = AzureDevOpsClient {
+        let _modified_client = AzureDevOpsClient {
             client: reqwest::Client::new(),
             organization: server.url(),
             project: "test-project".to_string(),
@@ -507,9 +544,7 @@ mod tests {
 
         // This test would need URL rewriting to work properly with mockito
         // For now, we'll test the URL construction logic
-        let expected_url_pattern = format!(
-            "https://dev.azure.com/test-org/test-project/_apis/git/repositories/test-repo/pullrequests?searchCriteria.targetRefName=refs/heads/dev&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top=100&$skip=0"
-        );
+        let expected_url_pattern = "https://dev.azure.com/test-org/test-project/_apis/git/repositories/test-repo/pullrequests?searchCriteria.targetRefName=refs/heads/dev&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top=100&$skip=0".to_string();
 
         // Test URL construction - this validates the logic without network calls
         assert!(expected_url_pattern.contains("test-org"));
@@ -520,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_pull_requests_with_since_date() {
         // Test that since date filtering logic works
-        let client = create_test_client("http://localhost");
+        let _client = create_test_client("http://localhost");
 
         // Test URL construction with date filtering
         let since_date = "2024-01-01";
@@ -532,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_pull_requests_pagination_limit() {
-        let client = create_test_client("http://localhost");
+        let _client = create_test_client("http://localhost");
 
         // Test the max_requests safety limit logic
         let max_requests = 100;

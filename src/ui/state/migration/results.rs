@@ -25,6 +25,12 @@ pub struct MigrationState {
     pub show_details: bool,
 }
 
+impl Default for MigrationState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MigrationState {
     pub fn new() -> Self {
         let mut eligible_list_state = ListState::default();

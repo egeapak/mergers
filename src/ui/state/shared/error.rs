@@ -13,6 +13,12 @@ use ratatui::{
 
 pub struct ErrorState;
 
+impl Default for ErrorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorState {
     pub fn new() -> Self {
         Self

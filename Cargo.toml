@@ -2,6 +2,19 @@
 name = "merge-tool"
 version = "0.1.2"
 edition = "2024"
+description = "A comprehensive tool for managing Azure DevOps pull request merging and migration workflows"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/merge-tool"
+keywords = ["azure-devops", "git", "merge", "migration", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "merge_tool"
+path = "src/lib.rs"
+
+[[bin]]
+name = "merge-tool"
+path = "src/bin/merge-tool.rs"
 
 [dependencies]
 tokio = { version = "1", features = [
