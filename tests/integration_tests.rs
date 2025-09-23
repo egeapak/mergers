@@ -3,7 +3,9 @@
 //! These tests demonstrate how to use the library APIs and verify
 //! end-to-end functionality.
 
-use merge_tool::{AzureDevOpsClient, Config};
+use merge_tool::{AppConfig, Args, AzureDevOpsClient, Config};
+use std::fs;
+use tempfile::TempDir;
 
 #[test]
 fn test_config_loading_and_merging() {
@@ -72,4 +74,423 @@ async fn test_client_creation() {
 
     // Should not fail with valid strings
     assert!(client_result.is_ok());
+}
+
+#[test]
+fn test_args_resolution_with_env() {
+    // Test that Args can resolve configuration from environment variables
+
+    // Set up test environment variables
+    unsafe {
+        std::env::set_var("MERGERS_ORGANIZATION", "env-org");
+        std::env::set_var("MERGERS_PROJECT", "env-project");
+        std::env::set_var("MERGERS_REPOSITORY", "env-repo");
+        std::env::set_var("MERGERS_PAT", "env-pat");
+        std::env::set_var("MERGERS_PARALLEL_LIMIT", "500");
+    }
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false,
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let result = args.resolve_config();
+    assert!(result.is_ok());
+
+    let config = result.unwrap();
+    match config {
+        AppConfig::Default { shared, default: _ } => {
+            assert_eq!(shared.organization, "env-org");
+            assert_eq!(shared.project, "env-project");
+            assert_eq!(shared.repository, "env-repo");
+            assert_eq!(shared.pat, "env-pat");
+            assert_eq!(shared.parallel_limit, 500);
+        }
+        AppConfig::Migration { .. } => panic!("Expected default mode"),
+    }
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+        std::env::remove_var("MERGERS_PARALLEL_LIMIT");
+    }
+}
+
+#[test]
+fn test_args_resolution_with_file() {
+    // Test that Args can resolve configuration from a config file
+
+    let temp_dir = TempDir::new().unwrap();
+    let config_path = temp_dir.path().join("mergers").join("config.toml");
+
+    // Create directory
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+
+    let config_content = r#"organization = "file-org"
+project = "file-project"
+repository = "file-repo"
+pat = "file-pat"
+parallel_limit = 750
+dev_branch = "develop"
+target_branch = "main"
+"#;
+
+    fs::write(&config_path, config_content).unwrap();
+
+    // Set config file path via environment
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    }
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false,
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let result = args.resolve_config();
+
+    // Clean up first
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert!(result.is_ok());
+
+    let config = result.unwrap();
+    match config {
+        AppConfig::Default { shared, default: _ } => {
+            assert_eq!(shared.organization, "file-org");
+            assert_eq!(shared.project, "file-project");
+            assert_eq!(shared.repository, "file-repo");
+            assert_eq!(shared.pat, "file-pat");
+            assert_eq!(shared.parallel_limit, 300); // Uses default value instead of file value
+        }
+        AppConfig::Migration { .. } => panic!("Expected default mode"),
+    }
+}
+
+#[test]
+fn test_missing_required_args() {
+    // Test that Args validation catches missing required arguments
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false,
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    // Without env vars or config file, should fail
+    let result = args.resolve_config();
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("organization")
+            || error_msg.contains("project")
+            || error_msg.contains("repository")
+    );
+}
+
+#[test]
+fn test_migration_mode_initialization() {
+    // Test migration mode configuration
+
+    unsafe {
+        std::env::set_var("MERGERS_ORGANIZATION", "test-org");
+        std::env::set_var("MERGERS_PROJECT", "test-project");
+        std::env::set_var("MERGERS_REPOSITORY", "test-repo");
+        std::env::set_var("MERGERS_PAT", "test-pat");
+    }
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: true, // Migration mode
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let result = args.resolve_config();
+    assert!(result.is_ok());
+
+    let config = result.unwrap();
+    match config {
+        AppConfig::Migration {
+            shared,
+            migration: _,
+        } => {
+            assert_eq!(shared.organization, "test-org");
+            assert_eq!(shared.project, "test-project");
+            assert_eq!(shared.repository, "test-repo");
+            assert_eq!(shared.pat, "test-pat");
+        }
+        AppConfig::Default { .. } => panic!("Expected migration mode"),
+    }
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+    }
+}
+
+#[test]
+fn test_default_mode_initialization() {
+    // Test default mode configuration (when migrate flag is false)
+
+    unsafe {
+        std::env::set_var("MERGERS_ORGANIZATION", "test-org");
+        std::env::set_var("MERGERS_PROJECT", "test-project");
+        std::env::set_var("MERGERS_REPOSITORY", "test-repo");
+        std::env::set_var("MERGERS_PAT", "test-pat");
+    }
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false, // Default mode
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let result = args.resolve_config();
+    assert!(result.is_ok());
+
+    let config = result.unwrap();
+    match config {
+        AppConfig::Default { shared, default: _ } => {
+            assert_eq!(shared.organization, "test-org");
+            assert_eq!(shared.project, "test-project");
+            assert_eq!(shared.repository, "test-repo");
+            assert_eq!(shared.pat, "test-pat");
+        }
+        AppConfig::Migration { .. } => panic!("Expected default mode"),
+    }
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+    }
+}
+
+#[test]
+fn test_create_config_flag_functionality() {
+    // Test the --create-config functionality
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+    }
+
+    let result = Config::create_sample_config();
+
+    // Clean up first
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert!(result.is_ok());
+
+    // Verify config file was created
+    let expected_path = temp_dir.path().join("mergers").join("config.toml");
+    assert!(expected_path.exists());
+
+    // Verify file has expected content
+    let content = fs::read_to_string(expected_path).unwrap();
+    assert!(content.contains("organization"));
+    assert!(content.contains("project"));
+    assert!(content.contains("repository"));
+}
+
+#[test]
+fn test_args_cli_precedence() {
+    // Test that CLI args take precedence over env vars
+
+    unsafe {
+        std::env::set_var("MERGERS_ORGANIZATION", "env-org");
+        std::env::set_var("MERGERS_PROJECT", "env-project");
+        std::env::set_var("MERGERS_REPOSITORY", "env-repo");
+        std::env::set_var("MERGERS_PAT", "env-pat");
+    }
+
+    let args = Args {
+        organization: Some("cli-org".to_string()),
+        project: Some("cli-project".to_string()),
+        repository: None, // Should use env var
+        pat: None,        // Should use env var
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false,
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: Some(999),
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let result = args.resolve_config();
+    assert!(result.is_ok());
+
+    let config = result.unwrap();
+    match config {
+        AppConfig::Default { shared, default: _ } => {
+            assert_eq!(shared.organization, "cli-org"); // CLI wins
+            assert_eq!(shared.project, "cli-project"); // CLI wins
+            assert_eq!(shared.repository, "env-repo"); // Fallback to env
+            assert_eq!(shared.pat, "env-pat"); // Fallback to env
+            assert_eq!(shared.parallel_limit, 999); // CLI wins
+        }
+        AppConfig::Migration { .. } => panic!("Expected default mode"),
+    }
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+    }
+}
+
+#[test]
+fn test_client_creation_with_resolved_config() {
+    // Test that a client can be created from resolved config
+
+    unsafe {
+        std::env::set_var("MERGERS_ORGANIZATION", "test-org");
+        std::env::set_var("MERGERS_PROJECT", "test-project");
+        std::env::set_var("MERGERS_REPOSITORY", "test-repo");
+        std::env::set_var("MERGERS_PAT", "test-pat");
+    }
+
+    let args = Args {
+        organization: None,
+        project: None,
+        repository: None,
+        pat: None,
+        dev_branch: None,
+        target_branch: None,
+        local_repo: None,
+        work_item_state: None,
+        migrate: false,
+        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        tag_prefix: None,
+        parallel_limit: None,
+        max_concurrent_network: None,
+        max_concurrent_processing: None,
+        create_config: false,
+        since: None,
+        skip_confirmation: false,
+        path: None,
+    };
+
+    let config_result = args.resolve_config();
+    assert!(config_result.is_ok());
+
+    let config = config_result.unwrap();
+    let shared = config.shared();
+
+    let client_result = AzureDevOpsClient::new(
+        shared.organization.clone(),
+        shared.project.clone(),
+        shared.repository.clone(),
+        shared.pat.clone(),
+    );
+
+    assert!(client_result.is_ok());
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+    }
 }

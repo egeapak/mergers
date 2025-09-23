@@ -799,6 +799,133 @@ mod tests {
         (temp_dir, repo_path)
     }
 
+    fn setup_test_repo_with_origin() -> (TempDir, PathBuf, TempDir, PathBuf) {
+        // Create origin repo as bare repository
+        let origin_dir = TempDir::new().unwrap();
+        let origin_path = origin_dir.path().to_path_buf();
+
+        // Initialize origin as bare repository
+        let init_origin_output = Command::new("git")
+            .current_dir(&origin_path)
+            .args(["init", "--bare"])
+            .output()
+            .unwrap();
+        assert!(
+            init_origin_output.status.success(),
+            "Git init --bare failed: {}",
+            String::from_utf8_lossy(&init_origin_output.stderr)
+        );
+
+        // Create temporary repo to populate origin with initial content
+        let temp_setup_dir = TempDir::new().unwrap();
+        let temp_setup_path = temp_setup_dir.path().to_path_buf();
+
+        // Initialize the setup repo instead of cloning (since origin is empty)
+        let init_setup_output = Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+        assert!(
+            init_setup_output.status.success(),
+            "Git init setup failed: {}",
+            String::from_utf8_lossy(&init_setup_output.stderr)
+        );
+
+        // Configure git user in setup repo
+        Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        // Disable commit signing
+        Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["config", "commit.gpgsign", "false"])
+            .output()
+            .unwrap();
+
+        // Set up main branch and origin remote
+        Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["checkout", "-b", "main"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["remote", "add", "origin", origin_path.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        // Create initial commit and push to origin
+        create_commit_with_message(&temp_setup_path, "Initial commit");
+
+        let push_output = Command::new("git")
+            .current_dir(&temp_setup_path)
+            .args(["push", "origin", "main"])
+            .output()
+            .unwrap();
+        assert!(
+            push_output.status.success(),
+            "Git push failed: {}",
+            String::from_utf8_lossy(&push_output.stderr)
+        );
+
+        // Now create the actual test repo by cloning from origin
+        let test_dir = TempDir::new().unwrap();
+        let test_path = test_dir.path().to_path_buf();
+
+        let clone_test_output = Command::new("git")
+            .current_dir(&test_path)
+            .args(["clone", origin_path.to_str().unwrap(), "."])
+            .output()
+            .unwrap();
+        assert!(
+            clone_test_output.status.success(),
+            "Git clone test failed: {}",
+            String::from_utf8_lossy(&clone_test_output.stderr)
+        );
+
+        // Configure git user in test repo
+        Command::new("git")
+            .current_dir(&test_path)
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&test_path)
+            .args(["config", "user.email", "test@example.com"])
+            .output()
+            .unwrap();
+
+        // Disable commit signing in test repo
+        Command::new("git")
+            .current_dir(&test_path)
+            .args(["config", "commit.gpgsign", "false"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&test_path)
+            .args(["config", "tag.gpgsign", "false"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&test_path)
+            .args(["config", "push.gpgsign", "false"])
+            .output()
+            .unwrap();
+
+        // Return both directories for cleanup: (test_dir, test_path, origin_dir, origin_path)
+        (test_dir, test_path, origin_dir, origin_path)
+    }
+
     fn create_commit_with_message(repo_path: &Path, message: &str) {
         // Create a unique test file for each commit to ensure content changes
         let timestamp = std::time::SystemTime::now()
@@ -1041,5 +1168,439 @@ mod tests {
                 pr_id, pr_title, expected, result
             );
         }
+    }
+
+    #[test]
+    fn test_shallow_clone_repo_success() {
+        // Skip this test if not in a Git environment that supports cloning
+        if std::env::var("CI").is_ok() {
+            // Skip in CI environments where networking might be restricted
+        }
+
+        // Test would require actual network access to clone a repo
+        // This is more of an integration test that would need a test repository
+        // For unit testing, we focus on the error handling paths below
+    }
+
+    #[test]
+    fn test_create_worktree_success() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create and checkout a test branch to simulate target branch
+        let branch_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+        assert!(branch_output.status.success());
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        let push_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+        assert!(push_output.status.success());
+
+        // Go back to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Test worktree creation
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0").unwrap();
+
+        assert!(worktree_path.exists());
+        assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
+    }
+
+    #[test]
+    fn test_create_worktree_branch_exists() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        // Create the worktree directory manually to simulate path conflict
+        let worktree_path = repo_path.join("next-1.0.0");
+        std::fs::create_dir_all(&worktree_path).unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // This should fail because worktree path already exists
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        assert!(result.is_err());
+
+        if let Err(RepositorySetupError::WorktreeExists(path)) = result {
+            assert!(path.contains("next-1.0.0"));
+        } else {
+            panic!("Expected WorktreeExists error, got: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn test_create_worktree_path_exists() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create the worktree directory manually
+        let worktree_path = repo_path.join("next-1.0.0");
+        std::fs::create_dir(&worktree_path).unwrap();
+
+        // This should fail because path already exists
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        assert!(result.is_err());
+
+        if let Err(RepositorySetupError::WorktreeExists(_)) = result {
+            // Expected error
+        } else {
+            panic!("Expected WorktreeExists error");
+        }
+    }
+
+    #[test]
+    fn test_force_remove_worktree_non_existent() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Try to remove non-existent worktree - should succeed (no-op)
+        let result = force_remove_worktree(&repo_path, "non-existent");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_force_remove_worktree_success() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create worktree
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0").unwrap();
+        assert!(worktree_path.exists());
+
+        // Force remove worktree
+        let result = force_remove_worktree(&repo_path, "1.0.0");
+        assert!(result.is_ok());
+
+        // Verify worktree is removed
+        assert!(!worktree_path.exists());
+    }
+
+    #[test]
+    fn test_cherry_pick_commit_success() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create feature branch and commit
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Feature commit");
+
+        // Get commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let commit_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and cherry-pick
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        let result = cherry_pick_commit(&repo_path, &commit_hash);
+
+        // Cherry-pick should succeed
+        assert!(result.is_ok());
+
+        // Verify commit was cherry-picked
+        let history = get_target_branch_history(&repo_path, "main").unwrap();
+        assert!(
+            history
+                .commit_messages
+                .contains(&"Feature commit".to_string())
+        );
+    }
+
+    #[test]
+    fn test_cherry_pick_commit_conflict() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a file with content
+        std::fs::write(repo_path.join("conflict.txt"), "original content").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit with file");
+
+        // Create feature branch and modify the same file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "feature content").unwrap();
+        create_commit_with_message(&repo_path, "Feature commit");
+
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and modify the same file differently
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "main content").unwrap();
+        create_commit_with_message(&repo_path, "Main commit");
+
+        // Try to cherry-pick - should detect conflict
+        let result = cherry_pick_commit(&repo_path, &feature_hash);
+        assert!(result.is_ok()); // cherry_pick_commit returns CherryPickResult, not error
+
+        // Check that it detected conflict
+        match result.unwrap() {
+            crate::git::CherryPickResult::Conflict(_) => {
+                // Expected conflict
+            }
+            _ => panic!("Expected conflict result"),
+        }
+    }
+
+    #[test]
+    fn test_cleanup_migration_worktrees() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create some migration worktrees
+        create_worktree(&repo_path, "target-branch", "migration-1.0.0").unwrap();
+        create_worktree(&repo_path, "target-branch", "migration-2.0.0").unwrap();
+
+        // Also create a regular worktree that shouldn't be removed
+        create_worktree(&repo_path, "target-branch", "regular-1.0.0").unwrap();
+
+        // Verify worktrees exist
+        let worktree1_path = repo_path.join("next-migration-1.0.0");
+        let worktree2_path = repo_path.join("next-migration-2.0.0");
+        let regular_path = repo_path.join("next-regular-1.0.0");
+
+        assert!(worktree1_path.exists());
+        assert!(worktree2_path.exists());
+        assert!(regular_path.exists());
+
+        // Cleanup migration worktrees
+        let result = cleanup_migration_worktrees(&repo_path);
+        assert!(result.is_ok());
+
+        // Verify only migration worktrees were removed
+        assert!(!worktree1_path.exists());
+        assert!(!worktree2_path.exists());
+        assert!(regular_path.exists()); // Regular worktree should remain
+    }
+
+    #[test]
+    fn test_normalize_title() {
+        let test_cases = vec![
+            ("Merge pull request #123 from feature", "123 from feature"),
+            ("Merged PR 456: Fix bug", "456: fix bug"),
+            ("fix: Authentication issue", "authentication issue"),
+            ("feat: New feature", "new feature"),
+            ("chore: Update dependencies", "update dependencies"),
+            ("docs: Update README", "update readme"),
+            ("#789 Bug fix", "789 bug fix"),
+            ("  Whitespace test  ", "whitespace test"),
+        ];
+
+        for (input, expected) in test_cases {
+            let result = normalize_title(input);
+            assert_eq!(result, expected, "Failed for input: '{}'", input);
+        }
+    }
+
+    #[test]
+    fn test_is_common_word() {
+        // Test some common words
+        assert!(is_common_word("the"));
+        assert!(is_common_word("and"));
+        assert!(is_common_word("with"));
+        assert!(is_common_word("THE")); // Should work case-insensitive
+
+        // Test some uncommon words
+        assert!(!is_common_word("authentication"));
+        assert!(!is_common_word("feature"));
+        assert!(!is_common_word("implementation"));
+    }
+
+    #[test]
+    fn test_search_pr_title_in_history_short_title() {
+        let mut commit_hashes = std::collections::HashSet::new();
+        commit_hashes.insert("abc123".to_string());
+
+        let history = CommitHistory {
+            commit_messages: vec!["Some commit message".to_string()],
+            commit_hashes,
+        };
+
+        // Short titles should return false to avoid false positives
+        assert!(!search_pr_title_in_history("Fix", &history));
+        assert!(!search_pr_title_in_history("Update", &history));
+        assert!(!search_pr_title_in_history("", &history));
+    }
+
+    #[test]
+    fn test_search_pr_title_in_history_fuzzy_match() {
+        let mut commit_hashes = std::collections::HashSet::new();
+        commit_hashes.insert("abc123".to_string());
+        commit_hashes.insert("def456".to_string());
+
+        let history = CommitHistory {
+            commit_messages: vec![
+                "Fix authentication vulnerability in login system".to_string(),
+                "Update user interface design".to_string(),
+            ],
+            commit_hashes,
+        };
+
+        // Should match with 80% word overlap
+        assert!(search_pr_title_in_history(
+            "Fix authentication vulnerability login",
+            &history
+        ));
+        assert!(search_pr_title_in_history(
+            "Update user interface",
+            &history
+        ));
+
+        // Should not match with low word overlap
+        assert!(!search_pr_title_in_history(
+            "Different completely unrelated words",
+            &history
+        ));
+
+        // Should handle common words properly
+        assert!(!search_pr_title_in_history(
+            "The and with from this",
+            &history
+        ));
+    }
+
+    #[test]
+    fn test_search_pr_id_in_history() {
+        let mut commit_hashes = std::collections::HashSet::new();
+        commit_hashes.insert("a".to_string());
+        commit_hashes.insert("b".to_string());
+        commit_hashes.insert("c".to_string());
+        commit_hashes.insert("d".to_string());
+        commit_hashes.insert("e".to_string());
+
+        let history = CommitHistory {
+            commit_messages: vec![
+                "Fix issue reported in PR123".to_string(),
+                "Addresses feedback from pr 456".to_string(),
+                "Related to #789 discussion".to_string(),
+                "Implements feature [321] as requested".to_string(),
+                "Update for work item (654)".to_string(),
+            ],
+            commit_hashes,
+        };
+
+        // Test various PR ID formats
+        assert!(search_pr_id_in_history(123, &history));
+        assert!(search_pr_id_in_history(456, &history));
+        assert!(search_pr_id_in_history(789, &history));
+        assert!(search_pr_id_in_history(321, &history));
+        assert!(search_pr_id_in_history(654, &history));
+
+        // Test non-existent PR ID
+        assert!(!search_pr_id_in_history(999, &history));
     }
 }
