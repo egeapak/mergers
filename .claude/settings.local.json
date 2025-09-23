@@ -14,7 +14,14 @@
       "mcp__container-use__environment_config",
       "WebFetch(domain:nexte.st)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(while read f)",
+      "Bash(do if ! grep -q \"#\\[cfg(test)\\]\" \"$f\")",
+      "Bash(then echo \"$f\")",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(open:*)",
+      "Bash(RUST_BACKTRACE=1 cargo test models::tests::test_args_resolve_config_missing_organization -- --nocapture)"
     ],
     "deny": []
   }
