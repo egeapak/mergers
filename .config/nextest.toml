@@ -28,6 +28,9 @@ retries = { backoff = "exponential", count = 3, delay = "2s" }
 # Use all available cores in CI
 test-threads = "num-cpus"
 
+[profile.ci.junit]
+path = "junit.xml"
+
 [profile.dev]
 # Development profile - more verbose output
 failure-output = "immediate-final"
