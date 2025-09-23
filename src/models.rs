@@ -379,6 +379,7 @@ pub struct PRAnalysisResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn create_sample_args() -> Args {
         Args {
@@ -626,11 +627,36 @@ mod tests {
 
     // Negative test cases
     #[test]
-    #[ignore] // Skip this test as it depends on external config files
     fn test_args_resolve_config_missing_organization() {
-        // This test is skipped because it requires isolating config file loading
-        // In real usage, config files provide fallback values, so missing CLI args
-        // don't necessarily result in errors
+        // Create isolated environment with empty config directory
+        let temp_dir = TempDir::new().unwrap();
+
+        // Clear all potential sources of configuration
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            std::env::remove_var("MERGERS_ORGANIZATION");
+            std::env::remove_var("MERGERS_PROJECT");
+            std::env::remove_var("MERGERS_REPOSITORY");
+            std::env::remove_var("MERGERS_PAT");
+        }
+
+        let mut args = create_sample_args();
+        args.organization = None;
+
+        let result = args.resolve_config();
+
+        // Clean up
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("organization is required")
+        );
     }
 
     #[test]
@@ -680,11 +706,31 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Skip this test as it depends on external config files
     fn test_args_resolve_config_missing_pat() {
-        // This test is skipped because it requires isolating config file loading
-        // In real usage, config files provide fallback values, so missing CLI args
-        // don't necessarily result in errors
+        // Create isolated environment with empty config directory
+        let temp_dir = TempDir::new().unwrap();
+
+        // Clear all potential sources of configuration
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+            std::env::remove_var("MERGERS_ORGANIZATION");
+            std::env::remove_var("MERGERS_PROJECT");
+            std::env::remove_var("MERGERS_REPOSITORY");
+            std::env::remove_var("MERGERS_PAT");
+        }
+
+        let mut args = create_sample_args();
+        args.pat = None;
+
+        let result = args.resolve_config();
+
+        // Clean up
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("pat is required"));
     }
 
     #[test]

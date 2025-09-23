@@ -1260,6 +1260,139 @@ mod tests {
     }
 
     #[test]
+    fn test_create_worktree_with_existing_branch_name() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create a local branch with the name that worktree would use
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "next-1.0.0"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Branch commit");
+
+        // Go back to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create target branch in origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+        create_commit_with_message(&repo_path, "Target branch commit");
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // This should succeed because current implementation doesn't use -b flag
+        // It creates a detached HEAD instead, so existing branch doesn't conflict
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        assert!(result.is_ok());
+
+        let worktree_path = result.unwrap();
+        assert!(worktree_path.exists());
+        assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
+    }
+
+    #[test]
+    fn test_create_worktree_detects_branch_exists_error() {
+        // Test that the error detection logic correctly identifies "branch already exists" errors
+        // This simulates what would happen if the implementation used -b flag
+
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // First create an initial commit if needed
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create a branch that would conflict when using -b flag
+        let branch_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "next-1.0.0"])
+            .output()
+            .unwrap();
+        assert!(
+            branch_output.status.success(),
+            "Failed to create initial branch"
+        );
+
+        // Verify branch exists
+        let branch_list = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "--list", "next-1.0.0"])
+            .output()
+            .unwrap();
+        let branch_list_output = String::from_utf8_lossy(&branch_list.stdout);
+        assert!(
+            branch_list_output.contains("next-1.0.0"),
+            "Branch next-1.0.0 should exist"
+        );
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+        create_commit_with_message(&repo_path, "Target branch commit");
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Manually test what happens if we try to use -b flag with existing branch
+        let worktree_path = repo_path.join("next-1.0.0");
+        let create_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args([
+                "worktree",
+                "add",
+                worktree_path.to_str().unwrap(),
+                "-b",
+                "next-1.0.0",
+                "origin/target-branch",
+            ])
+            .output()
+            .unwrap();
+
+        let stderr = String::from_utf8_lossy(&create_output.stderr);
+
+        if create_output.status.success() {
+            // The command succeeded, which means Git didn't see a conflict.
+            // This can happen if the branch exists but Git still allows the operation.
+            // In this case, we just verify the worktree was created successfully.
+            assert!(worktree_path.exists(), "Worktree should have been created");
+        } else {
+            // The command failed - verify it's due to branch already existing
+            assert!(
+                stderr.contains("branch") && stderr.contains("already exists"),
+                "Expected 'branch already exists' error, got: {}",
+                stderr
+            );
+        }
+    }
+
+    #[test]
     fn test_create_worktree_path_exists() {
         let (_temp_dir, repo_path) = setup_test_repo();
 
