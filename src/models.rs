@@ -440,6 +440,17 @@ mod tests {
     }
 
     // Positive test cases
+    /// # Args Parsing with All Flags
+    ///
+    /// Tests parsing of command line arguments with all possible flags set.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args struct with all optional fields populated
+    /// - Validates argument structure and field assignments
+    ///
+    /// ## Expected Outcome
+    /// - All argument fields are correctly assigned
+    /// - Args struct properly represents command line input
     #[test]
     fn test_args_parsing_with_all_flags() {
         let args = create_sample_args();
@@ -454,6 +465,17 @@ mod tests {
         assert!(!args.migrate);
     }
 
+    /// # Shared Config Creation
+    ///
+    /// Tests creation of shared configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates SharedConfig with various field values
+    /// - Validates field assignment and structure
+    ///
+    /// ## Expected Outcome
+    /// - SharedConfig is created with correct field values
+    /// - All required configuration fields are properly set
     #[test]
     fn test_shared_config_creation() {
         let shared = SharedConfig {
@@ -478,6 +500,17 @@ mod tests {
         assert_eq!(shared.max_concurrent_processing, 10);
     }
 
+    /// # Default Config Creation
+    ///
+    /// Tests creation of default mode configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates DefaultModeConfig with required parameters
+    /// - Validates configuration structure and values
+    ///
+    /// ## Expected Outcome
+    /// - DefaultModeConfig is properly created and configured
+    /// - Default mode settings are correctly applied
     #[test]
     fn test_default_config_creation() {
         let default_config = DefaultModeConfig {
@@ -487,6 +520,17 @@ mod tests {
         assert_eq!(default_config.work_item_state, "Done");
     }
 
+    /// # Migration Config Creation
+    ///
+    /// Tests creation of migration mode configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates MigrationModeConfig with terminal states
+    /// - Validates migration-specific configuration
+    ///
+    /// ## Expected Outcome
+    /// - MigrationModeConfig is properly created
+    /// - Migration settings are correctly configured
     #[test]
     fn test_migration_config_creation() {
         let migration_config = MigrationModeConfig {
@@ -496,6 +540,17 @@ mod tests {
         assert_eq!(migration_config.terminal_states, "Closed,Done,Merged");
     }
 
+    /// # App Config Default Mode
+    ///
+    /// Tests AppConfig in default mode configuration.
+    ///
+    /// ## Test Scenario
+    /// - Creates AppConfig::Default variant with shared and default configs
+    /// - Tests mode detection and configuration access
+    ///
+    /// ## Expected Outcome
+    /// - AppConfig correctly identifies as default mode
+    /// - Shared configuration is accessible through the config
     #[test]
     fn test_app_config_default_mode() {
         let shared = SharedConfig {
@@ -525,6 +580,17 @@ mod tests {
         assert_eq!(config.shared().organization, "test-org");
     }
 
+    /// # App Config Migration Mode
+    ///
+    /// Tests AppConfig in migration mode configuration.
+    ///
+    /// ## Test Scenario
+    /// - Creates AppConfig::Migration variant with shared and migration configs
+    /// - Tests mode detection and configuration access
+    ///
+    /// ## Expected Outcome
+    /// - AppConfig correctly identifies as migration mode
+    /// - Migration-specific configuration is properly accessible
     #[test]
     fn test_app_config_migration_mode() {
         let shared = SharedConfig {
@@ -554,6 +620,17 @@ mod tests {
         assert_eq!(config.shared().project, "test-project");
     }
 
+    /// # Pull Request with Work Items Creation
+    ///
+    /// Tests creation of pull request objects with associated work items.
+    ///
+    /// ## Test Scenario
+    /// - Creates PullRequestWithWorkItems with PR and work item data
+    /// - Validates structure and data relationships
+    ///
+    /// ## Expected Outcome
+    /// - PullRequestWithWorkItems is properly created
+    /// - Work items are correctly associated with pull request
     #[test]
     fn test_pull_request_with_work_items_creation() {
         let pr = create_sample_pull_request();
@@ -571,6 +648,17 @@ mod tests {
         assert_eq!(pr_with_work_items.work_items[0].id, 456);
     }
 
+    /// # Cherry Pick Item Creation
+    ///
+    /// Tests creation of cherry pick item objects for migration tracking.
+    ///
+    /// ## Test Scenario
+    /// - Creates CherryPickItem with PR and status information
+    /// - Validates cherry pick tracking structure
+    ///
+    /// ## Expected Outcome
+    /// - CherryPickItem is properly created with correct status
+    /// - Cherry pick tracking data is correctly structured
     #[test]
     fn test_cherry_pick_item_creation() {
         let item = CherryPickItem {
@@ -585,6 +673,17 @@ mod tests {
         assert!(matches!(item.status, CherryPickStatus::Success));
     }
 
+    /// # Manual Overrides Default
+    ///
+    /// Tests default creation of manual override objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates default ManualOverrides instance
+    /// - Validates default state and empty collections
+    ///
+    /// ## Expected Outcome
+    /// - ManualOverrides defaults to empty state
+    /// - All override collections are properly initialized
     #[test]
     fn test_manual_overrides_default() {
         let overrides = ManualOverrides::default();
@@ -593,6 +692,17 @@ mod tests {
         assert!(overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Migration Analysis Creation
+    ///
+    /// Tests creation of migration analysis result objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates MigrationAnalysis with categorized PRs and details
+    /// - Validates analysis structure and data organization
+    ///
+    /// ## Expected Outcome
+    /// - MigrationAnalysis is properly created with all categories
+    /// - Analysis results are correctly structured and accessible
     #[test]
     fn test_migration_analysis_creation() {
         let pr_with_work_items = PullRequestWithWorkItems {
@@ -626,6 +736,17 @@ mod tests {
     }
 
     // Negative test cases
+    /// # Args Resolve Config (Missing Organization)
+    ///
+    /// Tests configuration resolution when organization parameter is missing.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with missing organization field
+    /// - Attempts to resolve configuration
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolution fails with appropriate error
+    /// - Error message indicates missing organization requirement
     #[test]
     fn test_args_resolve_config_missing_organization() {
         // Create isolated environment with empty config directory
@@ -659,6 +780,17 @@ mod tests {
         );
     }
 
+    /// # Args Resolve Config (Missing Project)
+    ///
+    /// Tests configuration resolution when project parameter is missing.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with missing project field
+    /// - Attempts to resolve configuration
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolution fails with appropriate error
+    /// - Error message indicates missing project requirement
     #[test]
     fn test_args_resolve_config_missing_project() {
         // Clear environment variables that might interfere
@@ -682,6 +814,17 @@ mod tests {
         );
     }
 
+    /// # Args Resolve Config (Missing Repository)
+    ///
+    /// Tests configuration resolution when repository parameter is missing.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with missing repository field
+    /// - Attempts to resolve configuration
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolution fails with appropriate error
+    /// - Error message indicates missing repository requirement
     #[test]
     fn test_args_resolve_config_missing_repository() {
         // Clear environment variables that might interfere
@@ -705,6 +848,17 @@ mod tests {
         );
     }
 
+    /// # Args Resolve Config (Missing PAT)
+    ///
+    /// Tests configuration resolution when personal access token is missing.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with missing PAT field
+    /// - Attempts to resolve configuration
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolution fails with appropriate error
+    /// - Error message indicates missing PAT requirement
     #[test]
     fn test_args_resolve_config_missing_pat() {
         // Create isolated environment with empty config directory
@@ -733,6 +887,17 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("pat is required"));
     }
 
+    /// # Args Resolve Config with Defaults
+    ///
+    /// Tests configuration resolution using default values for optional fields.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with required fields and no optional fields
+    /// - Resolves configuration to apply defaults
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolves successfully with default values
+    /// - All optional fields receive appropriate default values
     #[test]
     fn test_args_resolve_config_with_defaults() {
         let mut args = create_sample_args();
@@ -755,6 +920,17 @@ mod tests {
         assert_eq!(config.shared().tag_prefix, "merged-");
     }
 
+    /// # Args Resolve Config (Migration Mode)
+    ///
+    /// Tests configuration resolution in migration mode.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with migrate flag set to true
+    /// - Resolves configuration for migration mode
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolves to migration mode variant
+    /// - Migration-specific settings are properly configured
     #[test]
     fn test_args_resolve_config_migration_mode() {
         let mut args = create_sample_args();
@@ -774,6 +950,17 @@ mod tests {
         }
     }
 
+    /// # Args Resolve Config (Default Mode)
+    ///
+    /// Tests configuration resolution in default mode.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with migrate flag set to false
+    /// - Resolves configuration for default mode
+    ///
+    /// ## Expected Outcome
+    /// - Configuration resolves to default mode variant
+    /// - Default mode settings are properly configured
     #[test]
     fn test_args_resolve_config_default_mode() {
         let mut args = create_sample_args();
@@ -793,6 +980,17 @@ mod tests {
         }
     }
 
+    /// # Cherry Pick Status Variants
+    ///
+    /// Tests all possible cherry pick status enumeration values.
+    ///
+    /// ## Test Scenario
+    /// - Creates instances of all CherryPickStatus variants
+    /// - Validates enum variant creation and representation
+    ///
+    /// ## Expected Outcome
+    /// - All status variants can be created successfully
+    /// - Status enumeration covers all possible states
     #[test]
     fn test_cherry_pick_status_variants() {
         let statuses = [
@@ -815,6 +1013,17 @@ mod tests {
         }
     }
 
+    /// # Work Item History Creation
+    ///
+    /// Tests creation of work item history objects for tracking state changes.
+    ///
+    /// ## Test Scenario
+    /// - Creates WorkItemHistory with revision and state change data
+    /// - Validates history tracking structure and fields
+    ///
+    /// ## Expected Outcome
+    /// - WorkItemHistory is properly created with revision data
+    /// - State change tracking information is correctly structured
     #[test]
     fn test_work_item_history_creation() {
         let history = WorkItemHistory {
@@ -841,6 +1050,17 @@ mod tests {
         }
     }
 
+    /// # Path Precedence Over Local Repo
+    ///
+    /// Tests that path parameter takes precedence over local_repo parameter.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with both path and local_repo fields set
+    /// - Tests precedence rules in configuration resolution
+    ///
+    /// ## Expected Outcome
+    /// - Path parameter takes precedence over local_repo
+    /// - Configuration uses path when both are provided
     #[test]
     fn test_path_precedence_over_local_repo() {
         let mut args = create_sample_args();

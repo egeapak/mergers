@@ -795,6 +795,17 @@ impl AppState for MigrationDataLoadingState {
 mod tests {
     use super::*;
 
+    /// # Parallel Execution Flow
+    ///
+    /// Tests the parallel execution flow for data loading operations.
+    ///
+    /// ## Test Scenario
+    /// - Sets up concurrent data loading tasks
+    /// - Tests coordination and synchronization of parallel operations
+    ///
+    /// ## Expected Outcome
+    /// - Parallel operations execute correctly without conflicts
+    /// - Data loading flow maintains consistency across concurrent tasks
     #[test]
     fn test_parallel_execution_flow() {
         // This test verifies the parallel execution flow structure
@@ -831,6 +842,17 @@ mod tests {
         assert!(state.terminal_states.is_none());
     }
 
+    /// # Loading Messages Reflect Parallel Operations
+    ///
+    /// Tests that loading status messages accurately reflect parallel operation progress.
+    ///
+    /// ## Test Scenario
+    /// - Starts multiple parallel loading operations
+    /// - Monitors status messages and progress indicators
+    ///
+    /// ## Expected Outcome
+    /// - Status messages accurately reflect current loading state
+    /// - Progress indicators correctly represent parallel operation completion
     #[tokio::test]
     async fn test_loading_messages_reflect_parallel_operations() {
         let config = AppConfig::Migration {

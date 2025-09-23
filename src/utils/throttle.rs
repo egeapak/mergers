@@ -70,6 +70,18 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// # Throttling Limits Concurrency
+    ///
+    /// Tests that the throttling mechanism correctly limits concurrent operations.
+    ///
+    /// ## Test Scenario
+    /// - Creates a throttler with a specific concurrency limit
+    /// - Submits multiple concurrent tasks through the throttler
+    /// - Monitors that concurrency never exceeds the defined limit
+    ///
+    /// ## Expected Outcome
+    /// - Concurrent operations are limited to the specified maximum
+    /// - Throttler correctly manages task execution timing
     #[tokio::test]
     async fn test_throttling_limits_concurrency() {
         let throttler = Throttler::new(2); // Max 2 concurrent

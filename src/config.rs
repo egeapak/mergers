@@ -236,6 +236,17 @@ mod tests {
     use std::env;
     use tempfile::TempDir;
 
+    /// # Config Default Values
+    ///
+    /// Tests that the default configuration contains expected values.
+    ///
+    /// ## Test Scenario
+    /// - Creates a default Config instance
+    /// - Validates all default field values
+    ///
+    /// ## Expected Outcome
+    /// - Default values match expected configuration
+    /// - All optional fields have sensible defaults
     #[test]
     fn test_config_default() {
         let config = Config::default();
@@ -254,6 +265,17 @@ mod tests {
         assert_eq!(config.tag_prefix, Some("merged-".to_string()));
     }
 
+    /// # Load Config from Environment Variables (All Set)
+    ///
+    /// Tests loading configuration when all environment variables are present.
+    ///
+    /// ## Test Scenario
+    /// - Sets all possible MERGERS_* environment variables
+    /// - Loads configuration from environment
+    ///
+    /// ## Expected Outcome
+    /// - All environment variables are correctly parsed
+    /// - Configuration reflects all provided environment values
     #[test]
     fn test_load_from_env_all_variables() {
         // Set up environment variables
@@ -348,6 +370,17 @@ mod tests {
         }
     }
 
+    /// # Load Config from Environment Variables (None Set)
+    ///
+    /// Tests loading configuration when no environment variables are set.
+    ///
+    /// ## Test Scenario
+    /// - Clears all relevant environment variables
+    /// - Attempts to load configuration from environment
+    ///
+    /// ## Expected Outcome
+    /// - Returns empty/default configuration
+    /// - No errors occur when environment variables are missing
     #[test]
     fn test_load_from_env_no_variables() {
         // Ensure no relevant env vars are set
@@ -367,6 +400,17 @@ mod tests {
         assert_eq!(config.tag_prefix, None);
     }
 
+    /// # Load Config from Environment (Invalid Numeric Values)
+    ///
+    /// Tests handling of invalid numeric values in environment variables.
+    ///
+    /// ## Test Scenario
+    /// - Sets numeric environment variables to invalid values
+    /// - Attempts to load and parse configuration
+    ///
+    /// ## Expected Outcome
+    /// - Invalid numeric values are handled gracefully
+    /// - Configuration uses defaults for unparseable numbers
     #[test]
     fn test_load_from_env_invalid_numeric_values() {
         unsafe {
@@ -397,6 +441,17 @@ mod tests {
         }
     }
 
+    /// # Config Merge (Other Takes Precedence)
+    ///
+    /// Tests configuration merging where the other config takes precedence.
+    ///
+    /// ## Test Scenario
+    /// - Creates base and override configurations
+    /// - Merges configurations with override taking precedence
+    ///
+    /// ## Expected Outcome
+    /// - Override values replace base values
+    /// - Merge precedence rules are correctly applied
     #[test]
     fn test_config_merge_other_takes_precedence() {
         let base = Config {
@@ -446,6 +501,17 @@ mod tests {
         assert_eq!(merged.tag_prefix, Some("base-".to_string())); // base kept when other is None
     }
 
+    /// # Config Merge (Empty Configurations)
+    ///
+    /// Tests merging behavior with empty configurations.
+    ///
+    /// ## Test Scenario
+    /// - Merges empty configurations together
+    /// - Tests edge cases of merging with no values
+    ///
+    /// ## Expected Outcome
+    /// - Empty merges produce empty results
+    /// - No errors occur when merging empty configurations
     #[test]
     fn test_config_merge_empty_configs() {
         let empty1 = Config {
@@ -494,6 +560,17 @@ mod tests {
         assert_eq!(merged.tag_prefix, None);
     }
 
+    /// # Load Config from File (Valid TOML)
+    ///
+    /// Tests loading configuration from a valid TOML file.
+    ///
+    /// ## Test Scenario
+    /// - Creates a temporary TOML config file with valid content
+    /// - Loads configuration from the file
+    ///
+    /// ## Expected Outcome
+    /// - TOML file is correctly parsed
+    /// - All configuration values are properly loaded
     #[test]
     fn test_load_from_file_valid_toml() {
         let temp_dir = TempDir::new().unwrap();
@@ -556,6 +633,17 @@ tag_prefix = "file-"
         assert_eq!(config.tag_prefix, Some("file-".to_string()));
     }
 
+    /// # Load Config from File (Missing File Returns Default)
+    ///
+    /// Tests behavior when attempting to load from a non-existent config file.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to load configuration from a missing file
+    /// - Tests fallback to default configuration
+    ///
+    /// ## Expected Outcome
+    /// - Missing file doesn't cause errors
+    /// - Default configuration is returned when file is missing
     #[test]
     fn test_load_from_file_missing_file_returns_default() {
         let temp_dir = TempDir::new().unwrap();
@@ -588,6 +676,17 @@ tag_prefix = "file-"
         assert_eq!(config.parallel_limit, default_config.parallel_limit);
     }
 
+    /// # Load Config from File (Invalid TOML)
+    ///
+    /// Tests handling of invalid TOML syntax in configuration files.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with invalid TOML syntax
+    /// - Attempts to load and parse the malformed file
+    ///
+    /// ## Expected Outcome
+    /// - Invalid TOML is handled gracefully
+    /// - Error is returned or default config is used
     #[test]
     fn test_load_from_file_invalid_toml() {
         let temp_dir = TempDir::new().unwrap();
@@ -624,6 +723,17 @@ invalid toml syntax here [
         // Should return error when TOML is invalid
     }
 
+    /// # Detect Config from Git Remote (Error Handling)
+    ///
+    /// Tests git remote detection when git operations fail.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to detect configuration from git remote in invalid context
+    /// - Tests error handling for git command failures
+    ///
+    /// ## Expected Outcome
+    /// - Git errors are handled gracefully
+    /// - Default configuration is returned on git operation failure
     #[test]
     fn test_detect_from_git_remote_returns_default_on_error() {
         // Test with a non-existent path
@@ -636,6 +746,17 @@ invalid toml syntax here [
         assert_eq!(config.organization, None); // Git detection clears some fields
     }
 
+    /// # Create Sample Config File
+    ///
+    /// Tests creation of a sample configuration file.
+    ///
+    /// ## Test Scenario
+    /// - Creates a sample configuration file in a temporary directory
+    /// - Validates file creation and content structure
+    ///
+    /// ## Expected Outcome
+    /// - Sample config file is successfully created
+    /// - File contains expected configuration template
     #[test]
     fn test_create_sample_config_creates_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -670,6 +791,17 @@ invalid toml syntax here [
         assert!(content.contains("dev_branch = \"dev\""));
     }
 
+    /// # Create Sample Config (No Overwrite)
+    ///
+    /// Tests that sample config creation doesn't overwrite existing files.
+    ///
+    /// ## Test Scenario
+    /// - Creates an existing config file
+    /// - Attempts to create sample config in same location
+    ///
+    /// ## Expected Outcome
+    /// - Existing files are not overwritten
+    /// - Safe behavior prevents data loss
     #[test]
     fn test_create_sample_config_does_not_overwrite() {
         let temp_dir = TempDir::new().unwrap();
@@ -704,6 +836,17 @@ invalid toml syntax here [
         assert_eq!(content, "existing content");
     }
 
+    /// # Get Config Path (XDG Config Home)
+    ///
+    /// Tests that configuration path respects XDG_CONFIG_HOME environment variable.
+    ///
+    /// ## Test Scenario
+    /// - Sets XDG_CONFIG_HOME environment variable
+    /// - Gets configuration file path
+    ///
+    /// ## Expected Outcome
+    /// - Configuration path uses XDG_CONFIG_HOME when set
+    /// - Path follows XDG Base Directory specification
     #[test]
     fn test_get_config_path_uses_xdg_config_home() {
         let temp_dir = TempDir::new().unwrap();
@@ -730,6 +873,17 @@ invalid toml syntax here [
         assert_eq!(path, temp_dir.path().join("mergers").join("config.toml"));
     }
 
+    /// # Config Serialization
+    ///
+    /// Tests serialization and deserialization of configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration object with various values
+    /// - Serializes to TOML and deserializes back
+    ///
+    /// ## Expected Outcome
+    /// - Configuration serializes correctly to TOML
+    /// - Deserialized object matches original configuration
     #[test]
     fn test_config_serialization() {
         let config = Config {

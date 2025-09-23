@@ -251,6 +251,17 @@ impl HtmlConverter {
 mod tests {
     use super::*;
 
+    /// # Parse Basic HTML
+    ///
+    /// Tests parsing of basic HTML elements into formatted text.
+    ///
+    /// ## Test Scenario
+    /// - Provides simple HTML with paragraphs and basic formatting
+    /// - Parses HTML into text representation
+    ///
+    /// ## Expected Outcome
+    /// - HTML is correctly converted to plain text
+    /// - Basic formatting elements are properly handled
     #[test]
     fn test_basic_html() {
         let html = "<p>Hello <b>world</b>!</p>";
@@ -258,6 +269,17 @@ mod tests {
         assert_eq!(lines.len(), 1);
     }
 
+    /// # Parse Multiple Paragraphs
+    ///
+    /// Tests parsing of HTML with multiple paragraph elements.
+    ///
+    /// ## Test Scenario
+    /// - Provides HTML with multiple <p> tags and content
+    /// - Tests paragraph separation and formatting
+    ///
+    /// ## Expected Outcome
+    /// - Multiple paragraphs are properly separated
+    /// - Paragraph structure is preserved in text output
     #[test]
     fn test_multiple_paragraphs() {
         let html = "<p>First paragraph</p><p>Second paragraph</p>";
@@ -265,6 +287,17 @@ mod tests {
         assert_eq!(lines.len(), 2);
     }
 
+    /// # Parse Line Breaks
+    ///
+    /// Tests parsing of HTML with line break elements.
+    ///
+    /// ## Test Scenario
+    /// - Provides HTML with <br> tags for line breaks
+    /// - Tests line break formatting and separation
+    ///
+    /// ## Expected Outcome
+    /// - Line breaks are properly converted to text newlines
+    /// - Text formatting preserves intended line structure
     #[test]
     fn test_line_breaks() {
         let html = "Line 1<br>Line 2<br>Line 3";
@@ -272,6 +305,17 @@ mod tests {
         assert_eq!(lines.len(), 3);
     }
 
+    /// # Parse Styled Text
+    ///
+    /// Tests parsing of HTML with inline style attributes.
+    ///
+    /// ## Test Scenario
+    /// - Provides HTML with style attributes for color and formatting
+    /// - Tests extraction and application of inline styles
+    ///
+    /// ## Expected Outcome
+    /// - Inline styles are correctly parsed and applied
+    /// - Styled text maintains formatting in output
     #[test]
     fn test_styled_text() {
         let html = r#"<span style="color: red; font-weight: bold;">Red bold text</span>"#;

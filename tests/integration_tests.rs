@@ -7,6 +7,18 @@ use merge_tool::{AppConfig, Args, AzureDevOpsClient, Config};
 use std::fs;
 use tempfile::TempDir;
 
+/// # Config Loading and Merging Integration
+///
+/// Tests end-to-end configuration loading and merging functionality.
+///
+/// ## Test Scenario
+/// - Tests loading configuration from files and environment
+/// - Validates configuration merging and precedence rules
+/// - Tests default value application
+///
+/// ## Expected Outcome
+/// - Configuration loading works correctly across different sources
+/// - Merging rules are properly applied with correct precedence
 #[test]
 fn test_config_loading_and_merging() {
     // Test that config loading doesn't panic and returns sensible defaults
@@ -37,6 +49,18 @@ fn test_config_loading_and_merging() {
     assert_eq!(merged.dev_branch, Some("dev".to_string())); // Should keep default
 }
 
+/// # API Client Creation Integration
+///
+/// Tests integration of API client creation with configuration.
+///
+/// ## Test Scenario
+/// - Tests Azure DevOps client creation with various parameters
+/// - Validates terminal states parsing functionality
+/// - Tests client configuration and setup
+///
+/// ## Expected Outcome
+/// - API client is correctly created with provided configuration
+/// - Terminal states parsing works with different input formats
 #[test]
 fn test_api_client_creation() {
     // Test that client creation works with valid inputs
@@ -52,6 +76,17 @@ fn test_api_client_creation() {
     assert!(result.is_empty());
 }
 
+/// # Library Version Access
+///
+/// Tests that the library version constant is accessible and valid.
+///
+/// ## Test Scenario
+/// - Accesses the library version constant
+/// - Validates version format and content
+///
+/// ## Expected Outcome
+/// - Version constant is accessible from library API
+/// - Version follows expected format conventions
 #[test]
 fn test_library_version() {
     // Test that version constant is accessible
@@ -60,6 +95,17 @@ fn test_library_version() {
     assert!(version.contains('.'));
 }
 
+/// # Async Client Creation
+///
+/// Tests asynchronous creation of Azure DevOps client.
+///
+/// ## Test Scenario
+/// - Creates Azure DevOps client in async context
+/// - Tests client creation without network calls
+///
+/// ## Expected Outcome
+/// - Client creation succeeds in async environment
+/// - No network errors occur during basic client setup
 #[tokio::test]
 async fn test_client_creation() {
     // This test just creates a client without making network calls
@@ -76,6 +122,18 @@ async fn test_client_creation() {
     assert!(client_result.is_ok());
 }
 
+/// # Args Resolution with Environment Variables
+///
+/// Tests configuration resolution using environment variables.
+///
+/// ## Test Scenario
+/// - Sets up environment variables for configuration
+/// - Resolves Args to configuration using environment sources
+/// - Tests environment variable precedence and parsing
+///
+/// ## Expected Outcome
+/// - Environment variables are correctly parsed into configuration
+/// - Configuration resolution succeeds with environment sources
 #[test]
 fn test_args_resolution_with_env() {
     // Test that Args can resolve configuration from environment variables
@@ -135,6 +193,18 @@ fn test_args_resolution_with_env() {
     }
 }
 
+/// # Args Resolution with Configuration File
+///
+/// Tests configuration resolution using TOML configuration files.
+///
+/// ## Test Scenario
+/// - Creates temporary configuration file with known values
+/// - Resolves Args to configuration using file sources
+/// - Tests file-based configuration parsing
+///
+/// ## Expected Outcome
+/// - Configuration file is correctly parsed
+/// - File-based configuration values are properly applied
 #[test]
 fn test_args_resolution_with_file() {
     // Test that Args can resolve configuration from a config file
@@ -204,6 +274,17 @@ target_branch = "main"
     }
 }
 
+/// # Missing Required Arguments Validation
+///
+/// Tests validation of missing required configuration arguments.
+///
+/// ## Test Scenario
+/// - Attempts configuration resolution with missing required fields
+/// - Tests error handling for incomplete configuration
+///
+/// ## Expected Outcome
+/// - Missing required arguments are properly detected
+/// - Appropriate error messages are generated for missing fields
 #[test]
 fn test_missing_required_args() {
     // Test that Args validation catches missing required arguments
@@ -241,6 +322,17 @@ fn test_missing_required_args() {
     );
 }
 
+/// # Migration Mode Initialization
+///
+/// Tests initialization of the application in migration mode.
+///
+/// ## Test Scenario
+/// - Configures application for migration mode operation
+/// - Tests migration-specific configuration and setup
+///
+/// ## Expected Outcome
+/// - Application correctly initializes in migration mode
+/// - Migration-specific settings are properly configured
 #[test]
 fn test_migration_mode_initialization() {
     // Test migration mode configuration
@@ -299,6 +391,17 @@ fn test_migration_mode_initialization() {
     }
 }
 
+/// # Default Mode Initialization
+///
+/// Tests initialization of the application in default mode.
+///
+/// ## Test Scenario
+/// - Configures application for default mode operation
+/// - Tests default mode configuration and setup
+///
+/// ## Expected Outcome
+/// - Application correctly initializes in default mode
+/// - Default mode settings are properly configured
 #[test]
 fn test_default_mode_initialization() {
     // Test default mode configuration (when migrate flag is false)
@@ -354,6 +457,17 @@ fn test_default_mode_initialization() {
     }
 }
 
+/// # Create Config Flag Functionality
+///
+/// Tests the --create-config flag functionality for generating sample configs.
+///
+/// ## Test Scenario
+/// - Tests sample configuration file creation
+/// - Validates generated configuration content and structure
+///
+/// ## Expected Outcome
+/// - Sample configuration file is successfully created
+/// - Generated config contains expected template content
 #[test]
 fn test_create_config_flag_functionality() {
     // Test the --create-config functionality
@@ -383,6 +497,17 @@ fn test_create_config_flag_functionality() {
     assert!(content.contains("repository"));
 }
 
+/// # CLI Arguments Precedence
+///
+/// Tests that command-line arguments take precedence over other configuration sources.
+///
+/// ## Test Scenario
+/// - Sets up conflicting values in CLI args and environment variables
+/// - Tests configuration resolution with multiple sources
+///
+/// ## Expected Outcome
+/// - CLI arguments take precedence over environment variables
+/// - Configuration precedence rules are correctly applied
 #[test]
 fn test_args_cli_precedence() {
     // Test that CLI args take precedence over env vars
@@ -439,6 +564,18 @@ fn test_args_cli_precedence() {
     }
 }
 
+/// # Client Creation with Resolved Configuration
+///
+/// Tests end-to-end flow from configuration resolution to client creation.
+///
+/// ## Test Scenario
+/// - Resolves configuration from various sources
+/// - Creates Azure DevOps client using resolved configuration
+/// - Tests complete integration workflow
+///
+/// ## Expected Outcome
+/// - Configuration resolves correctly from environment
+/// - Client creation succeeds using resolved configuration values
 #[test]
 fn test_client_creation_with_resolved_config() {
     // Test that a client can be created from resolved config

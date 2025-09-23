@@ -74,6 +74,17 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    /// # Parse Relative Dates
+    ///
+    /// Tests parsing of relative date expressions like "1d", "2w", "3mo".
+    ///
+    /// ## Test Scenario
+    /// - Provides various relative date strings (days, weeks, months)
+    /// - Parses them relative to current time
+    ///
+    /// ## Expected Outcome
+    /// - Relative dates are correctly calculated from current time
+    /// - Different time units (d, w, mo) are properly handled
     #[test]
     fn test_parse_relative_dates() {
         let now = Utc::now();
@@ -95,6 +106,17 @@ mod tests {
         assert!(diff < 1, "3mo parsing should be within 1 minute");
     }
 
+    /// # Parse Absolute Dates
+    ///
+    /// Tests parsing of absolute date strings in ISO format.
+    ///
+    /// ## Test Scenario
+    /// - Provides absolute date strings in various ISO formats
+    /// - Tests both date-only and datetime with timezone formats
+    ///
+    /// ## Expected Outcome
+    /// - Absolute dates are correctly parsed to specific timestamps
+    /// - Different ISO format variations are properly supported
     #[test]
     fn test_parse_absolute_dates() {
         let result = parse_since_date("2025-07-01").unwrap();
@@ -106,6 +128,17 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    /// # Parse Invalid Date Formats
+    ///
+    /// Tests error handling for invalid date format strings.
+    ///
+    /// ## Test Scenario
+    /// - Provides various invalid date format strings
+    /// - Tests parser's rejection of malformed input
+    ///
+    /// ## Expected Outcome
+    /// - Invalid formats are properly rejected with errors
+    /// - Parser doesn't crash on malformed input
     #[test]
     fn test_invalid_formats() {
         assert!(parse_since_date("invalid").is_err());

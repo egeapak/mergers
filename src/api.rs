@@ -475,6 +475,17 @@ mod tests {
         }
     }
 
+    /// # Client Creation with Valid Credentials
+    ///
+    /// Tests that the Azure DevOps client can be created with valid credentials.
+    ///
+    /// ## Test Scenario
+    /// - Provides valid organization, project, repository, and PAT strings
+    /// - Attempts to create a new AzureDevOpsClient instance
+    ///
+    /// ## Expected Outcome
+    /// - Client creation succeeds without errors
+    /// - All provided configuration values are correctly stored in the client
     #[test]
     fn test_client_creation_with_valid_credentials() {
         let result = AzureDevOpsClient::new(
@@ -491,6 +502,17 @@ mod tests {
         assert_eq!(client.repository, "test-repo");
     }
 
+    /// # Fetch Pull Requests Success
+    ///
+    /// Tests successful fetching of pull requests from Azure DevOps API.
+    ///
+    /// ## Test Scenario
+    /// - Mocks a successful API response with sample pull request data
+    /// - Makes an API call to fetch pull requests
+    ///
+    /// ## Expected Outcome
+    /// - API call succeeds and returns properly structured pull request data
+    /// - Response includes expected fields like id, title, closed_date, etc.
     #[tokio::test]
     async fn test_fetch_pull_requests_success() {
         let mut server = Server::new_async().await;
@@ -552,6 +574,17 @@ mod tests {
         assert!(expected_url_pattern.contains("test-repo"));
     }
 
+    /// # Fetch Pull Requests with Since Date Filter
+    ///
+    /// Tests that pull request fetching correctly applies date filtering.
+    ///
+    /// ## Test Scenario
+    /// - Sets up a 'since' date filter parameter
+    /// - Verifies the API request includes the proper date filter
+    ///
+    /// ## Expected Outcome
+    /// - The generated API URL includes the since date parameter
+    /// - Date filtering logic is correctly implemented
     #[tokio::test]
     async fn test_fetch_pull_requests_with_since_date() {
         // Test that since date filtering logic works
@@ -565,6 +598,17 @@ mod tests {
         assert!(parsed_date.is_ok());
     }
 
+    /// # Fetch Pull Requests Pagination Limit
+    ///
+    /// Tests that the pagination limit is correctly set in API requests.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test client and verifies pagination configuration
+    /// - Validates that the request includes proper pagination parameters
+    ///
+    /// ## Expected Outcome
+    /// - Pagination limit is correctly applied to API requests
+    /// - Request includes top parameter for result limiting
     #[tokio::test]
     async fn test_fetch_pull_requests_pagination_limit() {
         let _client = create_test_client("http://localhost");
@@ -591,6 +635,17 @@ mod tests {
         assert_eq!(skip, 500);
     }
 
+    /// # Parse Terminal States
+    ///
+    /// Tests parsing of comma-separated terminal states string.
+    ///
+    /// ## Test Scenario
+    /// - Provides a comma-separated string of terminal states
+    /// - Parses the string into individual state values
+    ///
+    /// ## Expected Outcome
+    /// - String is correctly split into individual terminal states
+    /// - Each state is properly trimmed and formatted
     #[test]
     fn test_parse_terminal_states() {
         let input = "Closed,Next Closed,Next Merged";
@@ -599,6 +654,17 @@ mod tests {
         assert_eq!(result, vec!["Closed", "Next Closed", "Next Merged"]);
     }
 
+    /// # Parse Terminal States with Whitespace
+    ///
+    /// Tests parsing of terminal states with extra whitespace characters.
+    ///
+    /// ## Test Scenario
+    /// - Provides a string with spaces around commas and state names
+    /// - Parses the string and validates whitespace handling
+    ///
+    /// ## Expected Outcome
+    /// - Whitespace is properly trimmed from each terminal state
+    /// - Result contains clean state names without extra spaces
     #[test]
     fn test_parse_terminal_states_with_whitespace() {
         let input = " Closed , Next Closed , Next Merged ";
@@ -607,6 +673,17 @@ mod tests {
         assert_eq!(result, vec!["Closed", "Next Closed", "Next Merged"]);
     }
 
+    /// # Parse Terminal States Empty Input
+    ///
+    /// Tests parsing behavior when given an empty terminal states string.
+    ///
+    /// ## Test Scenario
+    /// - Provides an empty string as input
+    /// - Attempts to parse terminal states
+    ///
+    /// ## Expected Outcome
+    /// - Returns an empty vector without errors
+    /// - Gracefully handles empty input case
     #[test]
     fn test_parse_terminal_states_empty() {
         let input = "";
@@ -615,6 +692,17 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    /// # Check Work Item in Terminal State
+    ///
+    /// Tests detection of work items that are in terminal states.
+    ///
+    /// ## Test Scenario
+    /// - Creates a work item with a state that matches terminal states list
+    /// - Checks if the work item is correctly identified as terminal
+    ///
+    /// ## Expected Outcome
+    /// - Function returns true for work items in terminal states
+    /// - State matching is case-sensitive and exact
     #[test]
     fn test_is_work_item_in_terminal_state() {
         let client = create_test_client("http://localhost");
@@ -637,6 +725,17 @@ mod tests {
         assert!(client.is_work_item_in_terminal_state(&work_item, &terminal_states));
     }
 
+    /// # Check Work Item Not in Terminal State
+    ///
+    /// Tests detection of work items that are NOT in terminal states.
+    ///
+    /// ## Test Scenario
+    /// - Creates a work item with a state that doesn't match terminal states
+    /// - Checks if the work item is correctly identified as non-terminal
+    ///
+    /// ## Expected Outcome
+    /// - Function returns false for work items not in terminal states
+    /// - Active/in-progress states are correctly identified as non-terminal
     #[test]
     fn test_is_work_item_not_in_terminal_state() {
         let client = create_test_client("http://localhost");
@@ -659,6 +758,17 @@ mod tests {
         assert!(!client.is_work_item_in_terminal_state(&work_item, &terminal_states));
     }
 
+    /// # Check Work Item with No State
+    ///
+    /// Tests handling of work items that have no state field defined.
+    ///
+    /// ## Test Scenario
+    /// - Creates a work item with state field set to None
+    /// - Checks terminal state detection for undefined states
+    ///
+    /// ## Expected Outcome
+    /// - Function returns false for work items without defined states
+    /// - Gracefully handles None state values
     #[test]
     fn test_is_work_item_no_state() {
         let client = create_test_client("http://localhost");
@@ -681,6 +791,17 @@ mod tests {
         assert!(!client.is_work_item_in_terminal_state(&work_item, &terminal_states));
     }
 
+    /// # Filter PRs Without Merged Tag
+    ///
+    /// Tests filtering of pull requests to exclude those with merged tags.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with and without merged tags in their labels
+    /// - Applies filter to remove PRs that already have merged tags
+    ///
+    /// ## Expected Outcome
+    /// - PRs with merged tags are excluded from results
+    /// - PRs without merged tags are included in filtered results
     #[test]
     fn test_filter_prs_without_merged_tag() {
         let pr_with_tag = PullRequest {
@@ -716,6 +837,17 @@ mod tests {
         assert_eq!(filtered[0].id, 2);
     }
 
+    /// # Filter PRs with No Labels
+    ///
+    /// Tests filtering behavior for pull requests that have no labels.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR with no labels (labels field is None)
+    /// - Applies the merged tag filter
+    ///
+    /// ## Expected Outcome
+    /// - PRs with no labels are included in filtered results
+    /// - Absence of labels doesn't cause filter to fail
     #[test]
     fn test_filter_prs_no_labels() {
         let pr_no_labels = PullRequest {
@@ -736,6 +868,17 @@ mod tests {
         assert_eq!(filtered[0].id, 1);
     }
 
+    /// # Analyze Work Items - All Terminal
+    ///
+    /// Tests work item analysis when all associated work items are in terminal states.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR with work items that are all in terminal states
+    /// - Analyzes the work item status for the PR
+    ///
+    /// ## Expected Outcome
+    /// - Analysis correctly identifies all work items as terminal
+    /// - Returns true indicating PR is ready for processing
     #[test]
     fn test_analyze_work_items_for_pr_all_terminal() {
         let client = create_test_client("http://localhost");
@@ -777,6 +920,17 @@ mod tests {
         assert!(non_terminal.is_empty());
     }
 
+    /// # Analyze Work Items - Some Non-Terminal
+    ///
+    /// Tests work item analysis when some work items are not in terminal states.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR with mix of terminal and non-terminal work items
+    /// - Analyzes the work item status for the PR
+    ///
+    /// ## Expected Outcome
+    /// - Analysis correctly identifies mixed terminal status
+    /// - Returns false indicating PR is not ready for processing
     #[test]
     fn test_analyze_work_items_for_pr_some_non_terminal() {
         let client = create_test_client("http://localhost");
@@ -833,6 +987,17 @@ mod tests {
         assert_eq!(non_terminal[0].id, 456);
     }
 
+    /// # Analyze Work Items - No Work Items
+    ///
+    /// Tests work item analysis for PRs with no associated work items.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR with an empty work items list
+    /// - Analyzes the work item status for the PR
+    ///
+    /// ## Expected Outcome
+    /// - Analysis handles empty work items list gracefully
+    /// - Returns appropriate result for PRs without work items
     #[test]
     fn test_analyze_work_items_for_pr_no_work_items() {
         let client = create_test_client("http://localhost");
@@ -861,6 +1026,17 @@ mod tests {
     }
 
     // Async function tests
+    /// # Fetch Pull Requests with Pagination Success
+    ///
+    /// Tests successful fetching of pull requests with pagination handling.
+    ///
+    /// ## Test Scenario
+    /// - Mocks paginated API responses with multiple pages of results
+    /// - Tests the client's ability to handle pagination correctly
+    ///
+    /// ## Expected Outcome
+    /// - All pages of results are fetched and combined
+    /// - Pagination logic correctly handles continuation tokens
     #[tokio::test]
     async fn test_fetch_pull_requests_with_pagination_success() {
         let mut server = Server::new_async().await;
@@ -959,6 +1135,17 @@ mod tests {
         assert_eq!(skip, 200);
     }
 
+    /// # Fetch Pull Requests API Failure
+    ///
+    /// Tests handling of API failures when fetching pull requests.
+    ///
+    /// ## Test Scenario
+    /// - Mocks an API server that returns error responses
+    /// - Attempts to fetch pull requests from the failing API
+    ///
+    /// ## Expected Outcome
+    /// - Client correctly handles API error responses
+    /// - Error is propagated appropriately to the caller
     #[tokio::test]
     async fn test_fetch_pull_requests_api_failure() {
         let mut server = Server::new_async().await;
@@ -983,6 +1170,17 @@ mod tests {
         assert_eq!(500, 500);
     }
 
+    /// # Fetch Work Items for PR Success
+    ///
+    /// Tests successful fetching of work items associated with a pull request.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response with work item data
+    /// - Fetches work items for a specific pull request
+    ///
+    /// ## Expected Outcome
+    /// - Work items are successfully retrieved and parsed
+    /// - Response includes all expected work item fields
     #[tokio::test]
     async fn test_fetch_work_items_for_pr_success() {
         let mut server = Server::new_async().await;
@@ -1058,6 +1256,17 @@ mod tests {
         assert!(expected_url.contains("api-version=7.0"));
     }
 
+    /// # Fetch Work Items for PR Empty Response
+    ///
+    /// Tests handling of empty work items response for a pull request.
+    ///
+    /// ## Test Scenario
+    /// - Mocks API response with no work items for a PR
+    /// - Tests client's handling of empty work item lists
+    ///
+    /// ## Expected Outcome
+    /// - Empty response is handled gracefully without errors
+    /// - Returns empty work items list for PRs without work items
     #[tokio::test]
     async fn test_fetch_work_items_for_pr_empty_response() {
         let mut server = Server::new_async().await;
@@ -1084,6 +1293,17 @@ mod tests {
         assert!(empty_work_items.is_empty());
     }
 
+    /// # Add Label to PR Success
+    ///
+    /// Tests successful addition of labels to a pull request.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response for label addition
+    /// - Attempts to add a label to a specific pull request
+    ///
+    /// ## Expected Outcome
+    /// - Label is successfully added to the pull request
+    /// - API call completes without errors
     #[tokio::test]
     async fn test_add_label_to_pr_success() {
         let mut server = Server::new_async().await;
@@ -1114,6 +1334,17 @@ mod tests {
         assert_eq!(label_request.name, "merged-test");
     }
 
+    /// # Add Label to PR Unauthorized
+    ///
+    /// Tests handling of unauthorized responses when adding labels to PRs.
+    ///
+    /// ## Test Scenario
+    /// - Mocks API server returning 401 Unauthorized response
+    /// - Attempts to add a label with insufficient permissions
+    ///
+    /// ## Expected Outcome
+    /// - Client correctly handles unauthorized error responses
+    /// - Appropriate error is returned to the caller
     #[tokio::test]
     async fn test_add_label_to_pr_unauthorized() {
         let mut server = Server::new_async().await;
@@ -1136,6 +1367,17 @@ mod tests {
         assert_eq!(401, 401);
     }
 
+    /// # Update Work Item State Success
+    ///
+    /// Tests successful updating of work item state via Azure DevOps API.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response for state update operation
+    /// - Updates a work item's state to a new value
+    ///
+    /// ## Expected Outcome
+    /// - Work item state is successfully updated
+    /// - API call returns success response
     #[tokio::test]
     async fn test_update_work_item_state_success() {
         let mut server = Server::new_async().await;
@@ -1180,6 +1422,17 @@ mod tests {
         assert_eq!(update.value, "Done");
     }
 
+    /// # Update Work Item State Invalid State
+    ///
+    /// Tests handling of invalid state values when updating work items.
+    ///
+    /// ## Test Scenario
+    /// - Mocks API server returning error for invalid state transition
+    /// - Attempts to update work item to an invalid state
+    ///
+    /// ## Expected Outcome
+    /// - Client correctly handles invalid state error responses
+    /// - Error is properly propagated to indicate invalid state
     #[tokio::test]
     async fn test_update_work_item_state_invalid_state() {
         let mut server = Server::new_async().await;
@@ -1202,6 +1455,17 @@ mod tests {
         assert_eq!(400, 400);
     }
 
+    /// # Fetch PR Commit Success
+    ///
+    /// Tests successful fetching of commit information for a pull request.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response with PR commit data
+    /// - Fetches commit details for a specific pull request
+    ///
+    /// ## Expected Outcome
+    /// - Commit information is successfully retrieved
+    /// - Response includes merge commit details and metadata
     #[tokio::test]
     async fn test_fetch_pr_commit_success() {
         let mut server = Server::new_async().await;
@@ -1238,6 +1502,17 @@ mod tests {
         assert!(expected_url.contains("pullRequests/123"));
     }
 
+    /// # Fetch PR Commit No Merge Commit
+    ///
+    /// Tests handling of PRs that don't have merge commits.
+    ///
+    /// ## Test Scenario
+    /// - Mocks API response for PR without merge commit
+    /// - Tests client's handling of PRs in non-merged state
+    ///
+    /// ## Expected Outcome
+    /// - Client gracefully handles absence of merge commit
+    /// - Returns appropriate response indicating no merge commit
     #[tokio::test]
     async fn test_fetch_pr_commit_no_merge_commit() {
         let mut server = Server::new_async().await;
@@ -1276,6 +1551,17 @@ mod tests {
         assert!(pr.last_merge_commit.is_none());
     }
 
+    /// # Fetch Work Item History Success
+    ///
+    /// Tests successful fetching of work item history and state transitions.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response with work item history data
+    /// - Fetches historical state changes for a work item
+    ///
+    /// ## Expected Outcome
+    /// - Work item history is successfully retrieved
+    /// - Response includes revision history and state transitions
     #[tokio::test]
     async fn test_fetch_work_item_history_success() {
         let mut server = Server::new_async().await;
@@ -1326,6 +1612,17 @@ mod tests {
         assert!(expected_url.contains("workitems/123/updates"));
     }
 
+    /// # Fetch Repository Details Success
+    ///
+    /// Tests successful fetching of Azure DevOps repository details.
+    ///
+    /// ## Test Scenario
+    /// - Mocks successful API response with repository information
+    /// - Fetches repository metadata and configuration
+    ///
+    /// ## Expected Outcome
+    /// - Repository details are successfully retrieved
+    /// - Response includes repository ID, name, and SSH URL
     #[tokio::test]
     async fn test_fetch_repo_details_success() {
         let mut server = Server::new_async().await;
@@ -1355,6 +1652,17 @@ mod tests {
         assert!(expected_url.contains("git/repositories/test-repo"));
     }
 
+    /// # API Timeout Handling
+    ///
+    /// Tests that API client correctly configures request timeouts.
+    ///
+    /// ## Test Scenario
+    /// - Creates HTTP client with specific timeout configuration
+    /// - Validates timeout settings are properly applied
+    ///
+    /// ## Expected Outcome
+    /// - Client is configured with correct timeout values
+    /// - Timeout configuration is properly validated
     #[tokio::test]
     async fn test_api_timeout_handling() {
         let _client = create_test_client("http://localhost");
@@ -1369,6 +1677,17 @@ mod tests {
         assert!(test_client.is_ok());
     }
 
+    /// # Fetch Work Items with History for PR
+    ///
+    /// Tests fetching work items along with their complete history for a PR.
+    ///
+    /// ## Test Scenario
+    /// - Mocks API responses for both work item refs and history data
+    /// - Fetches work items and their historical state changes
+    ///
+    /// ## Expected Outcome
+    /// - Work items are retrieved with complete history information
+    /// - History includes all state transitions and timestamps
     #[tokio::test]
     async fn test_fetch_work_items_with_history_for_pr() {
         let mut server = Server::new_async().await;

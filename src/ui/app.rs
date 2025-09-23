@@ -220,6 +220,17 @@ mod tests {
     use super::*;
     use crate::api::AzureDevOpsClient;
 
+    /// # App Parallel Limit Configuration
+    ///
+    /// Tests that the application correctly configures parallel processing limits.
+    ///
+    /// ## Test Scenario
+    /// - Creates an app instance with specific parallel limit settings
+    /// - Validates that parallel limits are properly applied
+    ///
+    /// ## Expected Outcome
+    /// - Parallel processing limits are correctly configured
+    /// - App respects the specified concurrency constraints
     #[test]
     fn test_app_parallel_limit_configuration() {
         let client = AzureDevOpsClient::new(

@@ -960,6 +960,17 @@ mod tests {
         );
     }
 
+    /// # Get Target Branch History
+    ///
+    /// Tests retrieval of commit history from the target branch.
+    ///
+    /// ## Test Scenario
+    /// - Sets up a test repository with multiple commits
+    /// - Retrieves the commit history from the target branch
+    ///
+    /// ## Expected Outcome
+    /// - All commits in the target branch are retrieved
+    /// - Commit history includes commit IDs and metadata
     #[test]
     fn test_get_target_branch_history() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1006,6 +1017,17 @@ mod tests {
         assert!(!history.commit_hashes.is_empty());
     }
 
+    /// # Check Commit in History
+    ///
+    /// Tests checking whether a specific commit exists in branch history.
+    ///
+    /// ## Test Scenario
+    /// - Creates a repository with known commits
+    /// - Checks for both existing and non-existing commit IDs
+    ///
+    /// ## Expected Outcome
+    /// - Existing commits are correctly identified in history
+    /// - Non-existing commits return false
     #[test]
     fn test_check_commit_in_history() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1029,6 +1051,17 @@ mod tests {
         assert!(!check_commit_in_history("fake_commit_hash", &history));
     }
 
+    /// # Check PR Merged in History (Azure DevOps)
+    ///
+    /// Tests detection of Azure DevOps PR merge patterns in commit history.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with Azure DevOps merge commit patterns
+    /// - Tests PR merge detection using Azure DevOps conventions
+    ///
+    /// ## Expected Outcome
+    /// - Azure DevOps merge patterns are correctly identified
+    /// - PR numbers and merge commits are properly detected
     #[test]
     fn test_check_pr_merged_in_history_azure_devops() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1057,6 +1090,17 @@ mod tests {
         ));
     }
 
+    /// # Check PR Merged in History (GitHub Patterns)
+    ///
+    /// Tests detection of GitHub PR merge patterns in commit history.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with GitHub merge commit patterns
+    /// - Tests PR merge detection using GitHub conventions
+    ///
+    /// ## Expected Outcome
+    /// - GitHub merge patterns are correctly identified
+    /// - Different GitHub merge styles are properly handled
     #[test]
     fn test_check_pr_merged_in_history_github_patterns() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1088,6 +1132,17 @@ mod tests {
         ));
     }
 
+    /// # Check PR Merged in History (Title Search)
+    ///
+    /// Tests detection of PR merges by searching for PR titles in commit messages.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with PR titles embedded in commit messages
+    /// - Tests title-based PR merge detection
+    ///
+    /// ## Expected Outcome
+    /// - PR titles are found in commit message history
+    /// - Title matching is robust and handles variations
     #[test]
     fn test_check_pr_merged_in_history_title_search() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1121,6 +1176,17 @@ mod tests {
         assert!(!check_pr_merged_in_history(456, "Update", &history));
     }
 
+    /// # Check PR Merged in History (ID Search)
+    ///
+    /// Tests detection of PR merges by searching for PR IDs in commit messages.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with PR IDs embedded in commit messages
+    /// - Tests ID-based PR merge detection
+    ///
+    /// ## Expected Outcome
+    /// - PR IDs are found in commit message history
+    /// - ID matching correctly identifies PR numbers
     #[test]
     fn test_check_pr_merged_in_history_id_search() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1140,6 +1206,17 @@ mod tests {
         assert!(check_pr_merged_in_history(321, "Feature title", &history));
     }
 
+    /// # Implementation Consistency
+    ///
+    /// Tests consistency between different PR detection implementations.
+    ///
+    /// ## Test Scenario
+    /// - Runs multiple PR detection methods on the same data
+    /// - Compares results for consistency and accuracy
+    ///
+    /// ## Expected Outcome
+    /// - Different detection methods produce consistent results
+    /// - Implementation variations don't affect core functionality
     #[test]
     fn test_implementation_consistency() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1170,6 +1247,17 @@ mod tests {
         }
     }
 
+    /// # Shallow Clone Repository Success
+    ///
+    /// Tests successful shallow cloning of a Git repository.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to create a shallow clone of a repository
+    /// - Validates that shallow clone operations work correctly
+    ///
+    /// ## Expected Outcome
+    /// - Repository is successfully cloned with limited history
+    /// - Shallow clone reduces storage and time requirements
     #[test]
     fn test_shallow_clone_repo_success() {
         // Skip this test if not in a Git environment that supports cloning
@@ -1182,6 +1270,17 @@ mod tests {
         // For unit testing, we focus on the error handling paths below
     }
 
+    /// # Create Worktree Success
+    ///
+    /// Tests successful creation of Git worktrees for parallel operations.
+    ///
+    /// ## Test Scenario
+    /// - Creates a worktree in a test repository
+    /// - Validates worktree creation and configuration
+    ///
+    /// ## Expected Outcome
+    /// - Worktree is successfully created and accessible
+    /// - Worktree allows independent parallel work
     #[test]
     fn test_create_worktree_success() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -1218,6 +1317,17 @@ mod tests {
         assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
     }
 
+    /// # Create Worktree Branch Exists
+    ///
+    /// Tests worktree creation when the target branch already exists.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to create worktree for an existing branch
+    /// - Tests error handling for branch name conflicts
+    ///
+    /// ## Expected Outcome
+    /// - System handles existing branch names gracefully
+    /// - Appropriate error or alternative solution is provided
     #[test]
     fn test_create_worktree_branch_exists() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -1259,6 +1369,17 @@ mod tests {
         }
     }
 
+    /// # Create Worktree with Existing Branch Name
+    ///
+    /// Tests worktree creation when using an existing branch name.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to create worktree with a branch name that exists
+    /// - Tests conflict resolution and naming strategies
+    ///
+    /// ## Expected Outcome
+    /// - Conflict is resolved through alternative naming or linking
+    /// - Worktree creation succeeds with appropriate branch handling
     #[test]
     fn test_create_worktree_with_existing_branch_name() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -1308,6 +1429,17 @@ mod tests {
         assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
     }
 
+    /// # Create Worktree Detects Branch Exists Error
+    ///
+    /// Tests detection of branch existence errors during worktree creation.
+    ///
+    /// ## Test Scenario
+    /// - Simulates conditions that trigger branch exists errors
+    /// - Tests error detection and classification logic
+    ///
+    /// ## Expected Outcome
+    /// - Branch existence errors are correctly identified
+    /// - Error messages are properly parsed and classified
     #[test]
     fn test_create_worktree_detects_branch_exists_error() {
         // Test that the error detection logic correctly identifies "branch already exists" errors
@@ -1392,6 +1524,17 @@ mod tests {
         }
     }
 
+    /// # Create Worktree Path Exists
+    ///
+    /// Tests worktree creation when the target path already exists.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to create worktree at an existing filesystem path
+    /// - Tests path conflict detection and resolution
+    ///
+    /// ## Expected Outcome
+    /// - Path conflicts are detected and handled appropriately
+    /// - Error handling prevents overwriting existing paths
     #[test]
     fn test_create_worktree_path_exists() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1426,6 +1569,17 @@ mod tests {
         }
     }
 
+    /// # Force Remove Worktree Non-Existent
+    ///
+    /// Tests forced removal of worktrees that don't exist.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to force remove a worktree that doesn't exist
+    /// - Tests error handling for non-existent worktree removal
+    ///
+    /// ## Expected Outcome
+    /// - Non-existent worktree removal is handled gracefully
+    /// - No errors are thrown for missing worktrees
     #[test]
     fn test_force_remove_worktree_non_existent() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1437,6 +1591,17 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// # Force Remove Worktree Success
+    ///
+    /// Tests successful forced removal of existing worktrees.
+    ///
+    /// ## Test Scenario
+    /// - Creates a worktree and then forces its removal
+    /// - Tests cleanup and removal operations
+    ///
+    /// ## Expected Outcome
+    /// - Worktree is successfully removed from filesystem
+    /// - All associated references and files are cleaned up
     #[test]
     fn test_force_remove_worktree_success() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -1475,6 +1640,17 @@ mod tests {
         assert!(!worktree_path.exists());
     }
 
+    /// # Cherry Pick Commit Success
+    ///
+    /// Tests successful cherry-picking of commits between branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits on one branch and cherry-picks to another
+    /// - Tests commit application and conflict-free cherry-picking
+    ///
+    /// ## Expected Outcome
+    /// - Commits are successfully cherry-picked without conflicts
+    /// - Changes are correctly applied to the target branch
     #[test]
     fn test_cherry_pick_commit_success() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1520,6 +1696,17 @@ mod tests {
         );
     }
 
+    /// # Cherry Pick Commit Conflict
+    ///
+    /// Tests cherry-picking behavior when conflicts occur.
+    ///
+    /// ## Test Scenario
+    /// - Creates conflicting changes and attempts cherry-pick
+    /// - Tests conflict detection and handling
+    ///
+    /// ## Expected Outcome
+    /// - Conflicts are properly detected and reported
+    /// - Cherry-pick operation fails gracefully with conflict info
     #[test]
     fn test_cherry_pick_commit_conflict() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -1568,6 +1755,17 @@ mod tests {
         }
     }
 
+    /// # Cleanup Migration Worktrees
+    ///
+    /// Tests cleanup of worktrees created during migration processes.
+    ///
+    /// ## Test Scenario
+    /// - Creates multiple migration worktrees
+    /// - Tests bulk cleanup and removal operations
+    ///
+    /// ## Expected Outcome
+    /// - All migration worktrees are successfully cleaned up
+    /// - Repository is left in clean state after migration
     #[test]
     fn test_cleanup_migration_worktrees() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -1620,6 +1818,17 @@ mod tests {
         assert!(regular_path.exists()); // Regular worktree should remain
     }
 
+    /// # Normalize Title
+    ///
+    /// Tests normalization of PR titles for consistent matching.
+    ///
+    /// ## Test Scenario
+    /// - Provides various PR titles with different formatting
+    /// - Tests title normalization and standardization
+    ///
+    /// ## Expected Outcome
+    /// - Titles are normalized to consistent format
+    /// - Special characters and spacing are handled uniformly
     #[test]
     fn test_normalize_title() {
         let test_cases = vec![
@@ -1639,6 +1848,17 @@ mod tests {
         }
     }
 
+    /// # Check Common Word
+    ///
+    /// Tests identification of common words that should be excluded from matching.
+    ///
+    /// ## Test Scenario
+    /// - Tests various words against common word list
+    /// - Validates filtering of noise words in title matching
+    ///
+    /// ## Expected Outcome
+    /// - Common words are correctly identified and filtered
+    /// - Content words are preserved for meaningful matching
     #[test]
     fn test_is_common_word() {
         // Test some common words
@@ -1653,6 +1873,17 @@ mod tests {
         assert!(!is_common_word("implementation"));
     }
 
+    /// # Search PR Title in History (Short Title)
+    ///
+    /// Tests searching for PR titles with short titles in commit history.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with short PR titles
+    /// - Tests title search functionality with brief titles
+    ///
+    /// ## Expected Outcome
+    /// - Short titles are found despite limited content
+    /// - Search handles edge cases of minimal title content
     #[test]
     fn test_search_pr_title_in_history_short_title() {
         let mut commit_hashes = std::collections::HashSet::new();
@@ -1669,6 +1900,17 @@ mod tests {
         assert!(!search_pr_title_in_history("", &history));
     }
 
+    /// # Search PR Title in History (Fuzzy Match)
+    ///
+    /// Tests fuzzy matching of PR titles in commit history.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with variations of PR titles
+    /// - Tests fuzzy matching algorithms for title detection
+    ///
+    /// ## Expected Outcome
+    /// - Titles with minor variations are successfully matched
+    /// - Fuzzy matching tolerates small differences in wording
     #[test]
     fn test_search_pr_title_in_history_fuzzy_match() {
         let mut commit_hashes = std::collections::HashSet::new();
@@ -1706,6 +1948,17 @@ mod tests {
         ));
     }
 
+    /// # Search PR ID in History
+    ///
+    /// Tests searching for specific PR IDs in commit message history.
+    ///
+    /// ## Test Scenario
+    /// - Creates commits with embedded PR ID references
+    /// - Tests ID-based search functionality
+    ///
+    /// ## Expected Outcome
+    /// - PR IDs are accurately found in commit messages
+    /// - ID search is precise and reliable
     #[test]
     fn test_search_pr_id_in_history() {
         let mut commit_hashes = std::collections::HashSet::new();

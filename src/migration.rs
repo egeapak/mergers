@@ -283,6 +283,17 @@ mod tests {
         }
     }
 
+    /// # Categorize Pull Requests
+    ///
+    /// Tests the main PR categorization logic for migration analysis.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with different work item states and commit statuses
+    /// - Runs categorization algorithm to sort PRs into different buckets
+    ///
+    /// ## Expected Outcome
+    /// - PRs are correctly categorized as eligible, unsure, or not merged
+    /// - Categorization considers both work item states and commit presence
     #[tokio::test]
     async fn test_categorize_prs() {
         let client = AzureDevOpsClient::new(
@@ -327,6 +338,17 @@ mod tests {
         assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Enhanced PR Categorization
+    ///
+    /// Tests enhanced categorization logic with detailed analysis.
+    ///
+    /// ## Test Scenario
+    /// - Creates complex PR scenarios with mixed signals
+    /// - Tests enhanced detection algorithms and reasoning
+    ///
+    /// ## Expected Outcome
+    /// - Enhanced categorization provides detailed reasoning
+    /// - Complex edge cases are handled with appropriate confidence levels
     #[tokio::test]
     async fn test_enhanced_categorization() {
         let client = AzureDevOpsClient::new(
@@ -406,6 +428,17 @@ mod tests {
         assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Handle PRs with No Work Items
+    ///
+    /// Tests categorization behavior for PRs that have no associated work items.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with empty work item lists
+    /// - Tests how categorization handles absence of work items
+    ///
+    /// ## Expected Outcome
+    /// - PRs without work items are handled gracefully
+    /// - Categorization falls back to commit-based analysis
     #[tokio::test]
     async fn test_no_work_items_handling() {
         let client = AzureDevOpsClient::new(
@@ -450,6 +483,17 @@ mod tests {
         assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Work Item Details in Unsure Reasoning
+    ///
+    /// Tests that work item details are included in unsure categorization reasons.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs that result in unsure categorization
+    /// - Validates that detailed work item information is captured
+    ///
+    /// ## Expected Outcome
+    /// - Unsure reasons include specific work item state details
+    /// - Reasoning provides sufficient context for manual review
     #[tokio::test]
     async fn test_work_item_details_in_unsure_reason() {
         let client = AzureDevOpsClient::new(
@@ -499,6 +543,17 @@ mod tests {
         assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Commit in Target Overrides Work Item State
+    ///
+    /// Tests that commit presence in target branch overrides work item state analysis.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs where commit is found in target but work items aren't terminal
+    /// - Tests precedence of commit-based vs work item-based analysis
+    ///
+    /// ## Expected Outcome
+    /// - Commit presence takes priority over work item state
+    /// - PRs are marked as eligible when commit is found regardless of work item state
     #[tokio::test]
     async fn test_commit_in_target_overrides_work_item_state() {
         let client = AzureDevOpsClient::new(
@@ -571,6 +626,17 @@ mod tests {
         assert!(result.manual_overrides.marked_as_not_eligible.is_empty());
     }
 
+    /// # Not Merged Categorization Reasons
+    ///
+    /// Tests generation of detailed reasons for PRs categorized as not merged.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs that clearly haven't been merged
+    /// - Tests reasoning generation for not-merged categorization
+    ///
+    /// ## Expected Outcome
+    /// - Clear reasons are provided for not-merged PRs
+    /// - Reasons help users understand why PRs weren't eligible
     #[tokio::test]
     async fn test_not_merged_reasons() {
         let client = AzureDevOpsClient::new(
@@ -665,6 +731,17 @@ mod tests {
         assert!(unsure_detail.reason.as_ref().unwrap().contains("Unsure"));
     }
 
+    /// # Enhanced PR Detection with Details
+    ///
+    /// Tests enhanced PR detection algorithms with detailed analysis results.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with complex merge scenarios
+    /// - Tests detailed detection logic and result reporting
+    ///
+    /// ## Expected Outcome
+    /// - Enhanced detection provides comprehensive analysis details
+    /// - Results include confidence scores and detailed reasoning
     #[tokio::test]
     async fn test_enhanced_pr_detection_details() {
         let client = AzureDevOpsClient::new(
@@ -770,6 +847,17 @@ mod tests {
         );
     }
 
+    /// # Manual Overrides Functionality
+    ///
+    /// Tests the manual override system for PR categorization.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs that would be categorized automatically
+    /// - Applies manual overrides to change categorization
+    ///
+    /// ## Expected Outcome
+    /// - Manual overrides correctly change PR categorization
+    /// - Override system allows for manual intervention in edge cases
     #[tokio::test]
     async fn test_manual_overrides() {
         let client = AzureDevOpsClient::new(
