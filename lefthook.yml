@@ -5,5 +5,5 @@ pre-commit:
       run: cargo fmt --check
       fail_text: "Please run 'cargo fmt' to format your code"
     clippy:
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings
       fail_text: "Please fix clippy warnings before committing"

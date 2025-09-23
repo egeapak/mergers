@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_cherry_pick_status_variants() {
-        let statuses = vec![
+        let statuses = [
             CherryPickStatus::Pending,
             CherryPickStatus::InProgress,
             CherryPickStatus::Success,

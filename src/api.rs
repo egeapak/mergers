@@ -1350,9 +1350,7 @@ mod tests {
         let _client = create_test_client(&server.url());
 
         // Validate repo details structure
-        let expected_url = format!(
-            "https://dev.azure.com/test-org/test-project/_apis/git/repositories/test-repo?api-version=7.0"
-        );
+        let expected_url = "https://dev.azure.com/test-org/test-project/_apis/git/repositories/test-repo?api-version=7.0".to_string();
 
         assert!(expected_url.contains("git/repositories/test-repo"));
     }
