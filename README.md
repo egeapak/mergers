@@ -1,4 +1,4 @@
-# Merge Tool
+# Mergers
 
 [![CI](https://github.com/egeapak/mergers/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/mergers/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/egeapak/mergers/graph/badge.svg?token=18UOQC3763)](https://codecov.io/github/egeapak/mergers)
@@ -47,7 +47,7 @@ The tool uses the following command-line arguments:
 **Example:**
 
 ```bash
-./target/release/merge-tool \
+./target/release/mergers \
     -o "MyAzureOrg" \
     -p "MyProject" \
     -r "MyRepo" \
@@ -61,7 +61,7 @@ The tool uses the following command-line arguments:
 If you have a local clone of the repository and prefer to use a git worktree:
 
 ```bash
-./target/release/merge-tool \
+./target/release/mergers \
     -o "MyAzureOrg" \
     -p "MyProject" \
     -r "MyRepo" \
@@ -106,13 +106,13 @@ To build the project, you'll need to have Rust and Cargo installed. If you don't
     ```bash
     cargo build --release
     ```
-    The executable will be located at `target/release/merge-tool`.
+    The executable will be located at `target/release/mergers`.
 
     For a debug build:
     ```bash
     cargo build
     ```
-    The executable will be located at `target/debug/merge-tool`.
+    The executable will be located at `target/debug/mergers`.
 
 ## Testing
 

@@ -1,8 +1,8 @@
-# Merge Tool - Claude Assistant Guide
+# Mergers - Claude Assistant Guide
 
 ## Project Overview
 
-**Merge Tool** is a Rust-based CLI/TUI application for managing Azure DevOps pull request merging and migration workflows. The tool provides:
+**Mergers** is a Rust-based CLI/TUI application for managing Azure DevOps pull request merging and migration workflows. The tool provides:
 
 - **Azure DevOps Integration**: Fetches PRs, work items, and manages API interactions
 - **Interactive TUI**: Terminal-based user interface built with `ratatui` for PR selection
@@ -12,7 +12,7 @@
 
 ## Architecture
 
-- **Library Structure**: `src/lib.rs` (library) + `src/bin/merge-tool.rs` (binary)
+- **Library Structure**: `src/lib.rs` (library) + `src/bin/mergers.rs` (binary)
 - **Modular Design**: Clear separation between API, Git, UI, and configuration modules
 - **State Machine**: UI follows state machine pattern for different workflow modes
 - **Async Runtime**: Built on `tokio` with multi-threaded async execution

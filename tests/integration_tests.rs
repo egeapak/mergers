@@ -1,9 +1,9 @@
-//! Integration tests for the merge-tool library
+//! Integration tests for the mergers library
 //!
 //! These tests demonstrate how to use the library APIs and verify
 //! end-to-end functionality.
 
-use merge_tool::{AppConfig, Args, AzureDevOpsClient, Config};
+use mergers::{AppConfig, Args, AzureDevOpsClient, Config};
 use std::fs;
 use tempfile::TempDir;
 
@@ -90,7 +90,7 @@ fn test_api_client_creation() {
 #[test]
 fn test_library_version() {
     // Test that version constant is accessible
-    let version = merge_tool::VERSION;
+    let version = mergers::VERSION;
     assert!(!version.is_empty());
     assert!(version.contains('.'));
 }

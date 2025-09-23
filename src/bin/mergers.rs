@@ -8,7 +8,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 
-use merge_tool::{
+use mergers::{
     AppConfig, Args, AzureDevOpsClient, Config,
     ui::{App, AppConfiguration, run_app, state::create_initial_state},
 };
