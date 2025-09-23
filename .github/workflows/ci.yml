@@ -96,13 +96,8 @@ jobs:
         with:
           key: ${{ matrix.os }}-${{ matrix.rust }}
 
-      - name: Install cargo-nextest (Unix)
-        if: runner.os != 'Windows'
+      - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
-
-      - name: Install cargo-nextest (Windows)
-        if: runner.os == 'Windows'
-        run: winget install nextest.cargo-nextest --accept-package-agreements --accept-source-agreements
 
       - name: Build
         run: cargo build --verbose --all-features
