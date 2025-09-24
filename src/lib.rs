@@ -44,7 +44,10 @@ pub mod utils;
 // Re-export commonly used types for convenience
 pub use api::AzureDevOpsClient;
 pub use config::Config;
-pub use models::{AppConfig, Args, DefaultModeConfig, MigrationModeConfig, SharedConfig};
+pub use models::{
+    AppConfig, Args, Commands, DefaultModeConfig, MergeArgs, MigrateArgs, MigrationModeConfig,
+    SharedArgs, SharedConfig,
+};
 pub use parsed_property::ParsedProperty;
 
 /// Core result type used throughout the library

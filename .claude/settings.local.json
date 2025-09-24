@@ -22,7 +22,8 @@
       "Bash(done)",
       "Bash(open:*)",
       "Bash(RUST_BACKTRACE=1 cargo test models::tests::test_args_resolve_config_missing_organization -- --nocapture)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "WebFetch(domain:docs.rs)"
     ],
     "deny": []
   }

@@ -1,12 +1,12 @@
 use crate::{config::Config, parsed_property::ParsedProperty, utils::parse_since_date};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::{Args as ClapArgs, Parser, Subcommand};
 use serde::Deserialize;
 
-#[derive(Parser, Clone)]
-#[command(author, version, about, long_about = None)]
-pub struct Args {
+/// Shared arguments used by both merge and migrate modes
+#[derive(ClapArgs, Clone)]
+pub struct SharedArgs {
     /// Local repository path (optional positional argument)
     pub path: Option<String>,
 
@@ -38,19 +38,7 @@ pub struct Args {
     #[arg(long)]
     pub local_repo: Option<String>,
 
-    /// Target state for work items after successful merge (default mode only)
-    #[arg(long)]
-    pub work_item_state: Option<String>,
-
-    /// Migration mode - analyze PRs for migration eligibility
-    #[arg(long)]
-    pub migrate: bool,
-
-    /// Terminal work item states (comma-separated, migration mode only)
-    #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
-    pub terminal_states: String,
-
-    /// Tag prefix for PR tagging (both default and migration modes)
+    /// Tag prefix for PR tagging
     #[arg(long, default_value = "merged-")]
     pub tag_prefix: Option<String>,
 
@@ -66,10 +54,6 @@ pub struct Args {
     #[arg(long)]
     pub max_concurrent_processing: Option<usize>,
 
-    /// Create a sample configuration file
-    #[arg(long)]
-    pub create_config: bool,
-
     /// Limit fetching to items created after this date (e.g., "1mo", "2w", "2025-07-01")
     #[arg(long)]
     pub since: Option<String>,
@@ -77,6 +61,45 @@ pub struct Args {
     /// Skip the settings confirmation page and proceed directly
     #[arg(long)]
     pub skip_confirmation: bool,
+}
+
+/// Arguments specific to merge mode
+#[derive(ClapArgs, Clone)]
+pub struct MergeArgs {
+    /// Target state for work items after successful merge
+    #[arg(long)]
+    pub work_item_state: Option<String>,
+}
+
+/// Arguments specific to migration mode
+#[derive(ClapArgs, Clone)]
+pub struct MigrateArgs {
+    /// Terminal work item states (comma-separated)
+    #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
+    pub terminal_states: String,
+}
+
+/// Available commands
+#[derive(Subcommand, Clone)]
+pub enum Commands {
+    /// Merge mode - merge PRs from dev to target branch
+    Merge(MergeArgs),
+    /// Migration mode - analyze PRs for migration eligibility
+    Migrate(MigrateArgs),
+}
+
+#[derive(Parser, Clone)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    /// Create a sample configuration file
+    #[arg(long)]
+    pub create_config: bool,
 }
 
 /// Shared configuration used by both modes
@@ -139,28 +162,30 @@ impl Args {
     /// Resolve configuration from CLI args, environment variables, config file, and git remote
     /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
-        // Convert CLI args to config format (highest priority)
-        // Destructure self before creating cli_config
+        // Destructure self to extract shared args and command
         let Args {
+            shared,
+            command,
+            create_config: _,
+        } = self;
+
+        // Extract values from shared args
+        let SharedArgs {
+            path,
             organization,
             project,
             repository,
             pat,
             dev_branch,
             target_branch,
-            work_item_state,
+            local_repo,
+            tag_prefix,
             parallel_limit,
             max_concurrent_network,
             max_concurrent_processing,
-            tag_prefix,
             since,
             skip_confirmation,
-            migrate,
-            terminal_states,
-            path,
-            local_repo,
-            ..
-        } = self;
+        } = shared;
 
         // Determine local_repo path (positional arg takes precedence over --local-repo flag)
         let local_repo_path = path.or(local_repo);
@@ -188,7 +213,7 @@ impl Args {
             local_repo: local_repo_path
                 .clone()
                 .map(|v| ParsedProperty::Cli(v.clone(), v)),
-            work_item_state: work_item_state.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            work_item_state: None, // Will be set based on command
             parallel_limit: parallel_limit.map(|v| ParsedProperty::Cli(v, v.to_string())),
             max_concurrent_network: max_concurrent_network
                 .map(|v| ParsedProperty::Cli(v, v.to_string())),
@@ -226,7 +251,7 @@ impl Args {
             None
         };
 
-        let shared = SharedConfig {
+        let shared_config = SharedConfig {
             organization,
             project,
             repository,
@@ -248,26 +273,43 @@ impl Args {
             skip_confirmation,
         };
 
-        // Return appropriate configuration based on mode
-        if migrate {
-            // Parse terminal states from CLI
-            let terminal_states_parsed =
-                crate::api::AzureDevOpsClient::parse_terminal_states(&terminal_states);
-            Ok(AppConfig::Migration {
-                shared,
-                migration: MigrationModeConfig {
-                    terminal_states: ParsedProperty::Cli(terminal_states_parsed, terminal_states),
+        // Return appropriate configuration based on command
+        match command {
+            Some(Commands::Migrate(migrate_args)) => {
+                // Parse terminal states from CLI
+                let terminal_states_parsed = crate::api::AzureDevOpsClient::parse_terminal_states(
+                    &migrate_args.terminal_states,
+                );
+                Ok(AppConfig::Migration {
+                    shared: shared_config,
+                    migration: MigrationModeConfig {
+                        terminal_states: ParsedProperty::Cli(
+                            terminal_states_parsed,
+                            migrate_args.terminal_states,
+                        ),
+                    },
+                })
+            }
+            Some(Commands::Merge(merge_args)) => Ok(AppConfig::Default {
+                shared: shared_config,
+                default: DefaultModeConfig {
+                    work_item_state: match merge_args.work_item_state {
+                        Some(state) => ParsedProperty::Cli(state.clone(), state),
+                        None => merged_config
+                            .work_item_state
+                            .unwrap_or_else(|| ParsedProperty::Default("Next Merged".to_string())),
+                    },
                 },
-            })
-        } else {
-            Ok(AppConfig::Default {
-                shared,
+            }),
+            // Default to merge mode if no command is specified (backward compatibility)
+            None => Ok(AppConfig::Default {
+                shared: shared_config,
                 default: DefaultModeConfig {
                     work_item_state: merged_config
                         .work_item_state
                         .unwrap_or_else(|| ParsedProperty::Default("Next Merged".to_string())),
                 },
-            })
+            }),
         }
     }
 }
@@ -422,24 +464,51 @@ mod tests {
 
     fn create_sample_args() -> Args {
         Args {
-            path: Some("/test/repo".to_string()),
-            organization: Some("test-org".to_string()),
-            project: Some("test-project".to_string()),
-            repository: Some("test-repo".to_string()),
-            pat: Some("test-pat".to_string()),
-            dev_branch: Some("dev".to_string()),
-            target_branch: Some("main".to_string()),
-            local_repo: None,
-            work_item_state: Some("Done".to_string()),
-            migrate: false,
-            terminal_states: "Closed,Done".to_string(),
-            tag_prefix: Some("merged-".to_string()),
-            parallel_limit: Some(50),
-            max_concurrent_network: Some(20),
-            max_concurrent_processing: Some(5),
+            shared: SharedArgs {
+                path: Some("/test/repo".to_string()),
+                organization: Some("test-org".to_string()),
+                project: Some("test-project".to_string()),
+                repository: Some("test-repo".to_string()),
+                pat: Some("test-pat".to_string()),
+                dev_branch: Some("dev".to_string()),
+                target_branch: Some("main".to_string()),
+                local_repo: None,
+                tag_prefix: Some("merged-".to_string()),
+                parallel_limit: Some(50),
+                max_concurrent_network: Some(20),
+                max_concurrent_processing: Some(5),
+                since: Some("1w".to_string()),
+                skip_confirmation: true,
+            },
+            command: Some(Commands::Merge(MergeArgs {
+                work_item_state: Some("Done".to_string()),
+            })),
             create_config: false,
-            since: Some("1w".to_string()),
-            skip_confirmation: true,
+        }
+    }
+
+    fn create_sample_migrate_args() -> Args {
+        Args {
+            shared: SharedArgs {
+                path: Some("/test/repo".to_string()),
+                organization: Some("test-org".to_string()),
+                project: Some("test-project".to_string()),
+                repository: Some("test-repo".to_string()),
+                pat: Some("test-pat".to_string()),
+                dev_branch: Some("dev".to_string()),
+                target_branch: Some("main".to_string()),
+                local_repo: None,
+                tag_prefix: Some("merged-".to_string()),
+                parallel_limit: Some(50),
+                max_concurrent_network: Some(20),
+                max_concurrent_processing: Some(5),
+                since: Some("1w".to_string()),
+                skip_confirmation: true,
+            },
+            command: Some(Commands::Migrate(MigrateArgs {
+                terminal_states: "Closed,Done".to_string(),
+            })),
+            create_config: false,
         }
     }
 
@@ -494,14 +563,20 @@ mod tests {
     fn test_args_parsing_with_all_flags() {
         let args = create_sample_args();
 
-        assert_eq!(args.path, Some("/test/repo".to_string()));
-        assert_eq!(args.organization, Some("test-org".to_string()));
-        assert_eq!(args.project, Some("test-project".to_string()));
-        assert_eq!(args.repository, Some("test-repo".to_string()));
-        assert_eq!(args.pat, Some("test-pat".to_string()));
-        assert_eq!(args.parallel_limit, Some(50));
-        assert!(args.skip_confirmation);
-        assert!(!args.migrate);
+        assert_eq!(args.shared.path, Some("/test/repo".to_string()));
+        assert_eq!(args.shared.organization, Some("test-org".to_string()));
+        assert_eq!(args.shared.project, Some("test-project".to_string()));
+        assert_eq!(args.shared.repository, Some("test-repo".to_string()));
+        assert_eq!(args.shared.pat, Some("test-pat".to_string()));
+        assert_eq!(args.shared.parallel_limit, Some(50));
+        assert!(args.shared.skip_confirmation);
+
+        // Check that it's in merge mode
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.work_item_state, Some("Done".to_string()));
+        } else {
+            panic!("Expected merge command");
+        }
     }
 
     /// # Shared Config Creation
@@ -830,7 +905,7 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.organization = None;
+        args.shared.organization = None;
 
         let result = args.resolve_config();
 
@@ -870,7 +945,7 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.project = None;
+        args.shared.project = None;
 
         let result = args.resolve_config();
         assert!(result.is_err());
@@ -904,7 +979,7 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.repository = None;
+        args.shared.repository = None;
 
         let result = args.resolve_config();
         assert!(result.is_err());
@@ -942,7 +1017,7 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.pat = None;
+        args.shared.pat = None;
 
         let result = args.resolve_config();
 
@@ -969,12 +1044,12 @@ mod tests {
     #[test]
     fn test_args_resolve_config_with_defaults() {
         let mut args = create_sample_args();
-        args.dev_branch = None;
-        args.target_branch = None;
-        args.parallel_limit = None;
-        args.max_concurrent_network = None;
-        args.max_concurrent_processing = None;
-        args.tag_prefix = None;
+        args.shared.dev_branch = None;
+        args.shared.target_branch = None;
+        args.shared.parallel_limit = None;
+        args.shared.max_concurrent_network = None;
+        args.shared.max_concurrent_processing = None;
+        args.shared.tag_prefix = None;
 
         let result = args.resolve_config();
         assert!(result.is_ok());
@@ -1016,9 +1091,7 @@ mod tests {
     /// - Migration-specific settings are properly configured
     #[test]
     fn test_args_resolve_config_migration_mode() {
-        let mut args = create_sample_args();
-        args.migrate = true;
-        args.terminal_states = "Closed,Done,Merged".to_string();
+        let args = create_sample_migrate_args();
 
         let result = args.resolve_config();
         assert!(result.is_ok());
@@ -1030,12 +1103,8 @@ mod tests {
             assert_eq!(
                 migration.terminal_states,
                 ParsedProperty::Cli(
-                    vec![
-                        "Closed".to_string(),
-                        "Done".to_string(),
-                        "Merged".to_string()
-                    ],
-                    "Closed,Done,Merged".to_string()
+                    vec!["Closed".to_string(), "Done".to_string(),],
+                    "Closed,Done".to_string()
                 )
             );
         } else {
@@ -1056,9 +1125,7 @@ mod tests {
     /// - Default mode settings are properly configured
     #[test]
     fn test_args_resolve_config_default_mode() {
-        let mut args = create_sample_args();
-        args.migrate = false;
-        args.work_item_state = Some("Custom State".to_string());
+        let args = create_sample_args(); // Already configured for merge mode
 
         let result = args.resolve_config();
         assert!(result.is_ok());
@@ -1069,7 +1136,7 @@ mod tests {
         if let AppConfig::Default { default, .. } = config {
             assert_eq!(
                 default.work_item_state,
-                ParsedProperty::Cli("Custom State".to_string(), "Custom State".to_string())
+                ParsedProperty::Cli("Done".to_string(), "Done".to_string())
             );
         } else {
             panic!("Expected default config");
@@ -1160,8 +1227,8 @@ mod tests {
     #[test]
     fn test_path_precedence_over_local_repo() {
         let mut args = create_sample_args();
-        args.path = Some("/path/from/positional".to_string());
-        args.local_repo = Some("/path/from/flag".to_string());
+        args.shared.path = Some("/path/from/positional".to_string());
+        args.shared.local_repo = Some("/path/from/flag".to_string());
 
         let result = args.resolve_config();
         assert!(result.is_ok());

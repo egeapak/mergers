@@ -3,9 +3,62 @@
 //! These tests demonstrate how to use the library APIs and verify
 //! end-to-end functionality.
 
-use mergers::{AppConfig, Args, AzureDevOpsClient, Config, parsed_property::ParsedProperty};
+use mergers::{
+    AppConfig, Args, AzureDevOpsClient, Commands, Config, MigrateArgs, SharedArgs,
+    parsed_property::ParsedProperty,
+};
 use std::fs;
 use tempfile::TempDir;
+
+/// Helper function to create a default Args struct for testing
+fn create_empty_args() -> Args {
+    Args {
+        shared: SharedArgs {
+            path: None,
+            organization: None,
+            project: None,
+            repository: None,
+            pat: None,
+            dev_branch: None,
+            target_branch: None,
+            local_repo: None,
+            tag_prefix: None,
+            parallel_limit: None,
+            max_concurrent_network: None,
+            max_concurrent_processing: None,
+            since: None,
+            skip_confirmation: false,
+        },
+        command: None, // Default to merge mode if no command
+        create_config: false,
+    }
+}
+
+/// Helper function to create Args with migration mode
+fn create_empty_migrate_args() -> Args {
+    Args {
+        shared: SharedArgs {
+            path: None,
+            organization: None,
+            project: None,
+            repository: None,
+            pat: None,
+            dev_branch: None,
+            target_branch: None,
+            local_repo: None,
+            tag_prefix: None,
+            parallel_limit: None,
+            max_concurrent_network: None,
+            max_concurrent_processing: None,
+            since: None,
+            skip_confirmation: false,
+        },
+        command: Some(Commands::Migrate(MigrateArgs {
+            terminal_states: "Closed,Next Closed,Next Merged".to_string(),
+        })),
+        create_config: false,
+    }
+}
 
 /// # Config Loading and Merging Integration
 ///
@@ -162,26 +215,7 @@ fn test_args_resolution_with_env() {
         std::env::set_var("MERGERS_PARALLEL_LIMIT", "500");
     }
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false,
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_args();
 
     let result = args.resolve_config();
     assert!(result.is_ok());
@@ -261,26 +295,7 @@ target_branch = "main"
         std::env::set_var("XDG_CONFIG_HOME", temp_dir.path());
     }
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false,
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_args();
 
     let result = args.resolve_config();
 
@@ -343,26 +358,7 @@ target_branch = "main"
 fn test_missing_required_args() {
     // Test that Args validation catches missing required arguments
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false,
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_args();
 
     // Without env vars or config file, should fail
     let result = args.resolve_config();
@@ -398,26 +394,7 @@ fn test_migration_mode_initialization() {
         std::env::set_var("MERGERS_PAT", "test-pat");
     }
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: true, // Migration mode
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_migrate_args();
 
     let result = args.resolve_config();
     assert!(result.is_ok());
@@ -479,26 +456,7 @@ fn test_default_mode_initialization() {
         std::env::set_var("MERGERS_PAT", "test-pat");
     }
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false, // Default mode
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_args();
 
     let result = args.resolve_config();
     assert!(result.is_ok());
@@ -598,24 +556,24 @@ fn test_args_cli_precedence() {
     }
 
     let args = Args {
-        organization: Some("cli-org".to_string()),
-        project: Some("cli-project".to_string()),
-        repository: None, // Should use env var
-        pat: None,        // Should use env var
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false,
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: Some(999),
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
+        shared: SharedArgs {
+            organization: Some("cli-org".to_string()),
+            project: Some("cli-project".to_string()),
+            repository: None, // Should use env var
+            pat: None,        // Should use env var
+            dev_branch: None,
+            target_branch: None,
+            local_repo: None,
+            tag_prefix: None,
+            parallel_limit: Some(999),
+            max_concurrent_network: None,
+            max_concurrent_processing: None,
+            path: None,
+            since: None,
+            skip_confirmation: false,
+        },
+        command: None, // Default to merge mode
         create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
     };
 
     let result = args.resolve_config();
@@ -680,26 +638,7 @@ fn test_client_creation_with_resolved_config() {
         std::env::set_var("MERGERS_PAT", "test-pat");
     }
 
-    let args = Args {
-        organization: None,
-        project: None,
-        repository: None,
-        pat: None,
-        dev_branch: None,
-        target_branch: None,
-        local_repo: None,
-        work_item_state: None,
-        migrate: false,
-        terminal_states: "Closed,Next Closed,Next Merged".to_string(),
-        tag_prefix: None,
-        parallel_limit: None,
-        max_concurrent_network: None,
-        max_concurrent_processing: None,
-        create_config: false,
-        since: None,
-        skip_confirmation: false,
-        path: None,
-    };
+    let args = create_empty_args();
 
     let config_result = args.resolve_config();
     assert!(config_result.is_ok());
