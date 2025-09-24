@@ -250,7 +250,7 @@ impl AppState for CompletionState {
 
         let branch_name = format!(
             "patch/{}-{}",
-            app.target_branch,
+            app.target_branch(),
             app.version.as_ref().unwrap()
         );
         summary_text.push(Line::from(vec![
@@ -284,7 +284,7 @@ impl AppState for CompletionState {
         summary_text.push(Line::from("'w' Open work items"));
         summary_text.push(Line::from(format!(
             "'t' Tag PRs & update work items to '{}'",
-            app.work_item_state
+            app.work_item_state()
         )));
         summary_text.push(Line::from("'q' Exit"));
 

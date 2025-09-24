@@ -141,12 +141,12 @@ impl PostCompletionState {
         let result = match &task_item.task {
             PostCompletionTask::TaggingPR { pr_id, .. } => {
                 let version = app.version.as_ref().unwrap();
-                let tag_name = format!("{}{}", app.tag_prefix, version);
+                let tag_name = format!("{}{}", app.tag_prefix(), version);
                 app.client.add_label_to_pr(*pr_id, &tag_name).await
             }
             PostCompletionTask::UpdatingWorkItem { work_item_id, .. } => {
                 app.client
-                    .update_work_item_state(*work_item_id, &app.work_item_state)
+                    .update_work_item_state(*work_item_id, app.work_item_state())
                     .await
             }
         };
@@ -238,7 +238,9 @@ impl AppState for PostCompletionState {
                 } => {
                     format!(
                         "Update WI #{} to '{}': {}",
-                        work_item_id, app.work_item_state, work_item_title
+                        work_item_id,
+                        app.work_item_state(),
+                        work_item_title
                     )
                 }
             };
@@ -281,12 +283,12 @@ impl AppState for PostCompletionState {
                 Line::from(""),
                 Line::from(format!(
                     "✅ PRs tagged with '{}{}' ",
-                    app.tag_prefix,
+                    app.tag_prefix(),
                     app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "✅ Work items updated to '{}'",
-                    app.work_item_state
+                    app.work_item_state()
                 )),
                 Line::from(""),
             ];
@@ -311,12 +313,12 @@ impl AppState for PostCompletionState {
                 Line::from(""),
                 Line::from(format!(
                     "🏷️  Tagging PRs with '{}{}' ",
-                    app.tag_prefix,
+                    app.tag_prefix(),
                     app.version.as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "📝 Updating work items to '{}'",
-                    app.work_item_state
+                    app.work_item_state()
                 )),
                 Line::from(""),
                 Line::from("Press 'q' to exit (tasks will continue in background)"),

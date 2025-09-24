@@ -1,39 +1,14 @@
 use crate::{
     api::AzureDevOpsClient,
-    models::{CherryPickItem, MigrationAnalysis, PullRequestWithWorkItems},
+    models::{AppConfig, CherryPickItem, MigrationAnalysis, PullRequestWithWorkItems},
     ui::state::AppState,
 };
-use std::process::Command;
+use std::{process::Command, sync::Arc};
 use tempfile::TempDir;
 
-#[derive(Debug, Clone)]
-pub struct AppConfiguration {
-    pub organization: String,
-    pub project: String,
-    pub repository: String,
-    pub dev_branch: String,
-    pub target_branch: String,
-    pub local_repo: Option<String>,
-    pub work_item_state: String,
-    pub max_concurrent_network: usize,
-    pub max_concurrent_processing: usize,
-    pub tag_prefix: String,
-    pub since: Option<String>,
-}
-
 pub struct App {
+    pub config: Arc<AppConfig>,
     pub pull_requests: Vec<PullRequestWithWorkItems>,
-    pub organization: String,
-    pub project: String,
-    pub repository: String,
-    pub dev_branch: String,
-    pub target_branch: String,
-    pub local_repo: Option<String>,
-    pub work_item_state: String,
-    pub max_concurrent_network: usize,
-    pub max_concurrent_processing: usize,
-    pub tag_prefix: String,
-    pub since: Option<String>,
     pub client: AzureDevOpsClient,
 
     // Runtime state
@@ -54,22 +29,12 @@ pub struct App {
 impl App {
     pub fn new(
         pull_requests: Vec<PullRequestWithWorkItems>,
-        config: AppConfiguration,
+        config: Arc<AppConfig>,
         client: AzureDevOpsClient,
     ) -> Self {
         Self {
+            config,
             pull_requests,
-            organization: config.organization,
-            project: config.project,
-            repository: config.repository,
-            dev_branch: config.dev_branch,
-            target_branch: config.target_branch,
-            local_repo: config.local_repo,
-            work_item_state: config.work_item_state,
-            max_concurrent_network: config.max_concurrent_network,
-            max_concurrent_processing: config.max_concurrent_processing,
-            tag_prefix: config.tag_prefix,
-            since: config.since,
             client,
             version: None,
             repo_path: None,
@@ -80,6 +45,62 @@ impl App {
             migration_analysis: None,
             initial_state: None,
         }
+    }
+
+    // Configuration getters
+    pub fn organization(&self) -> &str {
+        self.config.shared().organization.value()
+    }
+
+    pub fn project(&self) -> &str {
+        self.config.shared().project.value()
+    }
+
+    pub fn repository(&self) -> &str {
+        self.config.shared().repository.value()
+    }
+
+    pub fn dev_branch(&self) -> &str {
+        self.config.shared().dev_branch.value()
+    }
+
+    pub fn target_branch(&self) -> &str {
+        self.config.shared().target_branch.value()
+    }
+
+    pub fn local_repo(&self) -> Option<&str> {
+        self.config
+            .shared()
+            .local_repo
+            .as_ref()
+            .map(|p| p.value().as_str())
+    }
+
+    pub fn work_item_state(&self) -> &str {
+        match &*self.config {
+            AppConfig::Default { default, .. } => default.work_item_state.value(),
+            AppConfig::Migration { .. } => "Next Merged", // Default fallback for migration mode
+        }
+    }
+
+    pub fn max_concurrent_network(&self) -> usize {
+        *self.config.shared().max_concurrent_network.value()
+    }
+
+    pub fn max_concurrent_processing(&self) -> usize {
+        *self.config.shared().max_concurrent_processing.value()
+    }
+
+    pub fn tag_prefix(&self) -> &str {
+        self.config.shared().tag_prefix.value()
+    }
+
+    pub fn since(&self) -> Option<&str> {
+        self.config
+            .shared()
+            .since
+            .as_ref()
+            .and_then(|d| d.original())
     }
 
     pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
@@ -95,7 +116,10 @@ impl App {
     pub fn open_pr_in_browser(&self, pr_id: i32) {
         let url = format!(
             "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
-            self.organization, self.project, self.repository, pr_id
+            self.organization(),
+            self.project(),
+            self.repository(),
+            pr_id
         );
 
         #[cfg(target_os = "macos")]
@@ -112,7 +136,9 @@ impl App {
         for wi in work_items {
             let url = format!(
                 "https://dev.azure.com/{}/{}/_workitems/edit/{}",
-                self.organization, self.project, wi.id
+                self.organization(),
+                self.project(),
+                wi.id
             );
 
             #[cfg(target_os = "macos")]
@@ -218,7 +244,11 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::AzureDevOpsClient;
+    use crate::{
+        api::AzureDevOpsClient,
+        models::{DefaultModeConfig, SharedConfig},
+        parsed_property::ParsedProperty,
+    };
 
     /// # App Parallel Limit Configuration
     ///
@@ -241,40 +271,48 @@ mod tests {
         )
         .unwrap();
 
-        // Test default configuration
-        let config_default = AppConfiguration {
-            organization: "test_org".to_string(),
-            project: "test_project".to_string(),
-            repository: "test_repo".to_string(),
-            dev_branch: "dev".to_string(),
-            target_branch: "next".to_string(),
+        // Create shared configuration for testing
+        let shared_config = SharedConfig {
+            organization: ParsedProperty::Default("test_org".to_string()),
+            project: ParsedProperty::Default("test_project".to_string()),
+            repository: ParsedProperty::Default("test_repo".to_string()),
+            pat: ParsedProperty::Default("test_pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("next".to_string()),
             local_repo: None,
-            work_item_state: "Next Merged".to_string(),
-            max_concurrent_network: 100,
-            max_concurrent_processing: 10,
-            tag_prefix: "merged-".to_string(),
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
             since: None,
+            skip_confirmation: false,
         };
-        let app_default = App::new(Vec::new(), config_default, client.clone());
-        assert_eq!(app_default.max_concurrent_network, 100);
-        assert_eq!(app_default.max_concurrent_processing, 10);
+
+        // Test default configuration
+        let config_default = AppConfig::Default {
+            shared: shared_config.clone(),
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            },
+        };
+        let app_default = App::new(Vec::new(), Arc::new(config_default), client.clone());
+        assert_eq!(app_default.max_concurrent_network(), 100);
+        assert_eq!(app_default.max_concurrent_processing(), 10);
 
         // Test custom configuration
-        let config_custom = AppConfiguration {
-            organization: "test_org".to_string(),
-            project: "test_project".to_string(),
-            repository: "test_repo".to_string(),
-            dev_branch: "dev".to_string(),
-            target_branch: "next".to_string(),
-            local_repo: None,
-            work_item_state: "Next Merged".to_string(),
-            max_concurrent_network: 150,
-            max_concurrent_processing: 20,
-            tag_prefix: "merged-".to_string(),
-            since: None,
+        let shared_config_custom = SharedConfig {
+            max_concurrent_network: ParsedProperty::Default(150),
+            max_concurrent_processing: ParsedProperty::Default(20),
+            ..shared_config
         };
-        let app_custom = App::new(Vec::new(), config_custom, client);
-        assert_eq!(app_custom.max_concurrent_network, 150);
-        assert_eq!(app_custom.max_concurrent_processing, 20);
+        let config_custom = AppConfig::Default {
+            shared: shared_config_custom,
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            },
+        };
+        let app_custom = App::new(Vec::new(), Arc::new(config_custom), client);
+        assert_eq!(app_custom.max_concurrent_network(), 150);
+        assert_eq!(app_custom.max_concurrent_processing(), 20);
     }
 }

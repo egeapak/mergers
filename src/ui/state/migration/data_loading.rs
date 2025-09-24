@@ -128,8 +128,8 @@ impl MigrationDataLoadingState {
         self.progress = 0.1;
 
         let client = app.client.clone();
-        let dev_branch = app.dev_branch.clone();
-        let since = app.since.clone();
+        let dev_branch = app.dev_branch().to_string();
+        let since = app.since().map(|s| s.to_string());
 
         self.pr_fetch_task = Some(tokio::spawn(async move {
             let prs = client
@@ -282,8 +282,8 @@ impl MigrationDataLoadingState {
 
         // Initialize network processor with configurable network and processing throttling
         self.network_processor = Some(NetworkProcessor::new_with_limits(
-            app.max_concurrent_network,
-            app.max_concurrent_processing,
+            app.max_concurrent_network(),
+            app.max_concurrent_processing(),
         ));
 
         // Start all network tasks in parallel without batching

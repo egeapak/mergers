@@ -196,7 +196,7 @@ impl AppState for MigrationVersionInputState {
                     // Transition to tagging state
                     StateChange::Change(Box::new(super::MigrationTaggingState::new(
                         self.input.trim().to_string(),
-                        app.tag_prefix.clone(),
+                        app.tag_prefix().to_string(),
                     )))
                 } else {
                     StateChange::Keep

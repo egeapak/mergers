@@ -176,7 +176,7 @@ impl AppState for CherryPickState {
 
         let branch_name = format!(
             "patch/{}-{}",
-            app.target_branch,
+            app.target_branch(),
             app.version.as_ref().unwrap()
         );
 
@@ -219,7 +219,7 @@ impl AppState for CherryPickState {
             let repo_path = app.repo_path.as_ref().unwrap();
 
             // Fetch commits if needed (for cloned repositories)
-            if app.local_repo.is_none() {
+            if app.local_repo().is_none() {
                 let commits: Vec<String> = app
                     .cherry_pick_items
                     .iter()

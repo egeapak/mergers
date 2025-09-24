@@ -76,7 +76,7 @@ impl SetupRepoState {
 
     async fn setup_repository(&mut self, app: &mut App) -> StateChange {
         // Get SSH URL if needed
-        let ssh_url = if app.local_repo.is_none() {
+        let ssh_url = if app.local_repo().is_none() {
             self.set_status("Fetching repository details...".to_string());
             match app.client.fetch_repo_details().await {
                 Ok(details) => details.ssh_url,
@@ -91,19 +91,14 @@ impl SetupRepoState {
 
         let version = app.version.as_ref().unwrap();
 
-        self.set_status(if app.local_repo.is_some() {
+        self.set_status(if app.local_repo().is_some() {
             "Creating worktree...".to_string()
         } else {
             "Cloning repository...".to_string()
         });
 
         // Setup repository
-        match git::setup_repository(
-            app.local_repo.as_deref(),
-            &ssh_url,
-            &app.target_branch,
-            version,
-        ) {
+        match git::setup_repository(app.local_repo(), &ssh_url, app.target_branch(), version) {
             Ok(setup) => {
                 match setup {
                     git::RepositorySetup::Local(path) => {
@@ -138,7 +133,7 @@ impl SetupRepoState {
 
                     // Create branch for cherry-picking
                     self.set_status("Creating branch...".to_string());
-                    let branch_name = format!("patch/{}-{}", app.target_branch, version);
+                    let branch_name = format!("patch/{}-{}", app.target_branch(), version);
 
                     if let Err(e) =
                         git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name)
@@ -167,7 +162,7 @@ impl SetupRepoState {
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
                 self.set_status("Force deleting branch...".to_string());
-                if let Some(repo_path) = &app.local_repo
+                if let Some(repo_path) = app.local_repo()
                     && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                 {
@@ -177,7 +172,7 @@ impl SetupRepoState {
             }
             git::RepositorySetupError::WorktreeExists(_) => {
                 self.set_status("Force removing worktree...".to_string());
-                if let Some(repo_path) = &app.local_repo
+                if let Some(repo_path) = app.local_repo()
                     && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {

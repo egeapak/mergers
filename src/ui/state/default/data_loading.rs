@@ -71,7 +71,7 @@ impl DataLoadingState {
         // Fetch pull requests
         let prs = match app
             .client
-            .fetch_pull_requests(&app.dev_branch, app.since.as_deref())
+            .fetch_pull_requests(app.dev_branch(), app.since())
             .await
         {
             Ok(prs) => prs,
@@ -106,8 +106,8 @@ impl DataLoadingState {
         use crate::utils::throttle::NetworkProcessor;
 
         let network_processor = NetworkProcessor::new_with_limits(
-            app.max_concurrent_network,
-            app.max_concurrent_processing,
+            app.max_concurrent_network(),
+            app.max_concurrent_processing(),
         );
         let mut tasks = Vec::new();
 
