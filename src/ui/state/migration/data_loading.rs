@@ -186,10 +186,10 @@ impl MigrationDataLoadingState {
     ) -> Result<RepoSetupResult> {
         // Create client from config
         let client = AzureDevOpsClient::new(
-            config.shared().organization.clone(),
-            config.shared().project.clone(),
-            config.shared().repository.clone(),
-            config.shared().pat.clone(),
+            config.shared().organization.value().clone(),
+            config.shared().project.value().clone(),
+            config.shared().repository.value().clone(),
+            config.shared().pat.value().clone(),
         )
         .context("Failed to create client")?;
 
@@ -202,15 +202,22 @@ impl MigrationDataLoadingState {
         // If using local repo, attempt to clean up any existing migration worktrees
         if let Some(local_repo) = &config.shared().local_repo {
             // Clean up the old hardcoded migration worktree
-            let _ = force_remove_worktree(std::path::Path::new(local_repo), "migration-analysis");
+            let _ = force_remove_worktree(
+                std::path::Path::new(local_repo.value()),
+                "migration-analysis",
+            );
             // Clean up any timestamped migration worktrees from previous runs
-            let _ = cleanup_migration_worktrees(std::path::Path::new(local_repo));
+            let _ = cleanup_migration_worktrees(std::path::Path::new(local_repo.value()));
         }
 
         let repo_setup = setup_repository(
-            config.shared().local_repo.as_deref(),
+            config
+                .shared()
+                .local_repo
+                .as_ref()
+                .map(|p| p.value().as_str()),
             &repo_details.ssh_url,
-            &config.shared().target_branch,
+            config.shared().target_branch.value(),
             &migration_id,
         )
         .context("Failed to setup repository")?;
@@ -222,9 +229,7 @@ impl MigrationDataLoadingState {
 
         // Parse terminal states
         let terminal_states = match &config {
-            AppConfig::Migration { migration, .. } => {
-                AzureDevOpsClient::parse_terminal_states(&migration.terminal_states)
-            }
+            AppConfig::Migration { migration, .. } => migration.terminal_states.value().clone(),
             _ => bail!("Migration mode should have migration config"),
         };
 
@@ -451,10 +456,10 @@ impl MigrationDataLoadingState {
     ) -> Result<crate::models::MigrationAnalysis> {
         // Create client from config
         let client = AzureDevOpsClient::new(
-            config.shared().organization.clone(),
-            config.shared().project.clone(),
-            config.shared().repository.clone(),
-            config.shared().pat.clone(),
+            config.shared().organization.value().clone(),
+            config.shared().project.value().clone(),
+            config.shared().repository.value().clone(),
+            config.shared().pat.value().clone(),
         )
         .context("Failed to create client")?;
 
@@ -482,7 +487,7 @@ impl MigrationDataLoadingState {
 
         // Clean up migration worktree
         if let Some(local_repo) = &config.shared().local_repo {
-            let _ = force_remove_worktree(std::path::Path::new(local_repo), &migration_id);
+            let _ = force_remove_worktree(std::path::Path::new(local_repo.value()), &migration_id);
         }
 
         Ok(analysis)
@@ -811,22 +816,25 @@ mod tests {
         // This test verifies the parallel execution flow structure
         let config = AppConfig::Migration {
             shared: crate::models::SharedConfig {
-                organization: "test".to_string(),
-                project: "test".to_string(),
-                repository: "test".to_string(),
-                pat: "test".to_string(),
-                target_branch: "main".to_string(),
-                dev_branch: "dev".to_string(),
+                organization: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                project: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                repository: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                pat: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                target_branch: crate::parsed_property::ParsedProperty::Default("main".to_string()),
+                dev_branch: crate::parsed_property::ParsedProperty::Default("dev".to_string()),
                 local_repo: None,
-                max_concurrent_network: 5,
-                max_concurrent_processing: 2,
-                parallel_limit: 5,
-                tag_prefix: "merged-".to_string(),
+                max_concurrent_network: crate::parsed_property::ParsedProperty::Default(5),
+                max_concurrent_processing: crate::parsed_property::ParsedProperty::Default(2),
+                parallel_limit: crate::parsed_property::ParsedProperty::Default(5),
+                tag_prefix: crate::parsed_property::ParsedProperty::Default("merged-".to_string()),
                 since: None,
                 skip_confirmation: false,
             },
             migration: crate::models::MigrationModeConfig {
-                terminal_states: "Done,Closed".to_string(),
+                terminal_states: crate::parsed_property::ParsedProperty::Default(vec![
+                    "Done".to_string(),
+                    "Closed".to_string(),
+                ]),
             },
         };
 
@@ -857,22 +865,25 @@ mod tests {
     async fn test_loading_messages_reflect_parallel_operations() {
         let config = AppConfig::Migration {
             shared: crate::models::SharedConfig {
-                organization: "test".to_string(),
-                project: "test".to_string(),
-                repository: "test".to_string(),
-                pat: "test".to_string(),
-                target_branch: "main".to_string(),
-                dev_branch: "dev".to_string(),
+                organization: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                project: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                repository: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                pat: crate::parsed_property::ParsedProperty::Default("test".to_string()),
+                target_branch: crate::parsed_property::ParsedProperty::Default("main".to_string()),
+                dev_branch: crate::parsed_property::ParsedProperty::Default("dev".to_string()),
                 local_repo: None,
-                max_concurrent_network: 5,
-                max_concurrent_processing: 2,
-                parallel_limit: 5,
-                tag_prefix: "merged-".to_string(),
+                max_concurrent_network: crate::parsed_property::ParsedProperty::Default(5),
+                max_concurrent_processing: crate::parsed_property::ParsedProperty::Default(2),
+                parallel_limit: crate::parsed_property::ParsedProperty::Default(5),
+                tag_prefix: crate::parsed_property::ParsedProperty::Default("merged-".to_string()),
                 since: None,
                 skip_confirmation: false,
             },
             migration: crate::models::MigrationModeConfig {
-                terminal_states: "Done,Closed".to_string(),
+                terminal_states: crate::parsed_property::ParsedProperty::Default(vec![
+                    "Done".to_string(),
+                    "Closed".to_string(),
+                ]),
             },
         };
 

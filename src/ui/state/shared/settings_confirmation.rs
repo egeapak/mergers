@@ -1,5 +1,6 @@
 use crate::{
     models::AppConfig,
+    parsed_property::ParsedProperty,
     ui::state::default::DataLoadingState,
     ui::state::migration::MigrationDataLoadingState,
     ui::{
@@ -26,6 +27,102 @@ impl SettingsConfirmationState {
         Self { config }
     }
 
+    fn format_property_with_source<T: std::fmt::Display>(
+        &self,
+        label: &str,
+        property: &ParsedProperty<T>,
+    ) -> Line<'_> {
+        match property {
+            ParsedProperty::Git(value, url) => Line::from(vec![
+                Span::styled(format!("{}: ", label), Style::default()),
+                Span::styled(
+                    value.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    format!(" [from git: {}]", url),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]),
+            ParsedProperty::Env(value, env_var) => Line::from(vec![
+                Span::styled(format!("{}: ", label), Style::default()),
+                Span::styled(
+                    value.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    format!(" [from env: {}]", env_var.split('=').next().unwrap_or("")),
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]),
+            ParsedProperty::File(value, path, _) => Line::from(vec![
+                Span::styled(format!("{}: ", label), Style::default()),
+                Span::styled(
+                    value.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    " [from config file: ",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    format!("{:?}", path),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "]",
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]),
+            ParsedProperty::Cli(value, _) => Line::from(vec![
+                Span::styled(format!("{}: ", label), Style::default()),
+                Span::styled(
+                    value.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    " [from cli]",
+                    Style::default()
+                        .fg(Color::LightBlue)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]),
+            ParsedProperty::Default(value) => Line::from(vec![
+                Span::styled(format!("{}: ", label), Style::default()),
+                Span::styled(
+                    value.to_string(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+                Span::styled(
+                    " [default]",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]),
+        }
+    }
+
     fn create_settings_display(&self) -> Vec<Line<'_>> {
         let mut lines = vec![
             Line::from(""),
@@ -45,6 +142,8 @@ impl SettingsConfirmationState {
             Line::from(""),
         ];
 
+        let shared = self.config.shared();
+
         // Azure DevOps Settings
         lines.push(Line::from(Span::styled(
             "Azure DevOps Settings:",
@@ -53,13 +152,9 @@ impl SettingsConfirmationState {
                 .add_modifier(Modifier::BOLD),
         )));
 
-        let shared = self.config.shared();
-        lines.push(Line::from(format!(
-            "  Organization: {}",
-            shared.organization
-        )));
-        lines.push(Line::from(format!("  Project: {}", shared.project)));
-        lines.push(Line::from(format!("  Repository: {}", shared.repository)));
+        lines.push(self.format_property_with_source("Organization", &shared.organization));
+        lines.push(self.format_property_with_source("Project", &shared.project));
+        lines.push(self.format_property_with_source("Repository", &shared.repository));
         lines.push(Line::from("  PAT: ****hidden****"));
         lines.push(Line::from(""));
 
@@ -70,13 +165,10 @@ impl SettingsConfirmationState {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(format!("  Dev Branch: {}", shared.dev_branch)));
-        lines.push(Line::from(format!(
-            "  Target Branch: {}",
-            shared.target_branch
-        )));
+        lines.push(self.format_property_with_source("Dev Branch", &shared.dev_branch));
+        lines.push(self.format_property_with_source("Target Branch", &shared.target_branch));
         if let Some(ref local_repo) = shared.local_repo {
-            lines.push(Line::from(format!("  Local Repo: {}", local_repo)));
+            lines.push(self.format_property_with_source("Local Repo", local_repo));
         } else {
             lines.push(Line::from("  Local Repo: [None - will clone]"));
         }
@@ -89,21 +181,44 @@ impl SettingsConfirmationState {
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(format!(
-            "  Parallel Limit: {}",
-            shared.parallel_limit
-        )));
-        lines.push(Line::from(format!(
-            "  Max Concurrent Network: {}",
-            shared.max_concurrent_network
-        )));
-        lines.push(Line::from(format!(
-            "  Max Concurrent Processing: {}",
-            shared.max_concurrent_processing
-        )));
-        lines.push(Line::from(format!("  Tag Prefix: {}", shared.tag_prefix)));
+        lines.push(self.format_property_with_source("Parallel Limit", &shared.parallel_limit));
+        lines.push(
+            self.format_property_with_source(
+                "Max Concurrent Network",
+                &shared.max_concurrent_network,
+            ),
+        );
+        lines.push(self.format_property_with_source(
+            "Max Concurrent Processing",
+            &shared.max_concurrent_processing,
+        ));
+        lines.push(self.format_property_with_source("Tag Prefix", &shared.tag_prefix));
+
+        // Special handling for since field showing both original and parsed value
         if let Some(ref since) = shared.since {
-            lines.push(Line::from(format!("  Since: {}", since)));
+            let formatted_date = since.value().format("%Y-%m-%d %H:%M:%S UTC");
+            match since {
+                ParsedProperty::Cli(_, original) => {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Since: ", Style::default()),
+                        Span::styled(original, Style::default()),
+                        Span::styled(" (resolves to: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            formatted_date.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
+                        Span::styled(")", Style::default().fg(Color::Gray)),
+                    ]));
+                }
+                _ => {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Since: ", Style::default()),
+                        Span::styled(formatted_date.to_string(), Style::default().fg(Color::Cyan)),
+                    ]));
+                }
+            }
         }
         lines.push(Line::from(""));
 
@@ -117,16 +232,22 @@ impl SettingsConfirmationState {
 
         match &self.config {
             AppConfig::Default { default, .. } => {
-                lines.push(Line::from(format!(
-                    "  Work Item State: {}",
-                    default.work_item_state
-                )));
+                lines.push(
+                    self.format_property_with_source("Work Item State", &default.work_item_state),
+                );
             }
             AppConfig::Migration { migration, .. } => {
-                lines.push(Line::from(format!(
-                    "  Terminal States: {}",
-                    migration.terminal_states
-                )));
+                // Special handling for terminal states showing both original and parsed
+                let states = format!("[{}]", migration.terminal_states.value().join(", "));
+                lines.push(Line::from(vec![
+                    Span::styled("  Terminal States: ", Style::default()),
+                    Span::styled(
+                        states,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]));
             }
         }
         lines.push(Line::from(""));

@@ -28,10 +28,10 @@ async fn main() -> Result<()> {
 
     // Create Azure DevOps client
     let client = AzureDevOpsClient::new(
-        config.shared().organization.clone(),
-        config.shared().project.clone(),
-        config.shared().repository.clone(),
-        config.shared().pat.clone(),
+        config.shared().organization.value().clone(),
+        config.shared().project.value().clone(),
+        config.shared().repository.value().clone(),
+        config.shared().pat.value().clone(),
     )?;
 
     // Pull requests will be fetched by the appropriate loading state
@@ -46,20 +46,28 @@ async fn main() -> Result<()> {
 
     // Create app configuration
     let app_config = AppConfiguration {
-        organization: config.shared().organization.clone(),
-        project: config.shared().project.clone(),
-        repository: config.shared().repository.clone(),
-        dev_branch: config.shared().dev_branch.clone(),
-        target_branch: config.shared().target_branch.clone(),
-        local_repo: config.shared().local_repo.clone(),
+        organization: config.shared().organization.value().clone(),
+        project: config.shared().project.value().clone(),
+        repository: config.shared().repository.value().clone(),
+        dev_branch: config.shared().dev_branch.value().clone(),
+        target_branch: config.shared().target_branch.value().clone(),
+        local_repo: config
+            .shared()
+            .local_repo
+            .as_ref()
+            .map(|p| p.value().clone()),
         work_item_state: match &config {
-            AppConfig::Default { default, .. } => default.work_item_state.clone(),
+            AppConfig::Default { default, .. } => default.work_item_state.value().clone(),
             AppConfig::Migration { .. } => "Next Merged".to_string(), // Default fallback for migration mode
         },
-        max_concurrent_network: config.shared().max_concurrent_network,
-        max_concurrent_processing: config.shared().max_concurrent_processing,
-        tag_prefix: config.shared().tag_prefix.clone(),
-        since: config.shared().since.clone(),
+        max_concurrent_network: *config.shared().max_concurrent_network.value(),
+        max_concurrent_processing: *config.shared().max_concurrent_processing.value(),
+        tag_prefix: config.shared().tag_prefix.value().clone(),
+        since: config
+            .shared()
+            .since
+            .as_ref()
+            .map(|d| d.original().unwrap_or("").to_string()),
     };
 
     // Create app

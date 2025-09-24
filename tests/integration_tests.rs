@@ -3,7 +3,7 @@
 //! These tests demonstrate how to use the library APIs and verify
 //! end-to-end functionality.
 
-use mergers::{AppConfig, Args, AzureDevOpsClient, Config};
+use mergers::{AppConfig, Args, AzureDevOpsClient, Config, parsed_property::ParsedProperty};
 use std::fs;
 use tempfile::TempDir;
 
@@ -27,26 +27,41 @@ fn test_config_loading_and_merging() {
     // If no config file exists, we get a default config
     // Let's check that the default() function gives us expected values
     let default_config = Config::default();
-    assert_eq!(default_config.dev_branch, Some("dev".to_string()));
-    assert_eq!(default_config.target_branch, Some("next".to_string()));
-    assert_eq!(default_config.parallel_limit, Some(300));
+    assert_eq!(
+        default_config.dev_branch,
+        Some(ParsedProperty::Default("dev".to_string()))
+    );
+    assert_eq!(
+        default_config.target_branch,
+        Some(ParsedProperty::Default("next".to_string()))
+    );
+    assert_eq!(
+        default_config.parallel_limit,
+        Some(ParsedProperty::Default(300))
+    );
 
     // Test environment config
     let _env_config = Config::load_from_env();
 
     // Test merging - create a test config with known values to merge
     let test_config = Config {
-        organization: Some("test-org".to_string()),
-        parallel_limit: Some(500),
+        organization: Some(ParsedProperty::Default("test-org".to_string())),
+        parallel_limit: Some(ParsedProperty::Default(500)),
         ..Config::default()
     };
 
     let merged = default_config.merge(test_config);
 
     // Basic validation that merge works
-    assert_eq!(merged.organization, Some("test-org".to_string()));
-    assert_eq!(merged.parallel_limit, Some(500));
-    assert_eq!(merged.dev_branch, Some("dev".to_string())); // Should keep default
+    assert_eq!(
+        merged.organization,
+        Some(ParsedProperty::Default("test-org".to_string()))
+    );
+    assert_eq!(merged.parallel_limit, Some(ParsedProperty::Default(500)));
+    assert_eq!(
+        merged.dev_branch,
+        Some(ParsedProperty::Default("dev".to_string()))
+    ); // Should keep default
 }
 
 /// # API Client Creation Integration
@@ -174,11 +189,26 @@ fn test_args_resolution_with_env() {
     let config = result.unwrap();
     match config {
         AppConfig::Default { shared, default: _ } => {
-            assert_eq!(shared.organization, "env-org");
-            assert_eq!(shared.project, "env-project");
-            assert_eq!(shared.repository, "env-repo");
-            assert_eq!(shared.pat, "env-pat");
-            assert_eq!(shared.parallel_limit, 500);
+            assert_eq!(
+                shared.organization,
+                ParsedProperty::Env("env-org".to_string(), "env-org".to_string())
+            );
+            assert_eq!(
+                shared.project,
+                ParsedProperty::Env("env-project".to_string(), "env-project".to_string())
+            );
+            assert_eq!(
+                shared.repository,
+                ParsedProperty::Env("env-repo".to_string(), "env-repo".to_string())
+            );
+            assert_eq!(
+                shared.pat,
+                ParsedProperty::Env("env-pat".to_string(), "env-pat".to_string())
+            );
+            assert_eq!(
+                shared.parallel_limit,
+                ParsedProperty::Env(500, "500".to_string())
+            );
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
     }
@@ -264,11 +294,35 @@ target_branch = "main"
     let config = result.unwrap();
     match config {
         AppConfig::Default { shared, default: _ } => {
-            assert_eq!(shared.organization, "file-org");
-            assert_eq!(shared.project, "file-project");
-            assert_eq!(shared.repository, "file-repo");
-            assert_eq!(shared.pat, "file-pat");
-            assert_eq!(shared.parallel_limit, 300); // Uses default value instead of file value
+            assert_eq!(
+                shared.organization,
+                ParsedProperty::File(
+                    "file-org".to_string(),
+                    config_path.clone(),
+                    "file-org".to_string()
+                )
+            );
+            assert_eq!(
+                shared.project,
+                ParsedProperty::File(
+                    "file-project".to_string(),
+                    config_path.clone(),
+                    "file-project".to_string()
+                )
+            );
+            assert_eq!(
+                shared.repository,
+                ParsedProperty::File(
+                    "file-repo".to_string(),
+                    config_path.clone(),
+                    "file-repo".to_string()
+                )
+            );
+            assert_eq!(
+                shared.pat,
+                ParsedProperty::File("file-pat".to_string(), config_path, "file-pat".to_string())
+            );
+            assert_eq!(shared.parallel_limit, ParsedProperty::Default(300)); // Uses default value instead of file value
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
     }
@@ -374,10 +428,22 @@ fn test_migration_mode_initialization() {
             shared,
             migration: _,
         } => {
-            assert_eq!(shared.organization, "test-org");
-            assert_eq!(shared.project, "test-project");
-            assert_eq!(shared.repository, "test-repo");
-            assert_eq!(shared.pat, "test-pat");
+            assert_eq!(
+                shared.organization,
+                ParsedProperty::Env("test-org".to_string(), "test-org".to_string())
+            );
+            assert_eq!(
+                shared.project,
+                ParsedProperty::Env("test-project".to_string(), "test-project".to_string())
+            );
+            assert_eq!(
+                shared.repository,
+                ParsedProperty::Env("test-repo".to_string(), "test-repo".to_string())
+            );
+            assert_eq!(
+                shared.pat,
+                ParsedProperty::Env("test-pat".to_string(), "test-pat".to_string())
+            );
         }
         AppConfig::Default { .. } => panic!("Expected migration mode"),
     }
@@ -440,10 +506,22 @@ fn test_default_mode_initialization() {
     let config = result.unwrap();
     match config {
         AppConfig::Default { shared, default: _ } => {
-            assert_eq!(shared.organization, "test-org");
-            assert_eq!(shared.project, "test-project");
-            assert_eq!(shared.repository, "test-repo");
-            assert_eq!(shared.pat, "test-pat");
+            assert_eq!(
+                shared.organization,
+                ParsedProperty::Env("test-org".to_string(), "test-org".to_string())
+            );
+            assert_eq!(
+                shared.project,
+                ParsedProperty::Env("test-project".to_string(), "test-project".to_string())
+            );
+            assert_eq!(
+                shared.repository,
+                ParsedProperty::Env("test-repo".to_string(), "test-repo".to_string())
+            );
+            assert_eq!(
+                shared.pat,
+                ParsedProperty::Env("test-pat".to_string(), "test-pat".to_string())
+            );
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
     }
@@ -546,11 +624,26 @@ fn test_args_cli_precedence() {
     let config = result.unwrap();
     match config {
         AppConfig::Default { shared, default: _ } => {
-            assert_eq!(shared.organization, "cli-org"); // CLI wins
-            assert_eq!(shared.project, "cli-project"); // CLI wins
-            assert_eq!(shared.repository, "env-repo"); // Fallback to env
-            assert_eq!(shared.pat, "env-pat"); // Fallback to env
-            assert_eq!(shared.parallel_limit, 999); // CLI wins
+            assert_eq!(
+                shared.organization,
+                ParsedProperty::Cli("cli-org".to_string(), "cli-org".to_string())
+            ); // CLI wins
+            assert_eq!(
+                shared.project,
+                ParsedProperty::Cli("cli-project".to_string(), "cli-project".to_string())
+            ); // CLI wins
+            assert_eq!(
+                shared.repository,
+                ParsedProperty::Env("env-repo".to_string(), "env-repo".to_string())
+            ); // Fallback to env
+            assert_eq!(
+                shared.pat,
+                ParsedProperty::Env("env-pat".to_string(), "env-pat".to_string())
+            ); // Fallback to env
+            assert_eq!(
+                shared.parallel_limit,
+                ParsedProperty::Cli(999, "999".to_string())
+            ); // CLI wins
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
     }
@@ -615,10 +708,10 @@ fn test_client_creation_with_resolved_config() {
     let shared = config.shared();
 
     let client_result = AzureDevOpsClient::new(
-        shared.organization.clone(),
-        shared.project.clone(),
-        shared.repository.clone(),
-        shared.pat.clone(),
+        shared.organization.value().clone(),
+        shared.project.value().clone(),
+        shared.repository.value().clone(),
+        shared.pat.value().clone(),
     );
 
     assert!(client_result.is_ok());

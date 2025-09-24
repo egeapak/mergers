@@ -1,5 +1,6 @@
-use crate::config::Config;
-use anyhow::Result;
+use crate::{config::Config, parsed_property::ParsedProperty, utils::parse_since_date};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use serde::Deserialize;
 
@@ -81,31 +82,31 @@ pub struct Args {
 /// Shared configuration used by both modes
 #[derive(Debug, Clone)]
 pub struct SharedConfig {
-    pub organization: String,
-    pub project: String,
-    pub repository: String,
-    pub pat: String,
-    pub dev_branch: String,
-    pub target_branch: String,
-    pub local_repo: Option<String>,
-    pub parallel_limit: usize,
-    pub max_concurrent_network: usize,
-    pub max_concurrent_processing: usize,
-    pub tag_prefix: String,
-    pub since: Option<String>,
+    pub organization: ParsedProperty<String>,
+    pub project: ParsedProperty<String>,
+    pub repository: ParsedProperty<String>,
+    pub pat: ParsedProperty<String>,
+    pub dev_branch: ParsedProperty<String>,
+    pub target_branch: ParsedProperty<String>,
+    pub local_repo: Option<ParsedProperty<String>>,
+    pub parallel_limit: ParsedProperty<usize>,
+    pub max_concurrent_network: ParsedProperty<usize>,
+    pub max_concurrent_processing: ParsedProperty<usize>,
+    pub tag_prefix: ParsedProperty<String>,
+    pub since: Option<ParsedProperty<DateTime<Utc>>>,
     pub skip_confirmation: bool,
 }
 
 /// Configuration specific to default mode
 #[derive(Debug, Clone)]
 pub struct DefaultModeConfig {
-    pub work_item_state: String,
+    pub work_item_state: ParsedProperty<String>,
 }
 
 /// Configuration specific to migration mode
 #[derive(Debug, Clone)]
 pub struct MigrationModeConfig {
-    pub terminal_states: String,
+    pub terminal_states: ParsedProperty<Vec<String>>,
 }
 
 /// Resolved configuration with mode-specific settings
@@ -138,8 +139,31 @@ impl Args {
     /// Resolve configuration from CLI args, environment variables, config file, and git remote
     /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
+        // Convert CLI args to config format (highest priority)
+        // Destructure self before creating cli_config
+        let Args {
+            organization,
+            project,
+            repository,
+            pat,
+            dev_branch,
+            target_branch,
+            work_item_state,
+            parallel_limit,
+            max_concurrent_network,
+            max_concurrent_processing,
+            tag_prefix,
+            since,
+            skip_confirmation,
+            migrate,
+            terminal_states,
+            path,
+            local_repo,
+            ..
+        } = self;
+
         // Determine local_repo path (positional arg takes precedence over --local-repo flag)
-        let local_repo_path = self.path.clone().or(self.local_repo.clone());
+        let local_repo_path = path.or(local_repo);
 
         // Load from config file (lowest priority)
         let file_config = Config::load_from_file()?;
@@ -154,20 +178,23 @@ impl Args {
             Config::default()
         };
 
-        // Convert CLI args to config format (highest priority)
         let cli_config = Config {
-            organization: self.organization.clone(),
-            project: self.project.clone(),
-            repository: self.repository.clone(),
-            pat: self.pat.clone(),
-            dev_branch: self.dev_branch.clone(),
-            target_branch: self.target_branch.clone(),
-            local_repo: local_repo_path.clone(),
-            work_item_state: self.work_item_state.clone(),
-            parallel_limit: self.parallel_limit,
-            max_concurrent_network: self.max_concurrent_network,
-            max_concurrent_processing: self.max_concurrent_processing,
-            tag_prefix: self.tag_prefix.clone(),
+            organization: organization.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            project: project.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            repository: repository.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            pat: pat.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            dev_branch: dev_branch.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            target_branch: target_branch.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            local_repo: local_repo_path
+                .clone()
+                .map(|v| ParsedProperty::Cli(v.clone(), v)),
+            work_item_state: work_item_state.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            parallel_limit: parallel_limit.map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_network: max_concurrent_network
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_processing: max_concurrent_processing
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            tag_prefix: tag_prefix.map(|v| ParsedProperty::Cli(v.clone(), v)),
         };
 
         // Merge configs: file < git_remote < env < cli
@@ -190,6 +217,15 @@ impl Args {
             anyhow::anyhow!("pat is required (use --pat, MERGERS_PAT env var, or config file)")
         })?;
 
+        // Handle since field parsing
+        let since = if let Some(ref since_str) = since {
+            let parsed_date = parse_since_date(since_str)
+                .with_context(|| format!("Failed to parse since date: {}", since_str))?;
+            Some(ParsedProperty::Cli(parsed_date, since_str.clone()))
+        } else {
+            None
+        };
+
         let shared = SharedConfig {
             organization,
             project,
@@ -197,27 +233,30 @@ impl Args {
             pat,
             dev_branch: merged_config
                 .dev_branch
-                .unwrap_or_else(|| "dev".to_string()),
+                .unwrap_or_else(|| "dev".to_string().into()),
             target_branch: merged_config
                 .target_branch
-                .unwrap_or_else(|| "next".to_string()),
-            local_repo: local_repo_path,
-            parallel_limit: merged_config.parallel_limit.unwrap_or(300),
-            max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100),
-            max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10),
+                .unwrap_or_else(|| "next".to_string().into()),
+            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            parallel_limit: merged_config.parallel_limit.unwrap_or(300.into()),
+            max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100.into()),
+            max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10.into()),
             tag_prefix: merged_config
                 .tag_prefix
-                .unwrap_or_else(|| "merged-".to_string()),
-            since: self.since.clone(),
-            skip_confirmation: self.skip_confirmation,
+                .unwrap_or_else(|| "merged-".to_string().into()),
+            since,
+            skip_confirmation,
         };
 
         // Return appropriate configuration based on mode
-        if self.migrate {
+        if migrate {
+            // Parse terminal states from CLI
+            let terminal_states_parsed =
+                crate::api::AzureDevOpsClient::parse_terminal_states(&terminal_states);
             Ok(AppConfig::Migration {
                 shared,
                 migration: MigrationModeConfig {
-                    terminal_states: self.terminal_states,
+                    terminal_states: ParsedProperty::Cli(terminal_states_parsed, terminal_states),
                 },
             })
         } else {
@@ -226,7 +265,7 @@ impl Args {
                 default: DefaultModeConfig {
                     work_item_state: merged_config
                         .work_item_state
-                        .unwrap_or_else(|| "Next Merged".to_string()),
+                        .unwrap_or_else(|| ParsedProperty::Default("Next Merged".to_string())),
                 },
             })
         }
@@ -479,25 +518,31 @@ mod tests {
     #[test]
     fn test_shared_config_creation() {
         let shared = SharedConfig {
-            organization: "test-org".to_string(),
-            project: "test-project".to_string(),
-            repository: "test-repo".to_string(),
-            pat: "test-pat".to_string(),
-            dev_branch: "dev".to_string(),
-            target_branch: "main".to_string(),
-            local_repo: Some("/test/repo".to_string()),
-            parallel_limit: 300,
-            max_concurrent_network: 100,
-            max_concurrent_processing: 10,
-            tag_prefix: "merged-".to_string(),
-            since: Some("1w".to_string()),
+            organization: ParsedProperty::Default("test-org".to_string()),
+            project: ParsedProperty::Default("test-project".to_string()),
+            repository: ParsedProperty::Default("test-repo".to_string()),
+            pat: ParsedProperty::Default("test-pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
+            local_repo: Some(ParsedProperty::Default("/test/repo".to_string())),
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
+            since: None,
             skip_confirmation: false,
         };
 
-        assert_eq!(shared.organization, "test-org");
-        assert_eq!(shared.parallel_limit, 300);
-        assert_eq!(shared.max_concurrent_network, 100);
-        assert_eq!(shared.max_concurrent_processing, 10);
+        assert_eq!(
+            shared.organization,
+            ParsedProperty::Default("test-org".to_string())
+        );
+        assert_eq!(shared.parallel_limit, ParsedProperty::Default(300));
+        assert_eq!(shared.max_concurrent_network, ParsedProperty::Default(100));
+        assert_eq!(
+            shared.max_concurrent_processing,
+            ParsedProperty::Default(10)
+        );
     }
 
     /// # Default Config Creation
@@ -514,10 +559,13 @@ mod tests {
     #[test]
     fn test_default_config_creation() {
         let default_config = DefaultModeConfig {
-            work_item_state: "Done".to_string(),
+            work_item_state: ParsedProperty::Default("Done".to_string()),
         };
 
-        assert_eq!(default_config.work_item_state, "Done");
+        assert_eq!(
+            default_config.work_item_state,
+            ParsedProperty::Default("Done".to_string())
+        );
     }
 
     /// # Migration Config Creation
@@ -534,10 +582,21 @@ mod tests {
     #[test]
     fn test_migration_config_creation() {
         let migration_config = MigrationModeConfig {
-            terminal_states: "Closed,Done,Merged".to_string(),
+            terminal_states: ParsedProperty::Default(vec![
+                "Closed".to_string(),
+                "Done".to_string(),
+                "Merged".to_string(),
+            ]),
         };
 
-        assert_eq!(migration_config.terminal_states, "Closed,Done,Merged");
+        assert_eq!(
+            migration_config.terminal_states,
+            ParsedProperty::Default(vec![
+                "Closed".to_string(),
+                "Done".to_string(),
+                "Merged".to_string()
+            ])
+        );
     }
 
     /// # App Config Default Mode
@@ -554,17 +613,17 @@ mod tests {
     #[test]
     fn test_app_config_default_mode() {
         let shared = SharedConfig {
-            organization: "test-org".to_string(),
-            project: "test-project".to_string(),
-            repository: "test-repo".to_string(),
-            pat: "test-pat".to_string(),
-            dev_branch: "dev".to_string(),
-            target_branch: "main".to_string(),
+            organization: ParsedProperty::Default("test-org".to_string()),
+            project: ParsedProperty::Default("test-project".to_string()),
+            repository: ParsedProperty::Default("test-repo".to_string()),
+            pat: ParsedProperty::Default("test-pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
             local_repo: None,
-            parallel_limit: 300,
-            max_concurrent_network: 100,
-            max_concurrent_processing: 10,
-            tag_prefix: "merged-".to_string(),
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
             since: None,
             skip_confirmation: false,
         };
@@ -572,12 +631,15 @@ mod tests {
         let config = AppConfig::Default {
             shared: shared.clone(),
             default: DefaultModeConfig {
-                work_item_state: "Done".to_string(),
+                work_item_state: ParsedProperty::Default("Done".to_string()),
             },
         };
 
         assert!(!config.is_migration_mode());
-        assert_eq!(config.shared().organization, "test-org");
+        assert_eq!(
+            config.shared().organization,
+            ParsedProperty::Default("test-org".to_string())
+        );
     }
 
     /// # App Config Migration Mode
@@ -594,17 +656,17 @@ mod tests {
     #[test]
     fn test_app_config_migration_mode() {
         let shared = SharedConfig {
-            organization: "test-org".to_string(),
-            project: "test-project".to_string(),
-            repository: "test-repo".to_string(),
-            pat: "test-pat".to_string(),
-            dev_branch: "dev".to_string(),
-            target_branch: "main".to_string(),
+            organization: ParsedProperty::Default("test-org".to_string()),
+            project: ParsedProperty::Default("test-project".to_string()),
+            repository: ParsedProperty::Default("test-repo".to_string()),
+            pat: ParsedProperty::Default("test-pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
             local_repo: None,
-            parallel_limit: 300,
-            max_concurrent_network: 100,
-            max_concurrent_processing: 10,
-            tag_prefix: "merged-".to_string(),
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
             since: None,
             skip_confirmation: false,
         };
@@ -612,12 +674,18 @@ mod tests {
         let config = AppConfig::Migration {
             shared: shared.clone(),
             migration: MigrationModeConfig {
-                terminal_states: "Closed,Done".to_string(),
+                terminal_states: ParsedProperty::Default(vec![
+                    "Closed".to_string(),
+                    "Done".to_string(),
+                ]),
             },
         };
 
         assert!(config.is_migration_mode());
-        assert_eq!(config.shared().project, "test-project");
+        assert_eq!(
+            config.shared().project,
+            ParsedProperty::Default("test-project".to_string())
+        );
     }
 
     /// # Pull Request with Work Items Creation
@@ -912,12 +980,27 @@ mod tests {
         assert!(result.is_ok());
 
         let config = result.unwrap();
-        assert_eq!(config.shared().dev_branch, "dev");
-        assert_eq!(config.shared().target_branch, "next");
-        assert_eq!(config.shared().parallel_limit, 300);
-        assert_eq!(config.shared().max_concurrent_network, 100);
-        assert_eq!(config.shared().max_concurrent_processing, 10);
-        assert_eq!(config.shared().tag_prefix, "merged-");
+        assert_eq!(
+            config.shared().dev_branch,
+            ParsedProperty::Default("dev".to_string())
+        );
+        assert_eq!(
+            config.shared().target_branch,
+            ParsedProperty::Default("next".to_string())
+        );
+        assert_eq!(config.shared().parallel_limit, ParsedProperty::Default(300));
+        assert_eq!(
+            config.shared().max_concurrent_network,
+            ParsedProperty::Default(100)
+        );
+        assert_eq!(
+            config.shared().max_concurrent_processing,
+            ParsedProperty::Default(10)
+        );
+        assert_eq!(
+            config.shared().tag_prefix,
+            ParsedProperty::Default("merged-".to_string())
+        );
     }
 
     /// # Args Resolve Config (Migration Mode)
@@ -944,7 +1027,17 @@ mod tests {
         assert!(config.is_migration_mode());
 
         if let AppConfig::Migration { migration, .. } = config {
-            assert_eq!(migration.terminal_states, "Closed,Done,Merged");
+            assert_eq!(
+                migration.terminal_states,
+                ParsedProperty::Cli(
+                    vec![
+                        "Closed".to_string(),
+                        "Done".to_string(),
+                        "Merged".to_string()
+                    ],
+                    "Closed,Done,Merged".to_string()
+                )
+            );
         } else {
             panic!("Expected migration config");
         }
@@ -974,7 +1067,10 @@ mod tests {
         assert!(!config.is_migration_mode());
 
         if let AppConfig::Default { default, .. } = config {
-            assert_eq!(default.work_item_state, "Custom State");
+            assert_eq!(
+                default.work_item_state,
+                ParsedProperty::Cli("Custom State".to_string(), "Custom State".to_string())
+            );
         } else {
             panic!("Expected default config");
         }
@@ -1074,7 +1170,10 @@ mod tests {
         // Path (positional argument) should take precedence over local_repo flag
         assert_eq!(
             config.shared().local_repo,
-            Some("/path/from/positional".to_string())
+            Some(ParsedProperty::Cli(
+                "/path/from/positional".to_string(),
+                "/path/from/positional".to_string()
+            ))
         );
     }
 }

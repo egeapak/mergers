@@ -37,6 +37,7 @@ pub mod git;
 pub mod git_config;
 pub mod migration;
 pub mod models;
+pub mod parsed_property;
 pub mod ui;
 pub mod utils;
 
@@ -44,6 +45,7 @@ pub mod utils;
 pub use api::AzureDevOpsClient;
 pub use config::Config;
 pub use models::{AppConfig, Args, DefaultModeConfig, MigrationModeConfig, SharedConfig};
+pub use parsed_property::ParsedProperty;
 
 /// Core result type used throughout the library
 pub type Result<T> = anyhow::Result<T>;
