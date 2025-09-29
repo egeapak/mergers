@@ -325,3 +325,194 @@ impl AppState for SettingsConfirmationState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::testing::*;
+    use insta::assert_snapshot;
+
+    /// # Settings Confirmation Default Mode Test
+    ///
+    /// Tests the settings confirmation screen for default (merge) mode with mixed configuration sources.
+    ///
+    /// ## Test Scenario
+    /// - Creates a default mode configuration with values from different sources (CLI, env, file, git, default)
+    /// - Renders the settings confirmation screen in a fixed 80x30 terminal
+    /// - Captures the complete UI output for snapshot comparison
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Mode: Merge" at the top
+    /// - Should show Azure DevOps settings with source annotations
+    /// - Should show branch settings with appropriate source colors/styling
+    /// - Should show processing settings with default values
+    /// - Should display work item state for default mode
+    /// - Should show navigation instructions at the bottom
+    #[test]
+    fn test_settings_confirmation_default_mode() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("default_mode", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation Migration Mode Test
+    ///
+    /// Tests the settings confirmation screen for migration mode with terminal states.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration mode configuration
+    /// - Renders the settings confirmation screen
+    /// - Captures the UI output showing migration-specific settings
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Mode: Migration" at the top
+    /// - Should show terminal states instead of work item state
+    /// - Should display all other settings sections normally
+    #[test]
+    fn test_settings_confirmation_migration_mode() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("migration_mode", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation All Defaults Test
+    ///
+    /// Tests the settings confirmation screen with all default values.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration where all values are defaults
+    /// - No local repo path configured
+    /// - No since date configured
+    /// - Renders the complete settings display
+    ///
+    /// ## Expected Outcome
+    /// - All settings should show "[default]" source annotation
+    /// - Local repo should show "[None - will clone]"
+    /// - Since date should not appear in the display
+    /// - All values should be rendered with default styling
+    #[test]
+    fn test_settings_confirmation_all_defaults() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_all_defaults();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("all_defaults", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation CLI Values Test
+    ///
+    /// Tests the settings confirmation screen with values provided via CLI arguments.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration where most values come from CLI
+    /// - Includes a since date with original CLI input and parsed value
+    /// - Local repo path provided via CLI
+    /// - Custom parallel processing limits
+    ///
+    /// ## Expected Outcome
+    /// - All CLI values should show "[from cli]" annotation with light blue styling
+    /// - Since date should show both original input and resolved datetime
+    /// - Local repo should display the CLI-provided path
+    /// - Custom work item state should be displayed
+    #[test]
+    fn test_settings_confirmation_cli_values() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cli_values();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("cli_values", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation Environment Variables Test
+    ///
+    /// Tests the settings confirmation screen with values from environment variables.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration with environment variable sources
+    /// - Mix of env vars and default values
+    /// - No local repo or since date configured
+    ///
+    /// ## Expected Outcome
+    /// - Environment values should show "[from env: VAR_NAME]" annotation with blue styling
+    /// - Should display the environment variable names that provided the values
+    /// - Default values should still show "[default]" annotation
+    /// - Local repo should show "[None - will clone]"
+    #[test]
+    fn test_settings_confirmation_env_values() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_env_values();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("env_values", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation File Values Test
+    ///
+    /// Tests the settings confirmation screen with values from configuration file.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration with file-based values
+    /// - Shows config file path in source annotations
+    /// - Mix of file values and defaults
+    /// - Local repo path from config file
+    ///
+    /// ## Expected Outcome
+    /// - File values should show "[from config file: /path/to/config.toml]" with magenta styling
+    /// - Should display the full config file path
+    /// - Local repo should show the file-provided path
+    /// - PAT should still show as "****hidden****"
+    #[test]
+    fn test_settings_confirmation_file_values() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_file_values();
+            let mut harness = TuiTestHarness::with_config(config);
+            let state = Box::new(SettingsConfirmationState::new(
+                harness.app.config.as_ref().clone(),
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("file_values", harness.backend());
+        });
+    }
+}

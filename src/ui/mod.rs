@@ -3,7 +3,11 @@ use ratatui::Terminal;
 use state::{AppState, DataLoadingState, StateChange};
 
 mod app;
+#[cfg(test)]
+pub mod snapshot_testing;
 pub mod state;
+#[cfg(test)]
+pub mod testing;
 
 pub use app::App;
 

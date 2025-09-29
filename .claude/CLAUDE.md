@@ -76,6 +76,38 @@ cargo llvm-cov nextest --html
 cargo llvm-cov nextest --profile ci --lcov --output-path lcov.info
 ```
 
+### Snapshot Testing
+
+The project includes comprehensive snapshot testing for UI components using `cargo-insta` and `ratatui`'s TestBackend.
+
+#### Architecture
+- **Centralized Structure**: All UI snapshots are organized in `src/ui/snapshots/` following the source code structure
+- **Automatic Path Detection**: Uses `std::module_path!()` for clean, descriptive filenames without verbose prefixes
+- **Fixed Terminal Size**: Consistent 80x30 dimensions for reliable snapshots
+
+#### Usage Pattern
+```rust
+#[test]
+fn test_ui_component() {
+    with_settings_and_module_path(module_path!(), || {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        let state = Box::new(MyState::new(/* args */));
+
+        harness.render_state(state);
+        assert_snapshot!("test_name", harness.backend());
+    });
+}
+```
+
+#### Test Configuration Builders
+- `create_test_config_default()`: Mixed sources (CLI, env, file, git, default)
+- `create_test_config_migration()`: Migration mode configuration
+- `create_test_config_all_defaults()`: All default values
+- `create_test_config_cli_values()`: CLI-provided values
+- `create_test_config_env_values()`: Environment variables
+- `create_test_config_file_values()`: Configuration file values
+
 ## Key Dependencies
 
 ### Core Dependencies
