@@ -1,6 +1,6 @@
 /target
 
 # Coverage reports
-lcov.info
+lcov*.info
 *.profraw
 *.profdata

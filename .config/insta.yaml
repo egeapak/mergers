@@ -1,0 +1,32 @@
+# Insta snapshot testing configuration
+# https://insta.rs/docs/settings/
+
+# Behavior configuration
+behavior:
+  # Use 'auto' for default behavior - updates snapshots during test, requires review
+  update: auto
+  # Show detailed diffs when snapshots don't match
+  output: diff
+  # Don't force update snapshots without review (deprecated setting removed)
+  # Don't force tests to pass when snapshots don't match
+  force_pass: false
+  # Fail fast when using glob patterns
+  glob_fail_fast: true
+
+# Test runner configuration
+test:
+  # Use nextest since the project already uses it (see .config/nextest.toml)
+  runner: nextest
+  # Don't automatically review - require explicit review step
+  auto_review: false
+  # Don't automatically accept new snapshots
+  auto_accept_unseen: false
+
+# Review configuration
+review:
+  # Include ignored files in review (in case snapshots are in .gitignore)
+  include_ignored: false
+  # Include hidden directories in review (important for centralized snapshots)
+  include_hidden: true
+  # Warn about snapshots that can't be discovered
+  warn_undiscovered: true
