@@ -45,3 +45,8 @@ regex = "1.10"
 mockito = "1.7"
 tokio-test = "0.4"
 tempfile = "3.23"
+insta = { version = "1.43.2", features = ["yaml"] }
+
+[profile.dev.package]
+insta.opt-level = 3
+similar.opt-level = 3
