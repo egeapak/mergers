@@ -284,3 +284,76 @@ pub fn process_next_commit(app: &mut App) -> StateChange {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_cherry_pick_items, create_test_config_default},
+    };
+    use insta::assert_snapshot;
+    use std::path::PathBuf;
+
+    /// # Cherry Pick State - In Progress
+    ///
+    /// Tests the cherry-pick screen with mixed statuses.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick state
+    /// - Sets up cherry-pick items with various statuses
+    /// - Sets a version and repo path
+    /// - Renders the cherry-pick progress display
+    ///
+    /// ## Expected Outcome
+    /// - Should display commit list with status symbols
+    /// - Should show current commit details
+    /// - Should display progress counters
+    #[test]
+    fn test_cherry_pick_in_progress() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.cherry_pick_items = create_test_cherry_pick_items();
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 1;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick State - With Conflict
+    ///
+    /// Tests the cherry-pick screen showing a conflict.
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick items with a conflict
+    /// - Sets current index to the conflicted item
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should highlight the conflict status
+    /// - Should show conflict warning symbol
+    #[test]
+    fn test_cherry_pick_with_conflict() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.cherry_pick_items = create_test_cherry_pick_items();
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 3; // Conflict item
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_conflict", harness.backend());
+        });
+    }
+}

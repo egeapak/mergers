@@ -287,3 +287,175 @@ impl AppState for SetupRepoState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_default},
+    };
+    use insta::assert_snapshot;
+
+    /// # Setup Repo State - Initializing
+    ///
+    /// Tests the repository setup screen in initial state.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new setup repo state
+    /// - Renders the state in initializing stage
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Initializing repository..." message
+    /// - Should show "Repository Setup" title
+    /// - Should use yellow styling
+    #[test]
+    fn test_setup_repo_initializing() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let state = Box::new(SetupRepoState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("initializing", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Cloning
+    ///
+    /// Tests the repository setup screen during cloning.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets state to InProgress with cloning message
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cloning repository..." message
+    /// - Should maintain consistent layout
+    #[test]
+    fn test_setup_repo_cloning() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.state = SetupState::InProgress("Cloning repository...".to_string());
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("cloning", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Creating Worktree
+    ///
+    /// Tests the repository setup screen during worktree creation.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets state to InProgress with worktree message
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Creating worktree..." message
+    #[test]
+    fn test_setup_repo_creating_worktree() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.state = SetupState::InProgress("Creating worktree...".to_string());
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("creating_worktree", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Branch Exists Error
+    ///
+    /// Tests the error display when a branch already exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets an error for existing branch
+    /// - Renders the error display
+    ///
+    /// ## Expected Outcome
+    /// - Should display error message with branch name
+    /// - Should show options (retry, force, go back)
+    /// - Should use red styling for title
+    /// - Should have different colors for different text sections
+    #[test]
+    fn test_setup_repo_branch_exists_error() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.set_error(git::RepositorySetupError::BranchExists(
+                "patch/main-v1.0.0".to_string(),
+            ));
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("branch_exists_error", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Worktree Exists Error
+    ///
+    /// Tests the error display when a worktree already exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets an error for existing worktree
+    /// - Renders the error display
+    ///
+    /// ## Expected Outcome
+    /// - Should display error message with worktree path
+    /// - Should show options (retry, force, go back)
+    #[test]
+    fn test_setup_repo_worktree_exists_error() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.set_error(git::RepositorySetupError::WorktreeExists(
+                "/path/to/repo/.worktrees/v1.0.0".to_string(),
+            ));
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("worktree_exists_error", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Other Error
+    ///
+    /// Tests the error display for generic errors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets a generic error
+    /// - Renders the error display
+    ///
+    /// ## Expected Outcome
+    /// - Should display error message
+    /// - Should show retry and go back options
+    #[test]
+    fn test_setup_repo_other_error() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.set_error(git::RepositorySetupError::Other(
+                "Failed to fetch repository details from Azure DevOps".to_string(),
+            ));
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("other_error", harness.backend());
+        });
+    }
+}

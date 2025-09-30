@@ -210,3 +210,63 @@ impl AppState for MigrationVersionInputState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_migration},
+    };
+    use insta::assert_snapshot;
+
+    /// # Migration Version Input State - Empty
+    ///
+    /// Tests the migration version input screen with empty input.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration version input state
+    /// - Renders with empty input
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Enter Version" title
+    /// - Should show empty input box
+    /// - Should display help text
+    #[test]
+    fn test_migration_version_input_empty() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let state = Box::new(MigrationVersionInputState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("empty", harness.backend());
+        });
+    }
+
+    /// # Migration Version Input State - With Version
+    ///
+    /// Tests the version input screen with a version entered.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration version input state
+    /// - Sets input to a version number
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display the version in the input box
+    #[test]
+    fn test_migration_version_input_with_version() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = MigrationVersionInputState::new();
+            state.input = "v2.0.0".to_string();
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("with_version", harness.backend());
+        });
+    }
+}

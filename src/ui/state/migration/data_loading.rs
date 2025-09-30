@@ -905,4 +905,98 @@ mod tests {
         let msg_with_git = state.get_loading_message();
         assert_eq!(msg_with_git, "Fetching pull requests and git history...");
     }
+
+    /// # Migration Data Loading - Initial State
+    ///
+    /// Tests the migration data loading screen in initial state.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new migration data loading state
+    /// - Renders without starting any loading operations
+    ///
+    /// ## Expected Outcome
+    /// - Should display initializing message
+    /// - Should show progress bar at 0%
+    #[test]
+    fn test_migration_data_loading_initial() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let state = Box::new(MigrationDataLoadingState::new(config));
+            harness.render_state(state);
+
+            assert_snapshot!("initial", harness.backend());
+        });
+    }
+
+    /// # Migration Data Loading - Fetching PRs
+    ///
+    /// Tests the loading screen when fetching pull requests.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state
+    /// - Sets stage to fetching pull requests
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Fetching pull requests" message
+    /// - Should show progress bar
+    #[test]
+    fn test_migration_data_loading_fetching_prs() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let mut state = MigrationDataLoadingState::new(config);
+            state.loading_stage = LoadingStage::FetchingPullRequests;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("fetching_prs", harness.backend());
+        });
+    }
+
+    /// # Migration Data Loading - Analyzing
+    ///
+    /// Tests the loading screen during migration analysis.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state
+    /// - Sets stage to analyzing for migration
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Analyzing for migration" message
+    /// - Should show progress bar
+    #[test]
+    fn test_migration_data_loading_analyzing() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let mut state = MigrationDataLoadingState::new(config);
+            state.loading_stage = LoadingStage::RunningAnalysis;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("analyzing", harness.backend());
+        });
+    }
 }

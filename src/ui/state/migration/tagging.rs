@@ -382,3 +382,43 @@ impl AppState for MigrationTaggingState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_migration},
+    };
+    use insta::assert_snapshot;
+
+    /// # Migration Tagging State - In Progress
+    ///
+    /// Tests the migration tagging screen during tagging.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration tagging state
+    /// - Sets up eligible PRs for tagging
+    /// - Renders the tagging progress display
+    ///
+    /// ## Expected Outcome
+    /// - Should display tagging progress
+    /// - Should show PR list with status
+    /// - Should display progress indicators
+    #[test]
+    fn test_migration_tagging_in_progress() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 3;
+            state.tagged_prs = 1;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+}

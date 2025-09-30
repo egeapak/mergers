@@ -323,3 +323,145 @@ impl AppState for DataLoadingState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_default},
+    };
+    use insta::assert_snapshot;
+
+    /// # Data Loading State - Not Started
+    ///
+    /// Tests the initial loading state before any operations begin.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new data loading state
+    /// - Renders the state before any loading operations start
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Initializing..." message
+    /// - Should show bordered loading box
+    /// - Text should be centered and yellow
+    #[test]
+    fn test_data_loading_not_started() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let state = Box::new(DataLoadingState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("not_started", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetching Pull Requests
+    ///
+    /// Tests the loading display when fetching pull requests.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to FetchingPullRequests
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Fetching pull requests..." message
+    /// - Should maintain consistent layout
+    #[test]
+    fn test_data_loading_fetching_prs() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::FetchingPullRequests;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("fetching_prs", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetching Work Items
+    ///
+    /// Tests the loading display when fetching work items with progress.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to WaitingForWorkItems with progress counters
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Fetching work items (5/10)" progress message
+    /// - Should show current progress out of total
+    #[test]
+    fn test_data_loading_fetching_work_items() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_fetched = 5;
+            state.work_items_total = 10;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("fetching_work_items", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetching Commit Info
+    ///
+    /// Tests the loading display when fetching commit information.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to FetchingCommitInfo with progress counters
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Fetching commit information (2/3)" progress message
+    /// - Should show current progress out of total
+    #[test]
+    fn test_data_loading_fetching_commit_info() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::FetchingCommitInfo;
+            state.commit_info_fetched = 2;
+            state.commit_info_total = 3;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("fetching_commit_info", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Complete
+    ///
+    /// Tests the loading display when loading is complete.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to Complete
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Loading complete" message
+    #[test]
+    fn test_data_loading_complete() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::Complete;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("complete", harness.backend());
+        });
+    }
+}

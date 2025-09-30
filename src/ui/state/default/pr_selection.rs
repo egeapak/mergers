@@ -1495,3 +1495,278 @@ fn get_state_color(state: &str) -> Color {
         _ => Color::White,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
+    };
+    use insta::assert_snapshot;
+
+    /// # PR Selection State - Normal Display
+    ///
+    /// Tests the pull request selection screen with normal data.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests into the app
+    /// - Renders the PR table and work item details
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR table with columns: checkbox, PR#, Date, Title, Author, Work Items
+    /// - Should show work item details panel
+    /// - Should display help text at bottom
+    #[test]
+    fn test_pr_selection_normal() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let state = Box::new(PullRequestSelectionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("normal_display", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Empty List
+    ///
+    /// Tests the PR selection screen with no pull requests.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Does not load any pull requests
+    /// - Renders the empty state
+    ///
+    /// ## Expected Outcome
+    /// - Should display "No pull requests found" message
+    /// - Should show quit instruction
+    #[test]
+    fn test_pr_selection_empty() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Leave pull_requests empty
+
+            let state = Box::new(PullRequestSelectionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("empty_list", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - With Selections
+    ///
+    /// Tests the PR selection screen with some PRs selected.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests
+    /// - Marks some PRs as selected
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display checkmarks for selected PRs
+    /// - Selected rows should have different background color
+    /// - Text color should change for selected items
+    #[test]
+    fn test_pr_selection_with_selections() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            prs[2].selected = true;
+            harness.app.pull_requests = prs;
+
+            let state = Box::new(PullRequestSelectionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_selections", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Search Mode
+    ///
+    /// Tests the PR selection screen in search mode.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests
+    /// - Enters search mode with query
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display search status line
+    /// - Should show search results highlighting
+    /// - Should display search-specific help text
+    #[test]
+    fn test_pr_selection_search_mode() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.search_iteration_mode = true;
+            state.last_search_query = "login".to_string();
+            state.search_results = vec![0];
+            state.current_search_index = 0;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("search_mode", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - State Dialog With Selections
+    ///
+    /// Tests the state selection dialog overlay with multiple states selected.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Enters multi-select mode (state filter dialog)
+    /// - Multiple work item states available: Active, Resolved, Closed, New, Removed
+    /// - Some states are selected (Resolved, Closed)
+    /// - Renders the state selection overlay
+    ///
+    /// ## Expected Outcome
+    /// - Should display state selection dialog overlay
+    /// - Should show checkboxes for all available states
+    /// - Should mark selected states with checkmarks
+    /// - Should display help text for state selection
+    #[test]
+    fn test_pr_selection_state_dialog_with_selections() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.multi_select_mode = true;
+            state.available_states = crate::ui::testing::create_test_work_item_states();
+            state.selected_filter_states = ["Resolved".to_string(), "Closed".to_string()]
+                .iter()
+                .cloned()
+                .collect();
+            state.state_selection_index = 1;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("state_dialog_with_selections", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - State Dialog No Selections
+    ///
+    /// Tests the state selection dialog overlay with no states selected.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Enters multi-select mode (state filter dialog)
+    /// - Multiple work item states available
+    /// - No states are selected (all checkboxes empty)
+    /// - Renders the state selection overlay
+    ///
+    /// ## Expected Outcome
+    /// - Should display state selection dialog overlay
+    /// - Should show empty checkboxes for all states
+    /// - Should highlight currently focused state
+    /// - Should display help text for selection
+    #[test]
+    fn test_pr_selection_state_dialog_no_selections() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.multi_select_mode = true;
+            state.available_states = crate::ui::testing::create_test_work_item_states();
+            state.selected_filter_states = std::collections::HashSet::new();
+            state.state_selection_index = 0;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("state_dialog_no_selections", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Scrollable Many Items
+    ///
+    /// Tests the PR selection screen with 50+ items to verify scrolling.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads 60 pull requests (exceeds terminal height of 30)
+    /// - Some PRs selected in the middle of the list
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display scrollable table
+    /// - Should show scroll indicators
+    /// - Should handle large number of items gracefully
+    /// - Should properly highlight selected items
+    #[test]
+    fn test_pr_selection_scrollable_many_items() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = crate::ui::testing::create_large_pr_list();
+
+            let mut state = PullRequestSelectionState::new();
+            // Scroll to middle of list to show scrolling behavior
+            state.table_state.select(Some(25));
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("scrollable_many_items", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - State Dialog All Selected
+    ///
+    /// Tests the state selection dialog overlay with all states selected.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Enters multi-select mode (state filter dialog)
+    /// - All available work item states are selected
+    /// - Simulates pressing 'a' to select all
+    /// - Renders the state selection overlay
+    ///
+    /// ## Expected Outcome
+    /// - Should display state selection dialog overlay
+    /// - Should show all checkboxes marked
+    /// - Should display selection count in title
+    /// - Should show help text for clearing selection
+    #[test]
+    fn test_pr_selection_state_dialog_all_selected() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let states = crate::ui::testing::create_test_work_item_states();
+            let mut state = PullRequestSelectionState::new();
+            state.multi_select_mode = true;
+            state.available_states = states.clone();
+            state.selected_filter_states = states.iter().cloned().collect();
+            state.state_selection_index = 2;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("state_dialog_all_selected", harness.backend());
+        });
+    }
+}
