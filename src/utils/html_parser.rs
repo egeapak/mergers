@@ -1025,7 +1025,7 @@ mod tests {
     /// - All elements processed correctly with proper styling
     #[test]
     fn test_complex_html() {
-        let html = r#"
+        let html = r##"
             <div>
                 <h1>Title</h1>
                 <p>This is a <b>bold</b> paragraph with a <a href="#">link</a>.</p>
@@ -1035,7 +1035,7 @@ mod tests {
                     <span style="background-color: yellow; font-weight: bold;">highlighted bold</span>
                 </div>
             </div>
-        "#;
+        "##;
         let lines = html_to_lines(html);
         assert!(lines.len() >= 4);
         for line in &lines {
