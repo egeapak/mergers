@@ -354,3 +354,230 @@ impl AppState for PostCompletionState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
+    };
+    use insta::assert_snapshot;
+
+    /// # Post Completion State - Display
+    ///
+    /// Tests the post-completion menu screen.
+    ///
+    /// ## Test Scenario
+    /// - Creates a post-completion state
+    /// - Sets up PRs for work item updating
+    /// - Renders the post-completion menu
+    ///
+    /// ## Expected Outcome
+    /// - Should display menu options
+    /// - Should show task list
+    /// - Should display action instructions
+    #[test]
+    fn test_post_completion_display() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            harness.app.pull_requests = prs;
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let state = Box::new(PostCompletionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("display", harness.backend());
+        });
+    }
+
+    /// # Post Completion State - Partially Updated
+    ///
+    /// Tests the post-completion screen with tasks in various states of completion.
+    ///
+    /// ## Test Scenario
+    /// - Creates a post-completion state with 7 tasks
+    /// - Some tasks completed successfully
+    /// - One task currently in progress
+    /// - Some tasks still pending
+    /// - Shows progress at 3/7 tasks (43%)
+    ///
+    /// ## Expected Outcome
+    /// - Should display progress bar showing partial completion
+    /// - Should show mix of success, in-progress, and pending tasks
+    /// - Should indicate which task is currently being processed
+    #[test]
+    fn test_post_completion_partially_updated() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            harness.app.pull_requests = prs;
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let tasks = crate::ui::testing::create_test_post_completion_tasks();
+            let mut state = PostCompletionState::new();
+            state.tasks = tasks;
+            state.current_task_index = 3;
+            state.total_tasks = 7;
+            state.completed = false;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("partially_updated", harness.backend());
+        });
+    }
+
+    /// # Post Completion State - Permission Errors
+    ///
+    /// Tests the post-completion screen with multiple permission-related errors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a post-completion state
+    /// - Multiple tasks failed with "403 Forbidden" permission errors
+    /// - Some tasks succeeded
+    /// - Marks completion as done with errors
+    ///
+    /// ## Expected Outcome
+    /// - Should display failed tasks with permission error messages
+    /// - Should show successful tasks alongside failures
+    /// - Should display retry option for failed tasks
+    /// - Should indicate completion with errors
+    #[test]
+    fn test_post_completion_with_permission_errors() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            harness.app.pull_requests = prs;
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
+            // Mark some tasks as successful and some with permission errors
+            tasks[0].status = TaskStatus::Success;
+            tasks[1].status = TaskStatus::Failed(
+                "403 Forbidden: Insufficient permissions to update work item".to_string(),
+            );
+            tasks[2].status = TaskStatus::Success;
+            tasks[3].status = TaskStatus::Failed(
+                "403 Forbidden: User does not have write access to this resource".to_string(),
+            );
+            tasks[4].status = TaskStatus::Success;
+            tasks[5].status =
+                TaskStatus::Failed("403 Forbidden: Access denied for tag creation".to_string());
+            tasks[6].status = TaskStatus::Success;
+
+            let mut state = PostCompletionState::new();
+            state.tasks = tasks;
+            state.current_task_index = 7;
+            state.total_tasks = 7;
+            state.completed = true;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("permission_errors", harness.backend());
+        });
+    }
+
+    /// # Post Completion State - Mixed Errors
+    ///
+    /// Tests the post-completion screen with various types of errors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a post-completion state with completed tasks
+    /// - Tasks failed with different error types: network, permission, timeout
+    /// - Shows error details for each failure type
+    ///
+    /// ## Expected Outcome
+    /// - Should display different error messages appropriately
+    /// - Should show varied error formatting
+    /// - Should provide retry option
+    #[test]
+    fn test_post_completion_mixed_errors() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            harness.app.pull_requests = prs;
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
+            tasks[0].status = TaskStatus::Success;
+            tasks[1].status = TaskStatus::Failed(
+                "Network error: Connection timed out after 30 seconds".to_string(),
+            );
+            tasks[2].status =
+                TaskStatus::Failed("403 Forbidden: Insufficient permissions".to_string());
+            tasks[3].status = TaskStatus::Success;
+            tasks[4].status = TaskStatus::Failed(
+                "API Error: Rate limit exceeded, retry after 60 seconds".to_string(),
+            );
+            tasks[5].status =
+                TaskStatus::Failed("Invalid request: Work item ID not found".to_string());
+            tasks[6].status = TaskStatus::Success;
+
+            let mut state = PostCompletionState::new();
+            state.tasks = tasks;
+            state.current_task_index = 7;
+            state.total_tasks = 7;
+            state.completed = true;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("mixed_errors", harness.backend());
+        });
+    }
+
+    /// # Post Completion State - All Failed
+    ///
+    /// Tests the post-completion screen when all tasks have failed.
+    ///
+    /// ## Test Scenario
+    /// - Creates a post-completion state
+    /// - All tasks failed with various errors
+    /// - Shows 0% successful completion
+    ///
+    /// ## Expected Outcome
+    /// - Should display all tasks as failed
+    /// - Should show prominent retry instruction
+    /// - Should indicate failure state clearly
+    #[test]
+    fn test_post_completion_all_failed() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_pull_requests();
+            prs[0].selected = true;
+            harness.app.pull_requests = prs;
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
+            for task in &mut tasks {
+                task.status = TaskStatus::Failed(
+                    "Service unavailable: Unable to connect to Azure DevOps".to_string(),
+                );
+            }
+
+            let mut state = PostCompletionState::new();
+            state.tasks = tasks;
+            state.current_task_index = 7;
+            state.total_tasks = 7;
+            state.completed = true;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("all_failed", harness.backend());
+        });
+    }
+}

@@ -361,3 +361,53 @@ impl AppState for ConflictResolutionState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        models::{CherryPickItem, CherryPickStatus},
+        ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_default},
+        },
+    };
+    use insta::assert_snapshot;
+    use std::path::PathBuf;
+
+    /// # Conflict Resolution State - Display
+    ///
+    /// Tests the conflict resolution screen.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state
+    /// - Sets up a conflicted PR
+    /// - Renders the conflict resolution screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display conflict warning
+    /// - Should show conflicted PR details
+    /// - Should display resolution options
+    #[test]
+    fn test_conflict_resolution_display() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.cherry_pick_items = vec![CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Fix critical database migration bug".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 0;
+
+            let conflicted_files = vec!["src/database/migrations.rs".to_string()];
+            let state = Box::new(ConflictResolutionState::new(conflicted_files));
+            harness.render_state(state);
+
+            assert_snapshot!("conflict_display", harness.backend());
+        });
+    }
+}

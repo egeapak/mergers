@@ -546,3 +546,42 @@ impl AppState for MigrationState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::{
+        snapshot_testing::with_settings_and_module_path,
+        testing::{TuiTestHarness, create_test_config_migration, create_test_migration_analysis},
+    };
+    use insta::assert_snapshot;
+
+    /// # Migration Results State - Display
+    ///
+    /// Tests the migration results screen with analysis data.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Loads migration analysis data
+    /// - Renders the results display
+    ///
+    /// ## Expected Outcome
+    /// - Should display eligible PRs
+    /// - Should display not eligible PRs
+    /// - Should show statistics
+    /// - Should display help text
+    #[test]
+    fn test_migration_results_display() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+            let state = Box::new(MigrationState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("display", harness.backend());
+        });
+    }
+}

@@ -337,3 +337,80 @@ impl AppState for CompletionState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        models::CherryPickStatus,
+        ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_cherry_pick_items, create_test_config_default},
+        },
+    };
+    use insta::assert_snapshot;
+    use std::path::PathBuf;
+
+    /// # Completion State - Success
+    ///
+    /// Tests the completion screen with all successful cherry-picks.
+    ///
+    /// ## Test Scenario
+    /// - Creates a completion state
+    /// - Sets all cherry-pick items to success status
+    /// - Renders the completion summary
+    ///
+    /// ## Expected Outcome
+    /// - Should display success message
+    /// - Should show summary of all successful items
+    /// - Should display next steps options
+    #[test]
+    fn test_completion_success() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            for item in &mut items {
+                item.status = CherryPickStatus::Success;
+            }
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+
+            let state = Box::new(CompletionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("success", harness.backend());
+        });
+    }
+
+    /// # Completion State - With Conflicts
+    ///
+    /// Tests the completion screen with some conflicts.
+    ///
+    /// ## Test Scenario
+    /// - Creates a completion state
+    /// - Sets some items to conflict status
+    /// - Renders the completion summary
+    ///
+    /// ## Expected Outcome
+    /// - Should show mixed results
+    /// - Should highlight conflicted items
+    #[test]
+    fn test_completion_with_conflicts() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.cherry_pick_items = create_test_cherry_pick_items();
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+
+            let state = Box::new(CompletionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_conflicts", harness.backend());
+        });
+    }
+}
