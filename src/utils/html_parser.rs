@@ -605,8 +605,7 @@ mod tests {
     /// - Span has all styles applied correctly
     #[test]
     fn test_multiple_inline_styles() {
-        let html =
-            r#"<span style="color: green; background-color: yellow; font-weight: bold;">Text</span>"#;
+        let html = r#"<span style="color: green; background-color: yellow; font-weight: bold;">Text</span>"#;
         let lines = html_to_lines(html);
         assert_eq!(lines.len(), 1);
         let span = &lines[0].spans[0];
