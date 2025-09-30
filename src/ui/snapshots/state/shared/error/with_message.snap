@@ -8,7 +8,7 @@ expression: harness.backend()
 "                                                                                "
 "                                                                                "
 "  ┌──────────────────────────────────────────────────────────────────────────┐  "
-"  │Failed to connect to Azure DevOps API. Please check your credentials.     │  "
+"  │Connection failed: Unable to reach Azure DevOps API                       │  "
 "  │                                                                          │  "
 "  │                                                                          │  "
 "  │                                                                          │  "

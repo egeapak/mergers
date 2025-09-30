@@ -51,6 +51,12 @@ impl TuiTestHarness {
         Self { terminal, app }
     }
 
+    /// Set an error message on the app (for error state testing)
+    pub fn with_error_message(mut self, message: impl Into<String>) -> Self {
+        self.app.error_message = Some(message.into());
+        self
+    }
+
     /// Render a state to the terminal
     pub fn render_state(&mut self, mut state: Box<dyn AppState>) {
         self.terminal.draw(|f| state.ui(f, &self.app)).unwrap();
