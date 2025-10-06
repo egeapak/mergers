@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - '*'
-    branches:
-      - master
 
 permissions:
   contents: write
@@ -92,6 +90,7 @@ jobs:
           args: --latest --strip header
         env:
           GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     name: Create Release
