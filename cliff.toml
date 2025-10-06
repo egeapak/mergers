@@ -18,7 +18,7 @@ body = """
         - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
             {% if commit.breaking %}[**breaking**] {% endif %}\
             {{ commit.message | upper_first }}\
-            {% if commit.github.pr_number %} ([#{{ commit.github.pr_number }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/pull/{{ commit.github.pr_number }})){% endif %}\
+            {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/{{ remote.github.owner }}/{{ remote.github.repo }}/pull/{{ commit.remote.pr_number }})){% endif %}\
     {% endfor %}
 {% endfor %}\n
 """
@@ -33,9 +33,12 @@ postprocessors = [
 
 [git]
 conventional_commits = true
-filter_unconventional = true
+filter_unconventional = false
 split_commits = false
 commit_preprocessors = [
+    # Extract PR title from GitHub merge commits (use second line as commit message)
+    # Don't add PR number here - git-cliff will add it from GitHub API
+    { pattern = 'Merge pull request #([0-9]+) from [^\n]+\n\n(.+)', replace = "${2}" },
     { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "(#${2})" },
 ]
 commit_parsers = [
@@ -55,12 +58,20 @@ commit_parsers = [
     { message = "^chore|^ci", group = "<!-- 7 -->Miscellaneous Tasks" },
     { body = ".*security", group = "<!-- 8 -->Security" },
     { message = "^revert", group = "<!-- 9 -->Revert" },
+    # Catch all non-conventional commits
+    { message = ".*", group = "<!-- 10 -->Other Changes" },
 ]
 protect_breaking_commits = false
 filter_commits = false
 topo_order = false
 sort_commits = "oldest"
 
+[bump]
+features_always_bump_minor = true
+breaking_always_bump_major = true
+initial_tag = "0.1.2"
+
 [remote.github]
 owner = "egeapak"
 repo = "mergers"
+token = "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"
