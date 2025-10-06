@@ -29,7 +29,8 @@
       "WebFetch(domain:insta.rs)",
       "Bash(tree:*)",
       "Bash(container-use create:*)",
-      "mcp__container-use__environment_file_edit"
+      "mcp__container-use__environment_file_edit",
+      "WebFetch(domain:git-cliff.org)"
     ],
     "deny": []
   }
