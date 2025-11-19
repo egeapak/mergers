@@ -1,5 +1,4 @@
 use anyhow::Result;
-use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -16,7 +15,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = Args::parse_with_default_mode();
 
     // Handle --create-config flag
     if args.create_config {

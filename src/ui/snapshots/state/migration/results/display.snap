@@ -6,9 +6,9 @@ expression: harness.backend()
 "                                                                                "
 "                                                                                "
 "┌Eligible PRs - Ready for tagging──────────────────────────────────────────────┐"
-"│#100 Fix login bug →❌                                                        │" Hidden by multi-width symbols: [(22, " ")]
+"│#100 Fix login bug → Not Eligible                                             │"
 "│  By: Alice Johnson | Work Items: 1                                           │"
-"│#101 Update user profile page design →❌                                      │" Hidden by multi-width symbols: [(40, " ")]
+"│#101 Update user profile page design → Not Eligible                           │"
 "│  By: Bob Wilson | Work Items: 1                                              │"
 "│                                                                              │"
 "│                                                                              │"

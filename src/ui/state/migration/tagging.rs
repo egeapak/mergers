@@ -322,7 +322,7 @@ impl MigrationTaggingState {
     fn render_errors(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         if self.errors.is_empty() {
             let no_errors = Paragraph::new(vec![Line::from(vec![Span::styled(
-                "✅ No errors",
+                "No errors",
                 Style::default().fg(Color::Green),
             )])])
             .block(Block::default().borders(Borders::ALL).title("Errors"))
