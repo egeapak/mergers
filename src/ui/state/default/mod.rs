@@ -1,4 +1,5 @@
 mod cherry_pick;
+mod cherry_pick_continue;
 mod completion;
 mod conflict_resolution;
 mod data_loading;
@@ -8,6 +9,7 @@ mod setup_repo;
 mod version_input;
 
 pub use cherry_pick::CherryPickState;
+pub use cherry_pick_continue::CherryPickContinueState;
 pub use completion::CompletionState;
 pub use conflict_resolution::ConflictResolutionState;
 pub use data_loading::DataLoadingState;

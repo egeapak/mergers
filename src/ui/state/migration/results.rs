@@ -471,7 +471,7 @@ impl AppState for MigrationState {
             .constraints([
                 Constraint::Length(3), // Tabs
                 Constraint::Min(10),   // Main content
-                Constraint::Length(8), // Help
+                Constraint::Length(9), // Help
             ])
             .split(f.area());
 
@@ -582,6 +582,58 @@ mod tests {
             harness.render_state(state);
 
             assert_snapshot!("display", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - Bottom Bar Visibility
+    ///
+    /// Tests that the bottom help bar is fully visible with all content.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Loads migration analysis data
+    /// - Renders the results display
+    /// - Verifies the bottom bar contains all expected help text
+    ///
+    /// ## Expected Outcome
+    /// - Should display complete navigation section
+    /// - Should display complete toggle eligibility section
+    /// - Should display complete next step section with Enter key instruction
+    /// - All text should be within the visible terminal area
+    #[test]
+    fn test_migration_results_bottom_bar_fully_visible() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+            let state = Box::new(MigrationState::new());
+            harness.render_state(state);
+
+            // Get the rendered output
+            let output = harness.backend().to_string();
+
+            // Verify all help sections are present
+            assert!(
+                output.contains("Navigation:"),
+                "Help bar should contain Navigation section"
+            );
+            assert!(
+                output.contains("Toggle Eligibility:"),
+                "Help bar should contain Toggle Eligibility section"
+            );
+            assert!(
+                output.contains("Next Step:"),
+                "Help bar should contain Next Step section"
+            );
+            assert!(
+                output.contains("Enter - Proceed to Version Input for Tagging"),
+                "Help bar should contain Enter key instruction for proceeding"
+            );
+
+            // Snapshot the full display to verify visual layout
+            assert_snapshot!("bottom_bar_fully_visible", harness.backend());
         });
     }
 

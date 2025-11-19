@@ -22,7 +22,6 @@ expression: harness.backend()
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
-"│                                                                              │"
 "└──────────────────────────────────────────────────────────────────────────────┘"
 "┌Help──────────────────────────────────────────────────────────────────────────┐"
 "│Navigation:                                                                   │"
@@ -31,4 +30,5 @@ expression: harness.backend()
 "│Toggle Eligibility:                                                           │"
 "│Space - Toggle PR eligibility (cycles through states)                         │"
 "│Next Step:                                                                    │"
+"│Enter - Proceed to Version Input for Tagging                                  │"
 "└──────────────────────────────────────────────────────────────────────────────┘"

@@ -4,7 +4,7 @@
 //! end-to-end functionality.
 
 use mergers::{
-    AppConfig, Args, AzureDevOpsClient, Commands, Config, MigrateArgs, SharedArgs,
+    AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs, SharedArgs,
     parsed_property::ParsedProperty,
 };
 use std::fs;
@@ -13,22 +13,6 @@ use tempfile::TempDir;
 /// Helper function to create a default Args struct for testing
 fn create_empty_args() -> Args {
     Args {
-        shared: SharedArgs {
-            path: None,
-            organization: None,
-            project: None,
-            repository: None,
-            pat: None,
-            dev_branch: None,
-            target_branch: None,
-            local_repo: None,
-            tag_prefix: None,
-            parallel_limit: None,
-            max_concurrent_network: None,
-            max_concurrent_processing: None,
-            since: None,
-            skip_confirmation: false,
-        },
         command: None, // Default to merge mode if no command
         create_config: false,
     }
@@ -37,23 +21,23 @@ fn create_empty_args() -> Args {
 /// Helper function to create Args with migration mode
 fn create_empty_migrate_args() -> Args {
     Args {
-        shared: SharedArgs {
-            path: None,
-            organization: None,
-            project: None,
-            repository: None,
-            pat: None,
-            dev_branch: None,
-            target_branch: None,
-            local_repo: None,
-            tag_prefix: None,
-            parallel_limit: None,
-            max_concurrent_network: None,
-            max_concurrent_processing: None,
-            since: None,
-            skip_confirmation: false,
-        },
         command: Some(Commands::Migrate(MigrateArgs {
+            shared: SharedArgs {
+                path: None,
+                organization: None,
+                project: None,
+                repository: None,
+                pat: None,
+                dev_branch: None,
+                target_branch: None,
+                local_repo: None,
+                tag_prefix: None,
+                parallel_limit: None,
+                max_concurrent_network: None,
+                max_concurrent_processing: None,
+                since: None,
+                skip_confirmation: false,
+            },
             terminal_states: "Closed,Next Closed,Next Merged".to_string(),
         })),
         create_config: false,
@@ -556,23 +540,25 @@ fn test_args_cli_precedence() {
     }
 
     let args = Args {
-        shared: SharedArgs {
-            organization: Some("cli-org".to_string()),
-            project: Some("cli-project".to_string()),
-            repository: None, // Should use env var
-            pat: None,        // Should use env var
-            dev_branch: None,
-            target_branch: None,
-            local_repo: None,
-            tag_prefix: None,
-            parallel_limit: Some(999),
-            max_concurrent_network: None,
-            max_concurrent_processing: None,
-            path: None,
-            since: None,
-            skip_confirmation: false,
-        },
-        command: None, // Default to merge mode
+        command: Some(Commands::Merge(MergeArgs {
+            shared: SharedArgs {
+                organization: Some("cli-org".to_string()),
+                project: Some("cli-project".to_string()),
+                repository: None, // Should use env var
+                pat: None,        // Should use env var
+                dev_branch: None,
+                target_branch: None,
+                local_repo: None,
+                tag_prefix: None,
+                parallel_limit: Some(999),
+                max_concurrent_network: None,
+                max_concurrent_processing: None,
+                path: None,
+                since: None,
+                skip_confirmation: false,
+            },
+            work_item_state: None,
+        })),
         create_config: false,
     };
 
