@@ -15,8 +15,6 @@ fn create_empty_args() -> Args {
     Args {
         command: None, // Default to merge mode if no command
         create_config: false,
-        top_level_shared: SharedArgs::default(),
-        work_item_state: None,
     }
 }
 
@@ -43,8 +41,6 @@ fn create_empty_migrate_args() -> Args {
             terminal_states: "Closed,Next Closed,Next Merged".to_string(),
         })),
         create_config: false,
-        top_level_shared: SharedArgs::default(),
-        work_item_state: None,
     }
 }
 
@@ -564,8 +560,6 @@ fn test_args_cli_precedence() {
             work_item_state: None,
         })),
         create_config: false,
-        top_level_shared: SharedArgs::default(),
-        work_item_state: None,
     };
 
     let result = args.resolve_config();

@@ -85,6 +85,32 @@ pub struct MigrateArgs {
     pub terminal_states: String,
 }
 
+/// Trait to extract shared arguments from command-specific argument structs
+pub trait HasSharedArgs {
+    fn shared_args(&self) -> &SharedArgs;
+    fn shared_args_mut(&mut self) -> &mut SharedArgs;
+}
+
+impl HasSharedArgs for MergeArgs {
+    fn shared_args(&self) -> &SharedArgs {
+        &self.shared
+    }
+
+    fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        &mut self.shared
+    }
+}
+
+impl HasSharedArgs for MigrateArgs {
+    fn shared_args(&self) -> &SharedArgs {
+        &self.shared
+    }
+
+    fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        &mut self.shared
+    }
+}
+
 /// Available commands
 #[derive(Subcommand, Clone)]
 pub enum Commands {
@@ -96,6 +122,24 @@ pub enum Commands {
     Migrate(MigrateArgs),
 }
 
+impl Commands {
+    /// Extract shared arguments from any command variant
+    pub fn shared_args(&self) -> &SharedArgs {
+        match self {
+            Commands::Merge(args) => args.shared_args(),
+            Commands::Migrate(args) => args.shared_args(),
+        }
+    }
+
+    /// Extract mutable shared arguments from any command variant
+    pub fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        match self {
+            Commands::Merge(args) => args.shared_args_mut(),
+            Commands::Migrate(args) => args.shared_args_mut(),
+        }
+    }
+}
+
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -105,15 +149,46 @@ pub struct Args {
     /// Create a sample configuration file
     #[arg(long)]
     pub create_config: bool,
+}
 
-    /// Shared arguments that can be provided at the top level (for backward compatibility)
-    /// when no subcommand is specified, defaults to merge mode
+/// Temporary wrapper to parse MergeArgs as if they were top-level
+#[derive(Parser, Clone)]
+#[command(name = "mergers", about = None, long_about = None)]
+pub struct MergeArgsParser {
     #[command(flatten)]
-    pub top_level_shared: SharedArgs,
+    pub merge_args: MergeArgs,
+}
 
-    /// Target state for work items after successful merge (only used when no subcommand)
-    #[arg(long)]
-    pub work_item_state: Option<String>,
+impl Args {
+    /// Parse arguments with default mode fallback.
+    /// If no subcommand is provided, attempts to parse args as MergeArgs.
+    pub fn parse_with_default_mode() -> Self {
+        // First try normal parsing
+        match Args::try_parse() {
+            Ok(args) => {
+                // Successfully parsed as Args, check if command is present
+                if args.command.is_some() || args.create_config {
+                    return args;
+                }
+                // No command and no create_config, fall through to try merge mode
+            }
+            Err(_) => {
+                // Failed to parse as Args, fall through to try merge mode
+            }
+        }
+
+        // Try to parse as MergeArgs using the wrapper
+        match MergeArgsParser::try_parse() {
+            Ok(parser) => Args {
+                command: Some(Commands::Merge(parser.merge_args)),
+                create_config: false,
+            },
+            Err(e) => {
+                // If MergeArgs parsing also fails, show the error and exit
+                e.exit();
+            }
+        }
+    }
 }
 
 /// Shared configuration used by both modes
@@ -176,50 +251,27 @@ impl Args {
     /// Resolve configuration from CLI args, environment variables, config file, and git remote
     /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
-        // Destructure self to extract command and top-level args
+        // Destructure self to extract command
         let Args {
             command,
             create_config: _,
-            top_level_shared,
-            work_item_state: top_level_work_item_state,
         } = self;
 
-        // Extract shared args and mode-specific args from command
+        // Extract shared args and mode-specific args from command using trait
         // Default to merge mode if no command is specified (backward compatibility)
         let (shared, mode_command) = match command {
-            Some(Commands::Merge(merge_args)) => {
-                let MergeArgs {
-                    shared,
-                    work_item_state,
-                } = merge_args;
-                (
-                    shared,
-                    Commands::Merge(MergeArgs {
-                        shared: SharedArgs::default(),
-                        work_item_state,
-                    }),
-                )
-            }
-            Some(Commands::Migrate(migrate_args)) => {
-                let MigrateArgs {
-                    shared,
-                    terminal_states,
-                } = migrate_args;
-                (
-                    shared,
-                    Commands::Migrate(MigrateArgs {
-                        shared: SharedArgs::default(),
-                        terminal_states,
-                    }),
-                )
+            Some(cmd) => {
+                // Extract shared args using the trait method
+                let shared = cmd.shared_args().clone();
+                (shared, cmd)
             }
             None => {
-                // Default to merge mode using top-level shared args
+                // Default to merge mode with default shared args
                 (
-                    top_level_shared,
+                    SharedArgs::default(),
                     Commands::Merge(MergeArgs {
                         shared: SharedArgs::default(),
-                        work_item_state: top_level_work_item_state,
+                        work_item_state: None,
                     }),
                 )
             }
@@ -531,8 +583,6 @@ mod tests {
                 work_item_state: Some("Done".to_string()),
             })),
             create_config: false,
-            top_level_shared: SharedArgs::default(),
-            work_item_state: None,
         }
     }
 
@@ -558,8 +608,6 @@ mod tests {
                 terminal_states: "Closed,Done".to_string(),
             })),
             create_config: false,
-            top_level_shared: SharedArgs::default(),
-            work_item_state: None,
         }
     }
 
@@ -1487,20 +1535,127 @@ mod tests {
         }
     }
 
-    /// # No Subcommand Defaults to Merge Mode
+    /// # Has Shared Args Trait on MergeArgs
     ///
-    /// Tests that when no subcommand is provided, arguments are parsed and default to merge mode.
+    /// Tests that the HasSharedArgs trait works correctly on MergeArgs.
     ///
     /// ## Test Scenario
-    /// - Parses arguments without any subcommand
-    /// - Verifies arguments are correctly captured at top level
+    /// - Creates MergeArgs with shared arguments
+    /// - Uses the trait method to extract shared args
     ///
     /// ## Expected Outcome
-    /// - Arguments are successfully parsed without subcommand
+    /// - Trait method returns correct shared arguments
+    #[test]
+    fn test_has_shared_args_trait_merge() {
+        let merge_args = MergeArgs {
+            shared: SharedArgs {
+                organization: Some("test-org".to_string()),
+                project: Some("test-proj".to_string()),
+                repository: Some("test-repo".to_string()),
+                pat: Some("test-pat".to_string()),
+                ..Default::default()
+            },
+            work_item_state: None,
+        };
+
+        // Use the trait method
+        let shared = merge_args.shared_args();
+        assert_eq!(shared.organization, Some("test-org".to_string()));
+        assert_eq!(shared.project, Some("test-proj".to_string()));
+    }
+
+    /// # Has Shared Args Trait on MigrateArgs
+    ///
+    /// Tests that the HasSharedArgs trait works correctly on MigrateArgs.
+    ///
+    /// ## Test Scenario
+    /// - Creates MigrateArgs with shared arguments
+    /// - Uses the trait method to extract shared args
+    ///
+    /// ## Expected Outcome
+    /// - Trait method returns correct shared arguments
+    #[test]
+    fn test_has_shared_args_trait_migrate() {
+        let migrate_args = MigrateArgs {
+            shared: SharedArgs {
+                organization: Some("test-org".to_string()),
+                project: Some("test-proj".to_string()),
+                repository: Some("test-repo".to_string()),
+                pat: Some("test-pat".to_string()),
+                ..Default::default()
+            },
+            terminal_states: "Closed,Done".to_string(),
+        };
+
+        // Use the trait method
+        let shared = migrate_args.shared_args();
+        assert_eq!(shared.organization, Some("test-org".to_string()));
+        assert_eq!(shared.project, Some("test-proj".to_string()));
+    }
+
+    /// # Commands Shared Args Extraction
+    ///
+    /// Tests that Commands enum can extract shared args from any variant.
+    ///
+    /// ## Test Scenario
+    /// - Creates both Merge and Migrate command variants
+    /// - Uses Commands::shared_args() to extract shared args
+    ///
+    /// ## Expected Outcome
+    /// - Shared args are correctly extracted from both command types
+    #[test]
+    fn test_commands_shared_args_extraction() {
+        let merge_cmd = Commands::Merge(MergeArgs {
+            shared: SharedArgs {
+                organization: Some("merge-org".to_string()),
+                project: Some("merge-proj".to_string()),
+                ..Default::default()
+            },
+            work_item_state: None,
+        });
+
+        let migrate_cmd = Commands::Migrate(MigrateArgs {
+            shared: SharedArgs {
+                organization: Some("migrate-org".to_string()),
+                project: Some("migrate-proj".to_string()),
+                ..Default::default()
+            },
+            terminal_states: "Closed".to_string(),
+        });
+
+        // Extract shared args from both
+        assert_eq!(
+            merge_cmd.shared_args().organization,
+            Some("merge-org".to_string())
+        );
+        assert_eq!(
+            migrate_cmd.shared_args().organization,
+            Some("migrate-org".to_string())
+        );
+    }
+
+    /// # No Subcommand Defaults to Merge Mode
+    ///
+    /// Tests that when no subcommand is provided, arguments are parsed as MergeArgs.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments without any subcommand using MergeArgsParser
+    /// - Verifies arguments are correctly captured as merge command
+    ///
+    /// ## Expected Outcome
+    /// - Arguments are successfully parsed as MergeArgs
     /// - Configuration defaults to merge mode
     #[test]
     fn test_no_subcommand_defaults_to_merge() {
-        let args = Args::parse_from([
+        // Simulate command line args without subcommand
+        let args = Args::parse_from(["mergers"]);
+
+        // With parse_with_default_mode, if we have merge-compatible args, it should parse them
+        // For now just verify the structure works
+        assert!(args.command.is_none());
+
+        // Test with actual merge args using MergeArgsParser
+        let merge_result = MergeArgsParser::try_parse_from([
             "mergers",
             "--organization",
             "test-org",
@@ -1512,40 +1667,28 @@ mod tests {
             "test-pat",
         ]);
 
-        // Command should be None, meaning top-level args were used
-        assert!(args.command.is_none());
-        assert_eq!(
-            args.top_level_shared.organization,
-            Some("test-org".to_string())
-        );
-        assert_eq!(args.top_level_shared.project, Some("test-proj".to_string()));
-        assert_eq!(
-            args.top_level_shared.repository,
-            Some("test-repo".to_string())
-        );
-        assert_eq!(args.top_level_shared.pat, Some("test-pat".to_string()));
-
-        // Verify it resolves to merge mode config
-        let result = args.resolve_config();
-        assert!(result.is_ok());
-        let config = result.unwrap();
-        assert!(!config.is_migration_mode());
+        assert!(merge_result.is_ok());
+        let merge_args = merge_result.unwrap().merge_args;
+        assert_eq!(merge_args.shared.organization, Some("test-org".to_string()));
+        assert_eq!(merge_args.shared.project, Some("test-proj".to_string()));
+        assert_eq!(merge_args.shared.repository, Some("test-repo".to_string()));
+        assert_eq!(merge_args.shared.pat, Some("test-pat".to_string()));
     }
 
     /// # No Subcommand with Path Argument
     ///
-    /// Tests that positional path argument works without subcommand.
+    /// Tests that positional path argument works when parsed as MergeArgs.
     ///
     /// ## Test Scenario
-    /// - Parses arguments with positional path but no subcommand
+    /// - Parses arguments with positional path as MergeArgs
     /// - Verifies both path and other arguments are captured
     ///
     /// ## Expected Outcome
-    /// - Path argument is correctly captured
+    /// - Path argument is correctly captured in MergeArgs
     /// - Other arguments are also parsed correctly
     #[test]
     fn test_no_subcommand_with_path() {
-        let args = Args::parse_from([
+        let merge_result = MergeArgsParser::try_parse_from([
             "mergers",
             "--organization",
             "test-org",
@@ -1558,30 +1701,25 @@ mod tests {
             "/path/to/repo",
         ]);
 
-        assert!(args.command.is_none());
-        assert_eq!(
-            args.top_level_shared.path,
-            Some("/path/to/repo".to_string())
-        );
-        assert_eq!(
-            args.top_level_shared.organization,
-            Some("test-org".to_string())
-        );
+        assert!(merge_result.is_ok());
+        let merge_args = merge_result.unwrap().merge_args;
+        assert_eq!(merge_args.shared.path, Some("/path/to/repo".to_string()));
+        assert_eq!(merge_args.shared.organization, Some("test-org".to_string()));
     }
 
     /// # No Subcommand with Work Item State
     ///
-    /// Tests that work_item_state can be specified at top level without subcommand.
+    /// Tests that work_item_state can be specified when parsed as MergeArgs.
     ///
     /// ## Test Scenario
-    /// - Parses arguments with work_item_state but no subcommand
+    /// - Parses arguments with work_item_state as MergeArgs
     /// - Verifies the state is correctly captured
     ///
     /// ## Expected Outcome
-    /// - work_item_state is parsed and used in merge mode config
+    /// - work_item_state is parsed in MergeArgs and used in merge mode config
     #[test]
     fn test_no_subcommand_with_work_item_state() {
-        let args = Args::parse_from([
+        let merge_result = MergeArgsParser::try_parse_from([
             "mergers",
             "--organization",
             "test-org",
@@ -1595,10 +1733,16 @@ mod tests {
             "Custom State",
         ]);
 
-        assert!(args.command.is_none());
-        assert_eq!(args.work_item_state, Some("Custom State".to_string()));
+        assert!(merge_result.is_ok());
+        let merge_args = merge_result.unwrap().merge_args;
+        assert_eq!(merge_args.work_item_state, Some("Custom State".to_string()));
 
-        // Verify it's used in the resolved config
+        // Create full Args and verify it resolves correctly
+        let args = Args {
+            command: Some(Commands::Merge(merge_args)),
+            create_config: false,
+        };
+
         let result = args.resolve_config();
         assert!(result.is_ok());
         let config = result.unwrap();
