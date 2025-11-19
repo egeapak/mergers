@@ -312,3 +312,262 @@ impl AppState for CherryPickContinueState {
         }
     }
 }
+
+impl CherryPickContinueState {
+    #[cfg(test)]
+    fn new_test(
+        conflicted_files: Vec<String>,
+        output: Vec<String>,
+        is_complete: bool,
+        success: Option<bool>,
+        error_message: Option<String>,
+    ) -> Self {
+        Self {
+            output: Arc::new(Mutex::new(output)),
+            is_complete: Arc::new(Mutex::new(is_complete)),
+            success: Arc::new(Mutex::new(success)),
+            error_message: Arc::new(Mutex::new(error_message)),
+            conflicted_files,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        models::{
+            CherryPickItem, CherryPickStatus, CreatedBy, MergeCommit, PullRequestWithWorkItems,
+        },
+        ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_default},
+        },
+    };
+    use insta::assert_snapshot;
+    use std::path::PathBuf;
+
+    /// # Cherry Pick Continue State - Processing
+    ///
+    /// Tests the cherry-pick continue screen while git command is running.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state in processing mode
+    /// - Shows git output as it streams in
+    /// - Displays commit details and status
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Processing" indicator
+    /// - Should show git output in real-time
+    /// - Should show waiting message
+    #[test]
+    fn test_cherry_pick_continue_processing() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Set up cherry-pick items
+            harness.app.cherry_pick_items = vec![CherryPickItem {
+                commit_id: "abc123def456".to_string(),
+                pr_id: 100,
+                pr_title: "Fix authentication vulnerability".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            harness.app.current_cherry_pick_index = 0;
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+
+            // Set up PR data for details display
+            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+                pr: crate::models::PullRequest {
+                    id: 100,
+                    title: "Fix authentication vulnerability".to_string(),
+                    closed_date: Some("2024-01-16T14:20:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "John Doe".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "abc123def456".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            }];
+
+            // Create state with output showing git is processing
+            let conflicted_files = vec![
+                "src/auth/login.rs".to_string(),
+                "src/auth/session.rs".to_string(),
+            ];
+            let output = vec![
+                "Running pre-commit hooks...".to_string(),
+                "Checking code formatting...".to_string(),
+                "Running clippy...".to_string(),
+            ];
+
+            let state = Box::new(CherryPickContinueState::new_test(
+                conflicted_files,
+                output,
+                false, // Not complete
+                None,
+                None,
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("processing", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick Continue State - Success
+    ///
+    /// Tests the cherry-pick continue screen when commit succeeds.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state in success mode
+    /// - Shows successful git output
+    /// - Displays success indicator and instructions
+    ///
+    /// ## Expected Outcome
+    /// - Should display green success indicator
+    /// - Should show successful git output
+    /// - Should prompt to continue to next commit
+    #[test]
+    fn test_cherry_pick_continue_success() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Set up cherry-pick items
+            harness.app.cherry_pick_items = vec![CherryPickItem {
+                commit_id: "abc123def456".to_string(),
+                pr_id: 200,
+                pr_title: "Add new feature for user management".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            harness.app.current_cherry_pick_index = 0;
+            harness.app.repo_path = Some(PathBuf::from("/home/user/project"));
+
+            // Set up PR data
+            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+                pr: crate::models::PullRequest {
+                    id: 200,
+                    title: "Add new feature for user management".to_string(),
+                    closed_date: Some("2024-02-11T16:45:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Jane Smith".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "abc123def456".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            }];
+
+            // Create state with successful output
+            let conflicted_files = vec!["src/users/manager.rs".to_string()];
+            let output = vec![
+                "Running pre-commit hooks...".to_string(),
+                "Checking code formatting... ✓".to_string(),
+                "Running clippy... ✓".to_string(),
+                "Running tests... ✓".to_string(),
+                "[main abc1234] Add new feature for user management".to_string(),
+                " 1 file changed, 45 insertions(+), 12 deletions(-)".to_string(),
+            ];
+
+            let state = Box::new(CherryPickContinueState::new_test(
+                conflicted_files,
+                output,
+                true,       // Complete
+                Some(true), // Success
+                None,
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("success", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick Continue State - Failure
+    ///
+    /// Tests the cherry-pick continue screen when commit fails.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state in failure mode
+    /// - Shows error output from git
+    /// - Displays retry and abort options
+    ///
+    /// ## Expected Outcome
+    /// - Should display red failure indicator
+    /// - Should show error output
+    /// - Should offer retry (r) and abort (a) options
+    #[test]
+    fn test_cherry_pick_continue_failure() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Set up cherry-pick items
+            harness.app.cherry_pick_items = vec![CherryPickItem {
+                commit_id: "def456ghi789".to_string(),
+                pr_id: 300,
+                pr_title: "Update database schema for performance".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            harness.app.current_cherry_pick_index = 0;
+            harness.app.repo_path = Some(PathBuf::from("/opt/project"));
+
+            // Set up PR data
+            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+                pr: crate::models::PullRequest {
+                    id: 300,
+                    title: "Update database schema for performance".to_string(),
+                    closed_date: Some("2024-03-06T13:10:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Bob Wilson".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "def456ghi789".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            }];
+
+            // Create state with failure output
+            let conflicted_files = vec![
+                "src/db/schema.rs".to_string(),
+                "migrations/001_initial.sql".to_string(),
+            ];
+            let output = vec![
+                "Running pre-commit hooks...".to_string(),
+                "Checking code formatting... ✓".to_string(),
+                "Running clippy...".to_string(),
+                "error: this function has too many arguments (9/7)".to_string(),
+                "  --> src/db/schema.rs:42:1".to_string(),
+                "   |".to_string(),
+                "42 | pub fn update_schema(".to_string(),
+                "   | ^^^^^^^^^^^^^^^^^^^^^".to_string(),
+                "   |".to_string(),
+                "error: could not compile `project` due to previous error".to_string(),
+                "".to_string(),
+                "Pre-commit hook failed. Fix the issues and retry.".to_string(),
+            ];
+
+            let error_message = Some(output.join("\n"));
+
+            let state = Box::new(CherryPickContinueState::new_test(
+                conflicted_files,
+                output,
+                true,        // Complete
+                Some(false), // Failed
+                error_message,
+            ));
+
+            harness.render_state(state);
+            assert_snapshot!("failure", harness.backend());
+        });
+    }
+}
