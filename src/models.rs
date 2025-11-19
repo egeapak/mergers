@@ -5,7 +5,7 @@ use clap::{Args as ClapArgs, Parser, Subcommand};
 use serde::Deserialize;
 
 /// Shared arguments used by both merge and migrate modes
-#[derive(ClapArgs, Clone)]
+#[derive(ClapArgs, Clone, Default)]
 pub struct SharedArgs {
     /// Local repository path (optional positional argument)
     pub path: Option<String>,
@@ -66,6 +66,9 @@ pub struct SharedArgs {
 /// Arguments specific to merge mode
 #[derive(ClapArgs, Clone)]
 pub struct MergeArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
     /// Target state for work items after successful merge
     #[arg(long)]
     pub work_item_state: Option<String>,
@@ -74,6 +77,9 @@ pub struct MergeArgs {
 /// Arguments specific to migration mode
 #[derive(ClapArgs, Clone)]
 pub struct MigrateArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
     /// Terminal work item states (comma-separated)
     #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
     pub terminal_states: String,
@@ -82,6 +88,9 @@ pub struct MigrateArgs {
 /// Arguments specific to cleanup mode
 #[derive(ClapArgs, Clone)]
 pub struct CleanupArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
     /// Target branch to check for merged patches
     #[arg(long)]
     pub target: Option<String>,
@@ -91,19 +100,19 @@ pub struct CleanupArgs {
 #[derive(Subcommand, Clone)]
 pub enum Commands {
     /// Merge mode - merge PRs from dev to target branch
+    #[command(visible_alias = "m")]
     Merge(MergeArgs),
     /// Migration mode - analyze PRs for migration eligibility
+    #[command(visible_alias = "mi")]
     Migrate(MigrateArgs),
     /// Cleanup mode - clean up merged patch branches
+    #[command(visible_alias = "c")]
     Cleanup(CleanupArgs),
 }
 
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    #[command(flatten)]
-    pub shared: SharedArgs,
-
     #[command(subcommand)]
     pub command: Option<Commands>,
 
@@ -187,12 +196,62 @@ impl Args {
     /// Resolve configuration from CLI args, environment variables, config file, and git remote
     /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
-        // Destructure self to extract shared args and command
+        // Destructure self to extract command
         let Args {
-            shared,
             command,
             create_config: _,
         } = self;
+
+        // Extract shared args and mode-specific args from command
+        // Default to merge mode if no command is specified (backward compatibility)
+        let (shared, mode_command) = match command {
+            Some(Commands::Merge(merge_args)) => {
+                let MergeArgs {
+                    shared,
+                    work_item_state,
+                } = merge_args;
+                (
+                    shared,
+                    Commands::Merge(MergeArgs {
+                        shared: SharedArgs::default(),
+                        work_item_state,
+                    }),
+                )
+            }
+            Some(Commands::Migrate(migrate_args)) => {
+                let MigrateArgs {
+                    shared,
+                    terminal_states,
+                } = migrate_args;
+                (
+                    shared,
+                    Commands::Migrate(MigrateArgs {
+                        shared: SharedArgs::default(),
+                        terminal_states,
+                    }),
+                )
+            }
+            Some(Commands::Cleanup(cleanup_args)) => {
+                let CleanupArgs { shared, target } = cleanup_args;
+                (
+                    shared,
+                    Commands::Cleanup(CleanupArgs {
+                        shared: SharedArgs::default(),
+                        target,
+                    }),
+                )
+            }
+            None => {
+                // Default to merge mode with default shared args
+                (
+                    SharedArgs::default(),
+                    Commands::Merge(MergeArgs {
+                        shared: SharedArgs::default(),
+                        work_item_state: None,
+                    }),
+                )
+            }
+        };
 
         // Extract values from shared args
         let SharedArgs {
@@ -299,8 +358,8 @@ impl Args {
         };
 
         // Return appropriate configuration based on command
-        match command {
-            Some(Commands::Migrate(migrate_args)) => {
+        match mode_command {
+            Commands::Migrate(migrate_args) => {
                 // Parse terminal states from CLI
                 let terminal_states_parsed = crate::api::AzureDevOpsClient::parse_terminal_states(
                     &migrate_args.terminal_states,
@@ -315,7 +374,7 @@ impl Args {
                     },
                 })
             }
-            Some(Commands::Merge(merge_args)) => Ok(AppConfig::Default {
+            Commands::Merge(merge_args) => Ok(AppConfig::Default {
                 shared: shared_config,
                 default: DefaultModeConfig {
                     work_item_state: match merge_args.work_item_state {
@@ -326,7 +385,7 @@ impl Args {
                     },
                 },
             }),
-            Some(Commands::Cleanup(cleanup_args)) => {
+            Commands::Cleanup(cleanup_args) => {
                 let target = cleanup_args
                     .target
                     .map(|t| ParsedProperty::Cli(t.clone(), t))
@@ -337,15 +396,6 @@ impl Args {
                     cleanup: CleanupModeConfig { target },
                 })
             }
-            // Default to merge mode if no command is specified (backward compatibility)
-            None => Ok(AppConfig::Default {
-                shared: shared_config,
-                default: DefaultModeConfig {
-                    work_item_state: merged_config
-                        .work_item_state
-                        .unwrap_or_else(|| ParsedProperty::Default("Next Merged".to_string())),
-                },
-            }),
         }
     }
 }
@@ -518,23 +568,23 @@ mod tests {
 
     fn create_sample_args() -> Args {
         Args {
-            shared: SharedArgs {
-                path: Some("/test/repo".to_string()),
-                organization: Some("test-org".to_string()),
-                project: Some("test-project".to_string()),
-                repository: Some("test-repo".to_string()),
-                pat: Some("test-pat".to_string()),
-                dev_branch: Some("dev".to_string()),
-                target_branch: Some("main".to_string()),
-                local_repo: None,
-                tag_prefix: Some("merged-".to_string()),
-                parallel_limit: Some(50),
-                max_concurrent_network: Some(20),
-                max_concurrent_processing: Some(5),
-                since: Some("1w".to_string()),
-                skip_confirmation: true,
-            },
             command: Some(Commands::Merge(MergeArgs {
+                shared: SharedArgs {
+                    path: Some("/test/repo".to_string()),
+                    organization: Some("test-org".to_string()),
+                    project: Some("test-project".to_string()),
+                    repository: Some("test-repo".to_string()),
+                    pat: Some("test-pat".to_string()),
+                    dev_branch: Some("dev".to_string()),
+                    target_branch: Some("main".to_string()),
+                    local_repo: None,
+                    tag_prefix: Some("merged-".to_string()),
+                    parallel_limit: Some(50),
+                    max_concurrent_network: Some(20),
+                    max_concurrent_processing: Some(5),
+                    since: Some("1w".to_string()),
+                    skip_confirmation: true,
+                },
                 work_item_state: Some("Done".to_string()),
             })),
             create_config: false,
@@ -543,23 +593,23 @@ mod tests {
 
     fn create_sample_migrate_args() -> Args {
         Args {
-            shared: SharedArgs {
-                path: Some("/test/repo".to_string()),
-                organization: Some("test-org".to_string()),
-                project: Some("test-project".to_string()),
-                repository: Some("test-repo".to_string()),
-                pat: Some("test-pat".to_string()),
-                dev_branch: Some("dev".to_string()),
-                target_branch: Some("main".to_string()),
-                local_repo: None,
-                tag_prefix: Some("merged-".to_string()),
-                parallel_limit: Some(50),
-                max_concurrent_network: Some(20),
-                max_concurrent_processing: Some(5),
-                since: Some("1w".to_string()),
-                skip_confirmation: true,
-            },
             command: Some(Commands::Migrate(MigrateArgs {
+                shared: SharedArgs {
+                    path: Some("/test/repo".to_string()),
+                    organization: Some("test-org".to_string()),
+                    project: Some("test-project".to_string()),
+                    repository: Some("test-repo".to_string()),
+                    pat: Some("test-pat".to_string()),
+                    dev_branch: Some("dev".to_string()),
+                    target_branch: Some("main".to_string()),
+                    local_repo: None,
+                    tag_prefix: Some("merged-".to_string()),
+                    parallel_limit: Some(50),
+                    max_concurrent_network: Some(20),
+                    max_concurrent_processing: Some(5),
+                    since: Some("1w".to_string()),
+                    skip_confirmation: true,
+                },
                 terminal_states: "Closed,Done".to_string(),
             })),
             create_config: false,
@@ -617,16 +667,15 @@ mod tests {
     fn test_args_parsing_with_all_flags() {
         let args = create_sample_args();
 
-        assert_eq!(args.shared.path, Some("/test/repo".to_string()));
-        assert_eq!(args.shared.organization, Some("test-org".to_string()));
-        assert_eq!(args.shared.project, Some("test-project".to_string()));
-        assert_eq!(args.shared.repository, Some("test-repo".to_string()));
-        assert_eq!(args.shared.pat, Some("test-pat".to_string()));
-        assert_eq!(args.shared.parallel_limit, Some(50));
-        assert!(args.shared.skip_confirmation);
-
-        // Check that it's in merge mode
+        // Check that it's in merge mode and has correct shared args
         if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.path, Some("/test/repo".to_string()));
+            assert_eq!(merge_args.shared.organization, Some("test-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("test-project".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("test-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("test-pat".to_string()));
+            assert_eq!(merge_args.shared.parallel_limit, Some(50));
+            assert!(merge_args.shared.skip_confirmation);
             assert_eq!(merge_args.work_item_state, Some("Done".to_string()));
         } else {
             panic!("Expected merge command");
@@ -959,7 +1008,9 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.shared.organization = None;
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.organization = None;
+        }
 
         let result = args.resolve_config();
 
@@ -999,7 +1050,9 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.shared.project = None;
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.project = None;
+        }
 
         let result = args.resolve_config();
         assert!(result.is_err());
@@ -1033,7 +1086,9 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.shared.repository = None;
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.repository = None;
+        }
 
         let result = args.resolve_config();
         assert!(result.is_err());
@@ -1071,7 +1126,9 @@ mod tests {
         }
 
         let mut args = create_sample_args();
-        args.shared.pat = None;
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.pat = None;
+        }
 
         let result = args.resolve_config();
 
@@ -1098,12 +1155,14 @@ mod tests {
     #[test]
     fn test_args_resolve_config_with_defaults() {
         let mut args = create_sample_args();
-        args.shared.dev_branch = None;
-        args.shared.target_branch = None;
-        args.shared.parallel_limit = None;
-        args.shared.max_concurrent_network = None;
-        args.shared.max_concurrent_processing = None;
-        args.shared.tag_prefix = None;
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.dev_branch = None;
+            merge_args.shared.target_branch = None;
+            merge_args.shared.parallel_limit = None;
+            merge_args.shared.max_concurrent_network = None;
+            merge_args.shared.max_concurrent_processing = None;
+            merge_args.shared.tag_prefix = None;
+        }
 
         let result = args.resolve_config();
         assert!(result.is_ok());
@@ -1281,8 +1340,10 @@ mod tests {
     #[test]
     fn test_path_precedence_over_local_repo() {
         let mut args = create_sample_args();
-        args.shared.path = Some("/path/from/positional".to_string());
-        args.shared.local_repo = Some("/path/from/flag".to_string());
+        if let Some(Commands::Merge(ref mut merge_args)) = args.command {
+            merge_args.shared.path = Some("/path/from/positional".to_string());
+            merge_args.shared.local_repo = Some("/path/from/flag".to_string());
+        }
 
         let result = args.resolve_config();
         assert!(result.is_ok());
@@ -1296,5 +1357,186 @@ mod tests {
                 "/path/from/positional".to_string()
             ))
         );
+    }
+
+    /// # Merge Command Alias
+    ///
+    /// Tests that the 'm' alias correctly parses as merge command.
+    ///
+    /// ## Test Scenario
+    /// - Parses command line arguments using the 'm' alias
+    /// - Verifies the command is correctly interpreted as Merge
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'm' is recognized as merge command
+    /// - Arguments are correctly parsed
+    #[test]
+    fn test_merge_command_alias() {
+        let args = Args::parse_from([
+            "mergers",
+            "m",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(args.command, Some(Commands::Merge(_))));
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("test-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("test-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("test-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("test-pat".to_string()));
+        }
+    }
+
+    /// # Migrate Command Alias
+    ///
+    /// Tests that the 'mi' alias correctly parses as migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses command line arguments using the 'mi' alias
+    /// - Verifies the command is correctly interpreted as Migrate
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'mi' is recognized as migrate command
+    /// - Arguments are correctly parsed
+    #[test]
+    fn test_migrate_command_alias() {
+        let args = Args::parse_from([
+            "mergers",
+            "mi",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--terminal-states",
+            "Closed,Done",
+        ]);
+
+        assert!(matches!(args.command, Some(Commands::Migrate(_))));
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(
+                migrate_args.shared.organization,
+                Some("test-org".to_string())
+            );
+            assert_eq!(migrate_args.shared.project, Some("test-proj".to_string()));
+            assert_eq!(
+                migrate_args.shared.repository,
+                Some("test-repo".to_string())
+            );
+            assert_eq!(migrate_args.shared.pat, Some("test-pat".to_string()));
+            assert_eq!(migrate_args.terminal_states, "Closed,Done");
+        }
+    }
+
+    /// # Full Command Name Parsing
+    ///
+    /// Tests that full command names work alongside aliases.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge and migrate using full command names
+    /// - Ensures backward compatibility with full names
+    ///
+    /// ## Expected Outcome
+    /// - Full command names 'merge' and 'migrate' work correctly
+    /// - Both full names and aliases produce the same result
+    #[test]
+    fn test_full_command_names() {
+        // Test full merge command
+        let merge_args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(merge_args.command, Some(Commands::Merge(_))));
+
+        // Test full migrate command
+        let migrate_args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(migrate_args.command, Some(Commands::Migrate(_))));
+    }
+
+    /// # Command with Positional Path Argument
+    ///
+    /// Tests that subcommands correctly parse positional path argument.
+    ///
+    /// ## Test Scenario
+    /// - Parses commands with positional path argument
+    /// - Tests both merge and migrate commands
+    ///
+    /// ## Expected Outcome
+    /// - Path argument is correctly captured
+    /// - Works with both full command names and aliases
+    #[test]
+    fn test_command_with_path_argument() {
+        // Test merge with path
+        let merge_args = Args::parse_from([
+            "mergers",
+            "m",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(args)) = merge_args.command {
+            assert_eq!(args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected merge command");
+        }
+
+        // Test migrate with path
+        let migrate_args = Args::parse_from([
+            "mergers",
+            "mi",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/another/path",
+        ]);
+
+        if let Some(Commands::Migrate(args)) = migrate_args.command {
+            assert_eq!(args.shared.path, Some("/another/path".to_string()));
+        } else {
+            panic!("Expected migrate command");
+        }
     }
 }

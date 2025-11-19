@@ -198,47 +198,87 @@ impl MigrationTaggingState {
 
     fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let status_text = if self.is_complete {
+            let successfully_tagged = self.total_prs - self.errors.len();
             if self.errors.is_empty() {
                 vec![
                     Line::from(vec![Span::styled(
-                        "✅ Tagging Complete!",
+                        "✅ Migration Complete!",
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
                     )]),
                     Line::from(""),
                     Line::from(vec![Span::styled(
-                        format!(
-                            "Successfully tagged {} PRs with '{}'",
-                            self.total_prs, self.tag_name
-                        ),
-                        Style::default().fg(Color::White),
+                        format!("Tag: '{}'", self.tag_name),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("Total PRs: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("{}", self.total_prs),
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("✅ Tagged: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("{}", successfully_tagged),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("❌ Failed: ", Style::default().fg(Color::Gray)),
+                        Span::styled("0", Style::default().fg(Color::Green)),
+                    ]),
                 ]
             } else {
                 vec![
                     Line::from(vec![Span::styled(
-                        "⚠️  Tagging Complete with Errors",
+                        "⚠️  Migration Complete with Errors",
                         Style::default()
                             .fg(Color::Yellow)
                             .add_modifier(Modifier::BOLD),
                     )]),
                     Line::from(""),
-                    Line::from(vec![
-                        Span::styled(
-                            format!("Tagged: {} PRs", self.total_prs - self.errors.len()),
-                            Style::default().fg(Color::Green),
-                        ),
-                        Span::styled(" | ", Style::default().fg(Color::Gray)),
-                        Span::styled(
-                            format!("Errors: {} PRs", self.errors.len()),
-                            Style::default().fg(Color::Red),
-                        ),
-                    ]),
                     Line::from(vec![Span::styled(
                         format!("Tag: '{}'", self.tag_name),
-                        Style::default().fg(Color::Cyan),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     )]),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("Total PRs: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("{}", self.total_prs),
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("✅ Tagged: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("{}", successfully_tagged),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("❌ Failed: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            format!("{}", self.errors.len()),
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
                 ]
             }
         } else {
@@ -319,19 +359,39 @@ impl MigrationTaggingState {
 
     fn render_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let help_text = if self.is_complete {
-            vec![Line::from(
-                "Press any key to exit tagging and return to results",
-            )]
+            vec![
+                Line::from(vec![Span::styled(
+                    "Migration tagging completed!",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(Color::Gray)),
+                    Span::styled("any key", Style::default().fg(Color::Yellow)),
+                    Span::styled(" to return to results", Style::default().fg(Color::Gray)),
+                    Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("q", Style::default().fg(Color::Yellow)),
+                    Span::styled(" to quit", Style::default().fg(Color::Gray)),
+                ]),
+            ]
         } else {
             vec![
-                Line::from("Tagging PRs in parallel batches..."),
-                Line::from("Please wait for completion"),
+                Line::from(vec![Span::styled(
+                    "Tagging PRs in parallel batches...",
+                    Style::default().fg(Color::Yellow),
+                )]),
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    "Please wait for completion",
+                    Style::default().fg(Color::Gray),
+                )]),
             ]
         };
 
         let help = Paragraph::new(help_text)
             .block(Block::default().borders(Borders::ALL).title("Help"))
-            .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
 
         f.render_widget(help, area);
@@ -345,10 +405,10 @@ impl AppState for MigrationTaggingState {
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(3), // Progress bar
-                Constraint::Length(6), // Status
-                Constraint::Min(4),    // Errors
-                Constraint::Length(3), // Help
+                Constraint::Length(3),  // Progress bar
+                Constraint::Length(10), // Status (increased for statistics)
+                Constraint::Min(4),     // Errors
+                Constraint::Length(4),  // Help (increased for better formatting)
             ])
             .split(f.area());
 
@@ -361,13 +421,9 @@ impl AppState for MigrationTaggingState {
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
         match code {
             KeyCode::Char('q') if self.is_complete => StateChange::Exit,
-            _ if self.is_complete => {
-                // Any key returns to results when complete
-                StateChange::Change(Box::new(super::MigrationResultsState::new()))
-            }
             KeyCode::Char('q') => StateChange::Exit,
-            _ => {
-                // Auto-start tagging and check progress
+            KeyCode::Null => {
+                // Auto-start tagging and check progress (but don't transition)
                 if !self.is_complete {
                     if !self.started {
                         // Start tagging automatically
@@ -379,6 +435,11 @@ impl AppState for MigrationTaggingState {
                 }
                 StateChange::Keep
             }
+            _ if self.is_complete => {
+                // Any actual key press returns to results when complete
+                StateChange::Change(Box::new(super::MigrationResultsState::new()))
+            }
+            _ => StateChange::Keep,
         }
     }
 }
@@ -419,6 +480,84 @@ mod tests {
             harness.render_state(Box::new(state));
 
             assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+
+    /// # Migration Tagging State - Success
+    ///
+    /// Tests the migration tagging screen after successful completion.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration tagging state
+    /// - Sets state to complete with all PRs tagged successfully
+    /// - Renders the success display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Migration Complete!" message
+    /// - Should show statistics: Total PRs, Tagged count, Failed count (0)
+    /// - Should show tag name
+    /// - Should display help text for user to continue
+    #[test]
+    fn test_migration_tagging_success() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 5;
+            state.tagged_prs = 5;
+            state.is_complete = true;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("success", harness.backend());
+        });
+    }
+
+    /// # Migration Tagging State - Success with Errors
+    ///
+    /// Tests the migration tagging screen after completion with errors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration tagging state
+    /// - Sets state to complete with some PRs failed
+    /// - Adds error details for failed PRs
+    /// - Renders the completion display with errors
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Migration Complete with Errors" message
+    /// - Should show statistics: Total PRs, Tagged count, Failed count
+    /// - Should show tag name
+    /// - Should list error details for failed PRs
+    /// - Should display help text for user to continue
+    #[test]
+    fn test_migration_tagging_success_with_errors() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 5;
+            state.tagged_prs = 5;
+            state.is_complete = true;
+            state.errors = vec![
+                TaggingError {
+                    pr_id: 123,
+                    pr_title: "Fix authentication bug".to_string(),
+                    error: "Network timeout".to_string(),
+                },
+                TaggingError {
+                    pr_id: 456,
+                    pr_title: "Update dependencies".to_string(),
+                    error: "Permission denied".to_string(),
+                },
+            ];
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("success_with_errors", harness.backend());
         });
     }
 }
