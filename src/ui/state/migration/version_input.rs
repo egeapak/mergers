@@ -269,4 +269,56 @@ mod tests {
             assert_snapshot!("with_version", harness.backend());
         });
     }
+
+    /// # Migration Version Input State - With Manual Overrides
+    ///
+    /// Tests the version input screen showing PRs with manual overrides.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration version input state with version entered
+    /// - Loads migration analysis with PRs that have manual overrides
+    /// - Some PRs in unsure/not_merged tabs have manual overrides (both ✅ eligible and ❌ not-eligible)
+    /// - Renders the "PRs NOT to be Tagged" list with override indicators
+    ///
+    /// ## Expected Outcome
+    /// - Should display PRs with ✅ [Manual Override - Eligible] indicator
+    /// - Should display PRs with ❌ [Manual Override - Not Eligible] indicator
+    /// - Should show proper counts for eligible vs not-marked PRs
+    #[test]
+    fn test_migration_version_input_with_manual_overrides() {
+        use std::collections::HashSet;
+        use crate::models::ManualOverrides;
+        use crate::ui::testing::create_test_migration_analysis;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut analysis = create_test_migration_analysis();
+
+            // Create manual overrides: PR 102 marked as eligible (in not_merged), PR 101 marked as not eligible
+            let mut marked_as_eligible = HashSet::new();
+            marked_as_eligible.insert(102);  // This PR will be in not_merged but marked eligible
+
+            let mut marked_as_not_eligible = HashSet::new();
+            marked_as_not_eligible.insert(101); // This PR is marked as not eligible
+
+            analysis.manual_overrides = ManualOverrides {
+                marked_as_eligible,
+                marked_as_not_eligible,
+            };
+
+            // Keep PR 101 in eligible_prs (but has manual override to not-eligible)
+            // Keep PR 102 in not_merged_prs (has manual override to eligible)
+            // This simulates a state where user has made manual changes
+
+            harness.app.migration_analysis = Some(analysis);
+
+            let mut state = MigrationVersionInputState::new();
+            state.input = "v2.0.0".to_string();
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("with_manual_overrides", harness.backend());
+        });
+    }
 }

@@ -1,0 +1,34 @@
+---
+source: src/ui/state/migration/results.rs
+expression: harness.backend()
+---
+" ✅ Eligible (3) │ ❓ Unsure (0) │ ❌ Not Merged (0)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
+"                                                                                "
+"                                                                                "
+"┌Eligible PRs - Ready for tagging──────────────────────────────────────────────┐"
+"│#100 Fix login bug → Not Eligible                                             │"
+"│  By: Alice Johnson | Work Items: 1                                           │"
+"│#101 Update user profile page design → Not Eligible                           │"
+"│  By: Bob Wilson | Work Items: 1                                              │"
+"│#102 Add analytics tracking ✅ [Manual] → Not Eligible                        │" Hidden by multi-width symbols: [(30, " ")]
+"│  By: Carol Martinez | Work Items: 2                                          │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"│                                                                              │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
+"┌Help──────────────────────────────────────────────────────────────────────────┐"
+"│Navigation:                                                                   │"
+"│↑/↓ - Navigate PRs | ←/→ - Switch tabs | o - Open PR in browser               │"
+"│d - Toggle details | q - Quit                                                 │"
+"│Toggle Eligibility:                                                           │"
+"│Space - Toggle PR eligibility (cycles through states)                         │"
+"│Next Step:                                                                    │"
+"└──────────────────────────────────────────────────────────────────────────────┘"
