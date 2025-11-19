@@ -1,8 +1,7 @@
 use crate::{
     git,
-    models::CherryPickStatus,
     ui::App,
-    ui::state::{AppState, CherryPickState, StateChange},
+    ui::state::{AppState, CherryPickContinueState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -328,25 +327,11 @@ impl AppState for ConflictResolutionState {
                 // Check if conflicts are resolved
                 match git::check_conflicts_resolved(repo_path) {
                     Ok(true) => {
-                        // Continue cherry-pick
-                        match git::continue_cherry_pick(repo_path) {
-                            Ok(_) => {
-                                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                                    CherryPickStatus::Success;
-                                app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(
-                                    CherryPickState::continue_after_conflict(),
-                                ))
-                            }
-                            Err(e) => {
-                                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                                    CherryPickStatus::Failed(e.to_string());
-                                app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(
-                                    CherryPickState::continue_after_conflict(),
-                                ))
-                            }
-                        }
+                        // Transition to CherryPickContinueState to process the commit with feedback
+                        StateChange::Change(Box::new(CherryPickContinueState::new(
+                            self.conflicted_files.clone(),
+                            repo_path.clone(),
+                        )))
                     }
                     Ok(false) => StateChange::Keep, // Conflicts not resolved
                     Err(_) => StateChange::Keep,
