@@ -405,10 +405,10 @@ impl AppState for MigrationTaggingState {
             .direction(Direction::Vertical)
             .margin(2)
             .constraints([
-                Constraint::Length(3), // Progress bar
-                Constraint::Length(6), // Status
-                Constraint::Min(4),    // Errors
-                Constraint::Length(3), // Help
+                Constraint::Length(3),  // Progress bar
+                Constraint::Length(10), // Status (increased for statistics)
+                Constraint::Min(4),     // Errors
+                Constraint::Length(4),  // Help (increased for better formatting)
             ])
             .split(f.area());
 
@@ -480,6 +480,84 @@ mod tests {
             harness.render_state(Box::new(state));
 
             assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+
+    /// # Migration Tagging State - Success
+    ///
+    /// Tests the migration tagging screen after successful completion.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration tagging state
+    /// - Sets state to complete with all PRs tagged successfully
+    /// - Renders the success display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Migration Complete!" message
+    /// - Should show statistics: Total PRs, Tagged count, Failed count (0)
+    /// - Should show tag name
+    /// - Should display help text for user to continue
+    #[test]
+    fn test_migration_tagging_success() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 5;
+            state.tagged_prs = 5;
+            state.is_complete = true;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("success", harness.backend());
+        });
+    }
+
+    /// # Migration Tagging State - Success with Errors
+    ///
+    /// Tests the migration tagging screen after completion with errors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration tagging state
+    /// - Sets state to complete with some PRs failed
+    /// - Adds error details for failed PRs
+    /// - Renders the completion display with errors
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Migration Complete with Errors" message
+    /// - Should show statistics: Total PRs, Tagged count, Failed count
+    /// - Should show tag name
+    /// - Should list error details for failed PRs
+    /// - Should display help text for user to continue
+    #[test]
+    fn test_migration_tagging_success_with_errors() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.version = Some("v1.0.0".to_string());
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 5;
+            state.tagged_prs = 5;
+            state.is_complete = true;
+            state.errors = vec![
+                TaggingError {
+                    pr_id: 123,
+                    pr_title: "Fix authentication bug".to_string(),
+                    error: "Network timeout".to_string(),
+                },
+                TaggingError {
+                    pr_id: 456,
+                    pr_title: "Update dependencies".to_string(),
+                    error: "Permission denied".to_string(),
+                },
+            ];
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("success_with_errors", harness.backend());
         });
     }
 }
