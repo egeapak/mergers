@@ -245,6 +245,7 @@ fn test_args_resolution_with_env() {
             );
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
+        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
     }
 
     // Clean up
@@ -340,6 +341,7 @@ target_branch = "main"
             assert_eq!(shared.parallel_limit, ParsedProperty::Default(300)); // Uses default value instead of file value
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
+        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
     }
 }
 
@@ -423,6 +425,7 @@ fn test_migration_mode_initialization() {
             );
         }
         AppConfig::Default { .. } => panic!("Expected migration mode"),
+        AppConfig::Cleanup { .. } => panic!("Expected migration mode"),
     }
 
     // Clean up
@@ -482,6 +485,7 @@ fn test_default_mode_initialization() {
             );
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
+        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
     }
 
     // Clean up
@@ -604,6 +608,7 @@ fn test_args_cli_precedence() {
             ); // CLI wins
         }
         AppConfig::Migration { .. } => panic!("Expected default mode"),
+        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
     }
 
     // Clean up

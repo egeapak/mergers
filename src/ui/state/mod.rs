@@ -1,8 +1,10 @@
+mod cleanup;
 mod default;
 mod migration;
 mod shared;
 
 use async_trait::async_trait;
+pub use cleanup::*;
 pub use default::*;
 pub use migration::*;
 pub use shared::*;
@@ -30,6 +32,8 @@ pub fn create_initial_state(config: Option<crate::models::AppConfig>) -> Box<dyn
         if config.shared().skip_confirmation {
             if config.is_migration_mode() {
                 Box::new(MigrationDataLoadingState::new(config))
+            } else if config.is_cleanup_mode() {
+                Box::new(CleanupDataLoadingState::new(config))
             } else {
                 Box::new(DataLoadingState::new())
             }

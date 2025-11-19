@@ -732,6 +732,116 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// List all local branches matching a pattern
+pub fn list_local_branches(repo_path: &Path, pattern: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["branch", "--list", pattern])
+        .output()
+        .context("Failed to list local branches")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Git branch list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let branches: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().trim_start_matches("* ").to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    Ok(branches)
+}
+
+/// Parse a patch branch name into its components
+/// Expected format: patch/<target>-<version>
+fn parse_patch_branch(branch_name: &str) -> Option<(String, String)> {
+    if !branch_name.starts_with("patch/") {
+        return None;
+    }
+
+    let remainder = &branch_name[6..]; // Skip "patch/"
+
+    // Find the last hyphen to split target and version
+    if let Some(last_hyphen_idx) = remainder.rfind('-') {
+        let target = remainder[..last_hyphen_idx].to_string();
+        let version = remainder[last_hyphen_idx + 1..].to_string();
+        Some((target, version))
+    } else {
+        None
+    }
+}
+
+/// List all patch branches with parsed metadata
+pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::CleanupBranch>> {
+    let branches = list_local_branches(repo_path, "patch/*")?;
+
+    let mut patch_branches = Vec::new();
+    for branch in branches {
+        if let Some((target, version)) = parse_patch_branch(&branch) {
+            patch_branches.push(crate::models::CleanupBranch {
+                name: branch.clone(),
+                target: target.clone(),
+                version: version.clone(),
+                is_merged: false, // Will be determined later
+                selected: false,
+                status: crate::models::CleanupStatus::Pending,
+            });
+        }
+    }
+
+    Ok(patch_branches)
+}
+
+/// Get all commit hashes from a specific branch
+fn get_branch_commits(repo_path: &Path, branch_name: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%H", branch_name])
+        .output()
+        .context("Failed to get branch commits")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to get commits from branch: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let commits: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    Ok(commits)
+}
+
+/// Check if all commits from a patch branch are in the target branch
+pub fn check_patch_merged(
+    repo_path: &Path,
+    patch_branch: &str,
+    target_branch: &str,
+) -> Result<bool> {
+    // Get commit history from target branch
+    let target_history = get_target_branch_history(repo_path, target_branch)?;
+
+    // Get all commits from the patch branch
+    let patch_commits = get_branch_commits(repo_path, patch_branch)?;
+
+    // Check if all patch commits are in target
+    for commit in patch_commits {
+        if !target_history.commit_hashes.contains(&commit) {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
