@@ -366,6 +366,7 @@ pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> 
 pub struct CommitHistory {
     pub commit_hashes: HashSet<String>, // All commit hashes in target branch
     pub commit_messages: Vec<String>,   // All commit messages in target branch
+    pub commit_bodies: Vec<String>,     // All commit bodies in target branch
 }
 
 /// Get complete commit history for target branch once to avoid repeated git calls
@@ -409,9 +410,28 @@ pub fn get_target_branch_history(repo_path: &Path, target_branch: &str) -> Resul
         .filter(|line| !line.is_empty())
         .collect();
 
+    // Get all commit bodies in target branch (full message including body)
+    let body_output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%b", target_branch])
+        .output()
+        .context("Failed to get commit bodies from target branch")?;
+
+    if !body_output.status.success() {
+        let stderr = String::from_utf8_lossy(&body_output.stderr);
+        anyhow::bail!("Failed to get commit bodies from target branch: {}", stderr);
+    }
+
+    let commit_bodies: Vec<String> = String::from_utf8_lossy(&body_output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
     Ok(CommitHistory {
         commit_hashes,
         commit_messages,
+        commit_bodies,
     })
 }
 
@@ -796,11 +816,25 @@ pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::Cleanu
     Ok(patch_branches)
 }
 
-/// Get all commit hashes from a specific branch
+/// Get all commit hashes from a specific branch (excluding those already on the base branch)
 fn get_branch_commits(repo_path: &Path, branch_name: &str) -> Result<Vec<String>> {
+    // Use ^main to exclude commits already on main
+    // This gets only commits unique to the branch
+    let range_arg = if branch_name.contains('/') {
+        // For patch branches like "patch/main-6.6.2", exclude commits from main
+        let base = branch_name
+            .split('/')
+            .nth(1)
+            .and_then(|s| s.split('-').next())
+            .unwrap_or("main");
+        format!("{}..{}", base, branch_name)
+    } else {
+        branch_name.to_string()
+    };
+
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(["log", "--format=%H", branch_name])
+        .args(["log", "--format=%H", &range_arg])
         .output()
         .context("Failed to get branch commits")?;
 
@@ -866,7 +900,26 @@ pub fn check_patch_merged(
         return Ok(true);
     }
 
-    // Strategy 2: Check commit messages for squash merges
+    // Strategy 2: Check for cherry-pick references in commit bodies
+    // Look for "cherry-picked from <hash>" or "(cherry picked from commit <hash>)" patterns
+    // Each line in commit_bodies is a separate line from all commit bodies
+    let cherry_pick_found_count = patch_commits
+        .iter()
+        .filter(|commit_hash| {
+            target_history.commit_bodies.iter().any(|line| {
+                line.contains(&format!("cherry-picked from {}", commit_hash))
+                    || line.contains(&format!("cherry picked from commit {}", commit_hash))
+                    || line.contains(&format!("(cherry picked from commit {})", commit_hash))
+            })
+        })
+        .count();
+
+    let cherry_pick_threshold = (patch_commits.len() as f64 * 0.8).ceil() as usize;
+    if cherry_pick_found_count >= cherry_pick_threshold {
+        return Ok(true);
+    }
+
+    // Strategy 3: Check commit messages for squash merges
     // Get commit messages from the patch branch
     let patch_messages = get_branch_commit_messages(repo_path, patch_branch)?;
 
@@ -2051,6 +2104,7 @@ mod tests {
         let history = CommitHistory {
             commit_messages: vec!["Some commit message".to_string()],
             commit_hashes,
+            commit_bodies: vec![],
         };
 
         // Short titles should return false to avoid false positives
@@ -2082,6 +2136,7 @@ mod tests {
                 "Update user interface design".to_string(),
             ],
             commit_hashes,
+            commit_bodies: vec![],
         };
 
         // Should match with 80% word overlap
@@ -2136,6 +2191,7 @@ mod tests {
                 "Update for work item (654)".to_string(),
             ],
             commit_hashes,
+            commit_bodies: vec![],
         };
 
         // Test various PR ID formats
@@ -2593,6 +2649,101 @@ mod tests {
         assert!(
             is_merged,
             "Patch with 80% message match should be detected as merged"
+        );
+    }
+
+    /// # Check Patch Merged (Cherry-Pick References)
+    ///
+    /// Tests detection of squash merges with cherry-pick reference messages.
+    ///
+    /// ## Test Scenario
+    /// - Creates a patch branch with 3 commits
+    /// - Squash merges to target with "cherry-picked from" references in body
+    /// - Tests that merge is detected via cherry-pick references
+    ///
+    /// ## Expected Outcome
+    /// - Returns true when cherry-pick references are found in commit bodies
+    /// - Handles both "cherry-picked from" and "(cherry picked from commit)" formats
+    #[test]
+    fn test_check_patch_merged_cherry_pick_references() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create patch branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "patch/main-5.0.0"])
+            .output()
+            .unwrap();
+
+        // Add 3 commits and capture their hashes
+        let mut commit_hashes = Vec::new();
+
+        for i in 1..=3 {
+            fs::write(repo_path.join(format!("file{}.txt", i)), "content").unwrap();
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["add", "."])
+                .output()
+                .unwrap();
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["commit", "-m", &format!("Commit {}", i)])
+                .output()
+                .unwrap();
+
+            // Get the commit hash
+            let hash_output = Command::new("git")
+                .current_dir(&repo_path)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap();
+            let hash = String::from_utf8_lossy(&hash_output.stdout)
+                .trim()
+                .to_string();
+            commit_hashes.push(hash);
+        }
+
+        // Switch back to main and create squash merge with cherry-pick references
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "--squash", "patch/main-5.0.0"])
+            .output()
+            .unwrap();
+
+        // Create commit with cherry-pick references in body
+        let commit_body = format!(
+            "Squash merge patch/main-5.0.0\n\ncherry-picked from {}\ncherry-picked from {}\n(cherry picked from commit {})",
+            commit_hashes[0], commit_hashes[1], commit_hashes[2]
+        );
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", &commit_body])
+            .output()
+            .unwrap();
+
+        // Test that patch is detected as merged via cherry-pick references
+        let is_merged = check_patch_merged(&repo_path, "patch/main-5.0.0", "main").unwrap();
+        assert!(
+            is_merged,
+            "Squash-merged patch with cherry-pick references should be detected"
         );
     }
 }
