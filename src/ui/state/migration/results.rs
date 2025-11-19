@@ -652,8 +652,8 @@ mod tests {
     /// - Should show the action indicator "→ Not Eligible" for what Space will do
     #[test]
     fn test_migration_results_manual_eligible_override() {
-        use std::collections::HashSet;
         use crate::models::ManualOverrides;
+        use std::collections::HashSet;
 
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_migration();
@@ -700,8 +700,8 @@ mod tests {
     /// - Should show the action indicator "→ Eligible" for what Space will do
     #[test]
     fn test_migration_results_manual_not_eligible_override() {
-        use std::collections::HashSet;
         use crate::models::ManualOverrides;
+        use std::collections::HashSet;
 
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_migration();

@@ -286,9 +286,9 @@ mod tests {
     /// - Should show proper counts for eligible vs not-marked PRs
     #[test]
     fn test_migration_version_input_with_manual_overrides() {
-        use std::collections::HashSet;
         use crate::models::ManualOverrides;
         use crate::ui::testing::create_test_migration_analysis;
+        use std::collections::HashSet;
 
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_migration();
@@ -298,7 +298,7 @@ mod tests {
 
             // Create manual overrides: PR 102 marked as eligible (in not_merged), PR 101 marked as not eligible
             let mut marked_as_eligible = HashSet::new();
-            marked_as_eligible.insert(102);  // This PR will be in not_merged but marked eligible
+            marked_as_eligible.insert(102); // This PR will be in not_merged but marked eligible
 
             let mut marked_as_not_eligible = HashSet::new();
             marked_as_not_eligible.insert(101); // This PR is marked as not eligible
