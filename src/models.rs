@@ -105,6 +105,15 @@ pub struct Args {
     /// Create a sample configuration file
     #[arg(long)]
     pub create_config: bool,
+
+    /// Shared arguments that can be provided at the top level (for backward compatibility)
+    /// when no subcommand is specified, defaults to merge mode
+    #[command(flatten)]
+    pub top_level_shared: SharedArgs,
+
+    /// Target state for work items after successful merge (only used when no subcommand)
+    #[arg(long)]
+    pub work_item_state: Option<String>,
 }
 
 /// Shared configuration used by both modes
@@ -167,10 +176,12 @@ impl Args {
     /// Resolve configuration from CLI args, environment variables, config file, and git remote
     /// Priority: CLI args > environment variables > git remote > config file > defaults
     pub fn resolve_config(self) -> Result<AppConfig> {
-        // Destructure self to extract command
+        // Destructure self to extract command and top-level args
         let Args {
             command,
             create_config: _,
+            top_level_shared,
+            work_item_state: top_level_work_item_state,
         } = self;
 
         // Extract shared args and mode-specific args from command
@@ -203,12 +214,12 @@ impl Args {
                 )
             }
             None => {
-                // Default to merge mode with default shared args
+                // Default to merge mode using top-level shared args
                 (
-                    SharedArgs::default(),
+                    top_level_shared,
                     Commands::Merge(MergeArgs {
                         shared: SharedArgs::default(),
-                        work_item_state: None,
+                        work_item_state: top_level_work_item_state,
                     }),
                 )
             }
@@ -520,6 +531,8 @@ mod tests {
                 work_item_state: Some("Done".to_string()),
             })),
             create_config: false,
+            top_level_shared: SharedArgs::default(),
+            work_item_state: None,
         }
     }
 
@@ -545,6 +558,8 @@ mod tests {
                 terminal_states: "Closed,Done".to_string(),
             })),
             create_config: false,
+            top_level_shared: SharedArgs::default(),
+            work_item_state: None,
         }
     }
 
@@ -1469,6 +1484,132 @@ mod tests {
             assert_eq!(args.shared.path, Some("/another/path".to_string()));
         } else {
             panic!("Expected migrate command");
+        }
+    }
+
+    /// # No Subcommand Defaults to Merge Mode
+    ///
+    /// Tests that when no subcommand is provided, arguments are parsed and default to merge mode.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments without any subcommand
+    /// - Verifies arguments are correctly captured at top level
+    ///
+    /// ## Expected Outcome
+    /// - Arguments are successfully parsed without subcommand
+    /// - Configuration defaults to merge mode
+    #[test]
+    fn test_no_subcommand_defaults_to_merge() {
+        let args = Args::parse_from([
+            "mergers",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        // Command should be None, meaning top-level args were used
+        assert!(args.command.is_none());
+        assert_eq!(
+            args.top_level_shared.organization,
+            Some("test-org".to_string())
+        );
+        assert_eq!(args.top_level_shared.project, Some("test-proj".to_string()));
+        assert_eq!(
+            args.top_level_shared.repository,
+            Some("test-repo".to_string())
+        );
+        assert_eq!(args.top_level_shared.pat, Some("test-pat".to_string()));
+
+        // Verify it resolves to merge mode config
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(!config.is_migration_mode());
+    }
+
+    /// # No Subcommand with Path Argument
+    ///
+    /// Tests that positional path argument works without subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments with positional path but no subcommand
+    /// - Verifies both path and other arguments are captured
+    ///
+    /// ## Expected Outcome
+    /// - Path argument is correctly captured
+    /// - Other arguments are also parsed correctly
+    #[test]
+    fn test_no_subcommand_with_path() {
+        let args = Args::parse_from([
+            "mergers",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/path/to/repo",
+        ]);
+
+        assert!(args.command.is_none());
+        assert_eq!(
+            args.top_level_shared.path,
+            Some("/path/to/repo".to_string())
+        );
+        assert_eq!(
+            args.top_level_shared.organization,
+            Some("test-org".to_string())
+        );
+    }
+
+    /// # No Subcommand with Work Item State
+    ///
+    /// Tests that work_item_state can be specified at top level without subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments with work_item_state but no subcommand
+    /// - Verifies the state is correctly captured
+    ///
+    /// ## Expected Outcome
+    /// - work_item_state is parsed and used in merge mode config
+    #[test]
+    fn test_no_subcommand_with_work_item_state() {
+        let args = Args::parse_from([
+            "mergers",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--work-item-state",
+            "Custom State",
+        ]);
+
+        assert!(args.command.is_none());
+        assert_eq!(args.work_item_state, Some("Custom State".to_string()));
+
+        // Verify it's used in the resolved config
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+        let config = result.unwrap();
+
+        if let AppConfig::Default { default, .. } = config {
+            assert_eq!(
+                default.work_item_state,
+                ParsedProperty::Cli("Custom State".to_string(), "Custom State".to_string())
+            );
+        } else {
+            panic!("Expected default config");
         }
     }
 }
