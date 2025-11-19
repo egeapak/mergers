@@ -122,7 +122,7 @@ impl AppState for MigrationVersionInputState {
         let not_marked_items: Vec<Line> = if not_marked_prs.is_empty() {
             vec![
                 Line::from(vec![Span::styled(
-                    "🎉 All PRs will be tagged!",
+                    "All PRs will be tagged!",
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
@@ -135,8 +135,8 @@ impl AppState for MigrationVersionInputState {
             for pr in &not_marked_prs {
                 // Check if this PR has a manual override
                 let override_indicator = match app.has_manual_override(pr.pr.id) {
-                    Some(true) => " [📌 Manual Override]",
-                    Some(false) => " [❌ Manual Override]",
+                    Some(true) => " [Manual Override - Eligible]",
+                    Some(false) => " [Manual Override - Not Eligible]",
                     None => "",
                 };
 

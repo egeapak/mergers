@@ -262,25 +262,25 @@ impl MigrationState {
                 let (override_indicator, space_action) = match app.has_manual_override(pr.pr.id) {
                     Some(true) => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →❌", // will mark not eligible
-                            MigrationTab::Unsure => " →◎",    // will reset override
-                            MigrationTab::NotMerged => " →◎", // will reset override
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Reset",          // will reset override
+                            MigrationTab::NotMerged => " → Reset",       // will reset override
                         };
-                        (" [📌 Manual]", action)
+                        (" [Manual]", action)
                     }
                     Some(false) => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →◎",   // will reset override
-                            MigrationTab::Unsure => " →📌",    // will mark eligible
-                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " → Reset",     // will reset override
+                            MigrationTab::Unsure => " → Eligible",    // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible", // will mark eligible
                         };
-                        (" [❌ Manual]", action)
+                        (" [Manual Override]", action)
                     }
                     None => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →❌",  // will mark not eligible
-                            MigrationTab::Unsure => " →📌",    // will mark eligible
-                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Eligible",       // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible",    // will mark eligible
                         };
                         ("", action)
                     }
