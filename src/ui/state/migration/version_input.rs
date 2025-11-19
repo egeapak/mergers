@@ -135,8 +135,8 @@ impl AppState for MigrationVersionInputState {
             for pr in &not_marked_prs {
                 // Check if this PR has a manual override
                 let override_indicator = match app.has_manual_override(pr.pr.id) {
-                    Some(true) => " [Manual Override - Eligible]",
-                    Some(false) => " [Manual Override - Not Eligible]",
+                    Some(true) => " ✅ [Manual Override - Eligible]",
+                    Some(false) => " ❌ [Manual Override - Not Eligible]",
                     None => "",
                 };
 

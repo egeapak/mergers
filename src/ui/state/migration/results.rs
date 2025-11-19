@@ -266,7 +266,7 @@ impl MigrationState {
                             MigrationTab::Unsure => " → Reset",          // will reset override
                             MigrationTab::NotMerged => " → Reset",       // will reset override
                         };
-                        (" [Manual]", action)
+                        (" ✅ [Manual]", action)
                     }
                     Some(false) => {
                         let action = match self.current_tab {
@@ -274,7 +274,7 @@ impl MigrationState {
                             MigrationTab::Unsure => " → Eligible",    // will mark eligible
                             MigrationTab::NotMerged => " → Eligible", // will mark eligible
                         };
-                        (" [Manual Override]", action)
+                        (" ❌ [Manual Override]", action)
                     }
                     None => {
                         let action = match self.current_tab {
