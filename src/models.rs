@@ -1290,4 +1290,185 @@ mod tests {
             ))
         );
     }
+
+    /// # Merge Command Alias
+    ///
+    /// Tests that the 'm' alias correctly parses as merge command.
+    ///
+    /// ## Test Scenario
+    /// - Parses command line arguments using the 'm' alias
+    /// - Verifies the command is correctly interpreted as Merge
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'm' is recognized as merge command
+    /// - Arguments are correctly parsed
+    #[test]
+    fn test_merge_command_alias() {
+        let args = Args::parse_from([
+            "mergers",
+            "m",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(args.command, Some(Commands::Merge(_))));
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("test-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("test-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("test-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("test-pat".to_string()));
+        }
+    }
+
+    /// # Migrate Command Alias
+    ///
+    /// Tests that the 'mi' alias correctly parses as migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses command line arguments using the 'mi' alias
+    /// - Verifies the command is correctly interpreted as Migrate
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'mi' is recognized as migrate command
+    /// - Arguments are correctly parsed
+    #[test]
+    fn test_migrate_command_alias() {
+        let args = Args::parse_from([
+            "mergers",
+            "mi",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--terminal-states",
+            "Closed,Done",
+        ]);
+
+        assert!(matches!(args.command, Some(Commands::Migrate(_))));
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(
+                migrate_args.shared.organization,
+                Some("test-org".to_string())
+            );
+            assert_eq!(migrate_args.shared.project, Some("test-proj".to_string()));
+            assert_eq!(
+                migrate_args.shared.repository,
+                Some("test-repo".to_string())
+            );
+            assert_eq!(migrate_args.shared.pat, Some("test-pat".to_string()));
+            assert_eq!(migrate_args.terminal_states, "Closed,Done");
+        }
+    }
+
+    /// # Full Command Name Parsing
+    ///
+    /// Tests that full command names work alongside aliases.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge and migrate using full command names
+    /// - Ensures backward compatibility with full names
+    ///
+    /// ## Expected Outcome
+    /// - Full command names 'merge' and 'migrate' work correctly
+    /// - Both full names and aliases produce the same result
+    #[test]
+    fn test_full_command_names() {
+        // Test full merge command
+        let merge_args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(merge_args.command, Some(Commands::Merge(_))));
+
+        // Test full migrate command
+        let migrate_args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(matches!(migrate_args.command, Some(Commands::Migrate(_))));
+    }
+
+    /// # Command with Positional Path Argument
+    ///
+    /// Tests that subcommands correctly parse positional path argument.
+    ///
+    /// ## Test Scenario
+    /// - Parses commands with positional path argument
+    /// - Tests both merge and migrate commands
+    ///
+    /// ## Expected Outcome
+    /// - Path argument is correctly captured
+    /// - Works with both full command names and aliases
+    #[test]
+    fn test_command_with_path_argument() {
+        // Test merge with path
+        let merge_args = Args::parse_from([
+            "mergers",
+            "m",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(args)) = merge_args.command {
+            assert_eq!(args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected merge command");
+        }
+
+        // Test migrate with path
+        let migrate_args = Args::parse_from([
+            "mergers",
+            "mi",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/another/path",
+        ]);
+
+        if let Some(Commands::Migrate(args)) = migrate_args.command {
+            assert_eq!(args.shared.path, Some("/another/path".to_string()));
+        } else {
+            panic!("Expected migrate command");
+        }
+    }
 }
