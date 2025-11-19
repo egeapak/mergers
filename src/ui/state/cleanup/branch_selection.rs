@@ -229,3 +229,148 @@ impl AppState for CleanupBranchSelectionState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{models::CleanupBranch, models::CleanupStatus, ui::testing::*};
+    use insta::assert_snapshot;
+
+    /// # Cleanup Branch Selection Empty List Test
+    ///
+    /// Tests the branch selection screen with no branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Renders the branch selection screen with empty branch list
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Select Branches to Delete (0 selected)" title
+    /// - Should show empty branch table
+    /// - Should display help text with navigation instructions
+    #[test]
+    fn test_branch_selection_empty() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+            // Leave cleanup_branches empty
+            let state = Box::new(CleanupBranchSelectionState::new());
+
+            harness.render_state(state);
+            assert_snapshot!("empty", harness.backend());
+        });
+    }
+
+    /// # Cleanup Branch Selection With Branches Test
+    ///
+    /// Tests the branch selection screen with multiple branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds several patch branches (merged and not merged)
+    /// - Renders the branch selection screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display branch table with checkboxes
+    /// - Should show branch metadata (target, version, status)
+    /// - Should highlight current selection
+    /// - Should display help text with all available actions
+    #[test]
+    fn test_branch_selection_with_branches() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add sample branches
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: false,
+                    status: CleanupStatus::Pending,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: false,
+                    status: CleanupStatus::Pending,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.0".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.0".to_string(),
+                    is_merged: false,
+                    selected: false,
+                    status: CleanupStatus::Pending,
+                },
+            ];
+
+            let state = Box::new(CleanupBranchSelectionState::new());
+            harness.render_state(state);
+            assert_snapshot!("with_branches", harness.backend());
+        });
+    }
+
+    /// # Cleanup Branch Selection With Selections Test
+    ///
+    /// Tests the branch selection screen with some branches selected.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds several patch branches with some pre-selected
+    /// - Renders the branch selection screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display checked checkboxes for selected branches
+    /// - Should show "(N selected)" in the title
+    /// - Should display all branch information correctly
+    #[test]
+    fn test_branch_selection_with_selections() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add sample branches with some selected
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Pending,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Pending,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.0".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.0".to_string(),
+                    is_merged: false,
+                    selected: false,
+                    status: CleanupStatus::Pending,
+                },
+            ];
+
+            let state = Box::new(CleanupBranchSelectionState::new());
+            harness.render_state(state);
+            assert_snapshot!("with_selections", harness.backend());
+        });
+    }
+}

@@ -234,3 +234,174 @@ impl AppState for CleanupExecutionState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{models::CleanupBranch, models::CleanupStatus, ui::testing::*};
+    use insta::assert_snapshot;
+
+    /// # Cleanup Execution Initial State Test
+    ///
+    /// Tests the cleanup execution screen at start.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches ready for deletion
+    /// - Renders the initial execution screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Deleting Branches" title
+    /// - Should show progress bar at 0%
+    /// - Should list all selected branches with pending status
+    /// - Should display "Deleting branches... Please wait" message
+    #[test]
+    fn test_cleanup_execution_initial() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches for cleanup
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Pending,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Pending,
+                },
+            ];
+
+            let state = Box::new(CleanupExecutionState::new());
+            harness.render_state(state);
+            assert_snapshot!("initial", harness.backend());
+        });
+    }
+
+    /// # Cleanup Execution In Progress Test
+    ///
+    /// Tests the cleanup execution screen during deletion.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with mixed statuses (in progress, success, pending)
+    /// - Renders the execution screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display progress bar showing partial completion
+    /// - Should show different status indicators (⏳, 🔄, ✅)
+    /// - Should display "Deleted X/N branches" in progress bar
+    /// - Should show color-coded status for each branch
+    #[test]
+    fn test_cleanup_execution_in_progress() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with mixed statuses
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.3".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.3".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::InProgress,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Pending,
+                },
+            ];
+
+            let state = Box::new(CleanupExecutionState::new());
+            harness.render_state(state);
+            assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+
+    /// # Cleanup Execution Complete Test
+    ///
+    /// Tests the cleanup execution screen when all deletions are complete.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with completed statuses (success and failed)
+    /// - Marks the execution as complete
+    /// - Renders the execution screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display progress bar at 100%
+    /// - Should show all branches with final statuses
+    /// - Should display "Cleanup complete. Press Enter to view results, or 'q' to exit"
+    /// - Should show ✅ for successful deletions
+    /// - Should show ❌ for failed deletions
+    #[test]
+    fn test_cleanup_execution_complete() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with final statuses
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.3".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.3".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Failed("Branch is checked out".to_string()),
+                },
+            ];
+
+            let mut state = CleanupExecutionState::new();
+            state.is_complete = true;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("complete", harness.backend());
+        });
+    }
+}

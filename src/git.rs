@@ -820,7 +820,32 @@ fn get_branch_commits(repo_path: &Path, branch_name: &str) -> Result<Vec<String>
     Ok(commits)
 }
 
+/// Get commit messages from a specific branch
+fn get_branch_commit_messages(repo_path: &Path, branch_name: &str) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["log", "--format=%s", branch_name])
+        .output()
+        .context("Failed to get branch commit messages")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to get commit messages from branch: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let messages: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    Ok(messages)
+}
+
 /// Check if all commits from a patch branch are in the target branch
+/// This handles both regular merges (matching commit hashes) and squash merges (matching commit titles)
 pub fn check_patch_merged(
     repo_path: &Path,
     patch_branch: &str,
@@ -832,14 +857,38 @@ pub fn check_patch_merged(
     // Get all commits from the patch branch
     let patch_commits = get_branch_commits(repo_path, patch_branch)?;
 
-    // Check if all patch commits are in target
-    for commit in patch_commits {
-        if !target_history.commit_hashes.contains(&commit) {
-            return Ok(false);
-        }
+    // Strategy 1: Check if all patch commit hashes are in target (for regular merges)
+    let all_hashes_found = patch_commits
+        .iter()
+        .all(|commit| target_history.commit_hashes.contains(commit));
+
+    if all_hashes_found {
+        return Ok(true);
     }
 
-    Ok(true)
+    // Strategy 2: Check commit messages for squash merges
+    // Get commit messages from the patch branch
+    let patch_messages = get_branch_commit_messages(repo_path, patch_branch)?;
+
+    if patch_messages.is_empty() {
+        // If no commits in patch branch, consider it not merged
+        return Ok(false);
+    }
+
+    // Check if a significant portion of commit messages appear in target history
+    // We require at least 80% of commit messages to be found in target
+    let found_count = patch_messages
+        .iter()
+        .filter(|msg| {
+            target_history
+                .commit_messages
+                .iter()
+                .any(|target_msg| target_msg.contains(msg.as_str()))
+        })
+        .count();
+
+    let threshold = (patch_messages.len() as f64 * 0.8).ceil() as usize;
+    Ok(found_count >= threshold)
 }
 
 #[cfg(test)]
@@ -2098,5 +2147,452 @@ mod tests {
 
         // Test non-existent PR ID
         assert!(!search_pr_id_in_history(999, &history));
+    }
+
+    /// # List Local Branches
+    ///
+    /// Tests listing local branches matching a pattern.
+    ///
+    /// ## Test Scenario
+    /// - Creates repository with various branches
+    /// - Tests pattern matching for branch listing
+    ///
+    /// ## Expected Outcome
+    /// - Correctly lists branches matching the pattern
+    /// - Filters out non-matching branches
+    #[test]
+    fn test_list_local_branches() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create various branches
+        for branch in &[
+            "feature/test",
+            "patch/next-1.0.0",
+            "patch/main-2.0.0",
+            "bugfix/issue",
+        ] {
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["branch", branch])
+                .output()
+                .unwrap();
+        }
+
+        // Test listing all branches
+        let all_branches = list_local_branches(&repo_path, "*").unwrap();
+        assert!(all_branches.len() >= 5); // main + 4 created branches
+
+        // Test listing patch branches only
+        let patch_branches = list_local_branches(&repo_path, "patch/*").unwrap();
+        assert_eq!(patch_branches.len(), 2);
+        assert!(patch_branches.contains(&"patch/next-1.0.0".to_string()));
+        assert!(patch_branches.contains(&"patch/main-2.0.0".to_string()));
+
+        // Test listing feature branches
+        let feature_branches = list_local_branches(&repo_path, "feature/*").unwrap();
+        assert_eq!(feature_branches.len(), 1);
+        assert!(feature_branches.contains(&"feature/test".to_string()));
+    }
+
+    /// # List Patch Branches
+    ///
+    /// Tests parsing and listing of patch branches with metadata.
+    ///
+    /// ## Test Scenario
+    /// - Creates patch branches with various naming patterns
+    /// - Tests parsing of target and version information
+    ///
+    /// ## Expected Outcome
+    /// - Correctly parses patch branches into CleanupBranch structs
+    /// - Extracts target and version information accurately
+    #[test]
+    fn test_list_patch_branches() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create patch branches with valid format
+        for branch in &[
+            "patch/next-1.0.0",
+            "patch/main-2.0.0",
+            "patch/next-v3.0.0",
+            "patch/production-1.2.3",
+        ] {
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["branch", branch])
+                .output()
+                .unwrap();
+        }
+
+        // Create some non-patch branches (should be ignored)
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "feature/test"])
+            .output()
+            .unwrap();
+
+        let patch_branches = list_patch_branches(&repo_path).unwrap();
+        assert_eq!(patch_branches.len(), 4);
+
+        // Verify parsing of branch names
+        let next_1_0_0 = patch_branches
+            .iter()
+            .find(|b| b.name == "patch/next-1.0.0")
+            .unwrap();
+        assert_eq!(next_1_0_0.target, "next");
+        assert_eq!(next_1_0_0.version, "1.0.0");
+        assert!(!next_1_0_0.selected);
+        assert!(!next_1_0_0.is_merged);
+
+        let prod_1_2_3 = patch_branches
+            .iter()
+            .find(|b| b.name == "patch/production-1.2.3")
+            .unwrap();
+        assert_eq!(prod_1_2_3.target, "production");
+        assert_eq!(prod_1_2_3.version, "1.2.3");
+    }
+
+    /// # Check Patch Merged (Regular Merge)
+    ///
+    /// Tests detection of patch branches merged via regular git merge.
+    ///
+    /// ## Test Scenario
+    /// - Creates a patch branch with commits
+    /// - Merges it into target branch
+    /// - Tests if merge is detected correctly
+    ///
+    /// ## Expected Outcome
+    /// - Detects merged patch branch via commit hash matching
+    /// - Returns true for merged branches
+    #[test]
+    fn test_check_patch_merged_regular_merge() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create and switch to patch branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "patch/main-1.0.0"])
+            .output()
+            .unwrap();
+
+        // Add commits to patch branch
+        fs::write(repo_path.join("patch.txt"), "patch content 1").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Patch commit 1"])
+            .output()
+            .unwrap();
+
+        fs::write(repo_path.join("patch2.txt"), "patch content 2").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Patch commit 2"])
+            .output()
+            .unwrap();
+
+        // Switch back to main and merge
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "patch/main-1.0.0", "--no-ff", "-m", "Merge patch"])
+            .output()
+            .unwrap();
+
+        // Test that patch is detected as merged
+        let is_merged = check_patch_merged(&repo_path, "patch/main-1.0.0", "main").unwrap();
+        assert!(is_merged, "Patch should be detected as merged");
+    }
+
+    /// # Check Patch Merged (Squash Merge)
+    ///
+    /// Tests detection of patch branches merged via squash merge.
+    ///
+    /// ## Test Scenario
+    /// - Creates a patch branch with multiple commits
+    /// - Squash merges it into target branch
+    /// - Tests if squash merge is detected via commit message matching
+    ///
+    /// ## Expected Outcome
+    /// - Detects squash-merged patch branch via commit message matching
+    /// - Returns true when commit messages are found in target
+    #[test]
+    fn test_check_patch_merged_squash_merge() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create and switch to patch branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "patch/main-2.0.0"])
+            .output()
+            .unwrap();
+
+        // Add commits to patch branch with distinctive messages
+        fs::write(repo_path.join("patch1.txt"), "patch content 1").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Fix critical authentication bug"])
+            .output()
+            .unwrap();
+
+        fs::write(repo_path.join("patch2.txt"), "patch content 2").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Add comprehensive test coverage"])
+            .output()
+            .unwrap();
+
+        // Switch back to main and squash merge
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "--squash", "patch/main-2.0.0"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args([
+                "commit",
+                "-m",
+                "Squash merge: Fix critical authentication bug and Add comprehensive test coverage",
+            ])
+            .output()
+            .unwrap();
+
+        // Test that patch is detected as merged via message matching
+        let is_merged = check_patch_merged(&repo_path, "patch/main-2.0.0", "main").unwrap();
+        assert!(
+            is_merged,
+            "Squash-merged patch should be detected via commit message matching"
+        );
+    }
+
+    /// # Check Patch Not Merged
+    ///
+    /// Tests detection of unmerged patch branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates a patch branch with commits
+    /// - Does not merge it into target
+    /// - Tests that it's correctly identified as not merged
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for unmerged branches
+    /// - Does not give false positives
+    #[test]
+    fn test_check_patch_not_merged() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create patch branch with commits but don't merge
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "patch/main-3.0.0"])
+            .output()
+            .unwrap();
+
+        fs::write(repo_path.join("unmerged.txt"), "unmerged content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Unmerged patch commit"])
+            .output()
+            .unwrap();
+
+        // Switch back to main without merging
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Test that patch is detected as NOT merged
+        let is_merged = check_patch_merged(&repo_path, "patch/main-3.0.0", "main").unwrap();
+        assert!(
+            !is_merged,
+            "Unmerged patch should be detected as not merged"
+        );
+    }
+
+    /// # Check Patch Merged (Partial Message Match)
+    ///
+    /// Tests that the 80% threshold works correctly for squash merges.
+    ///
+    /// ## Test Scenario
+    /// - Creates a patch branch with 5 commits
+    /// - Squash merges with 4 out of 5 commit messages present
+    /// - Tests that 80% threshold accepts the merge
+    ///
+    /// ## Expected Outcome
+    /// - Returns true when 80% or more commit messages are found
+    /// - Handles partial message matches correctly
+    #[test]
+    fn test_check_patch_merged_partial_message_match() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create patch branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "patch/main-4.0.0"])
+            .output()
+            .unwrap();
+
+        // Add 5 commits
+        let messages = [
+            "Implement feature A",
+            "Add tests for feature A",
+            "Fix bug in feature B",
+            "Update documentation",
+            "Refactor module C",
+        ];
+
+        for (i, msg) in messages.iter().enumerate() {
+            fs::write(repo_path.join(format!("file{}.txt", i)), "content").unwrap();
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["add", "."])
+                .output()
+                .unwrap();
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["commit", "-m", msg])
+                .output()
+                .unwrap();
+        }
+
+        // Switch back and create squash commit with only 4 of 5 messages
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "--squash", "patch/main-4.0.0"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args([
+                "commit",
+                "-m",
+                "Squash: Implement feature A, Add tests for feature A, Fix bug in feature B, Update documentation",
+            ])
+            .output()
+            .unwrap();
+
+        // Should still be detected as merged (4/5 = 80%)
+        let is_merged = check_patch_merged(&repo_path, "patch/main-4.0.0", "main").unwrap();
+        assert!(
+            is_merged,
+            "Patch with 80% message match should be detected as merged"
+        );
     }
 }

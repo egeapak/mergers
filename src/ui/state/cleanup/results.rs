@@ -279,3 +279,221 @@ impl AppState for CleanupResultsState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{models::CleanupBranch, models::CleanupStatus, ui::testing::*};
+    use insta::assert_snapshot;
+
+    /// # Cleanup Results Success Tab Test
+    ///
+    /// Tests the results screen showing successfully deleted branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with success status
+    /// - Renders the results screen on the Success tab
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Results" title
+    /// - Should show "✅ Deleted (N)" tab as selected
+    /// - Should list all successfully deleted branches
+    /// - Should display help text with tab switching and navigation instructions
+    #[test]
+    fn test_results_success_tab() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with success status
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.3".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.3".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: false, // Not selected, should not appear
+                    status: CleanupStatus::Success,
+                },
+            ];
+
+            let state = Box::new(CleanupResultsState::new());
+            harness.render_state(state);
+            assert_snapshot!("success_tab", harness.backend());
+        });
+    }
+
+    /// # Cleanup Results Failed Tab Test
+    ///
+    /// Tests the results screen showing failed deletions.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with failed status
+    /// - Switches to the Failed tab
+    /// - Renders the results screen
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Results" title
+    /// - Should show "❌ Failed (N)" tab as selected
+    /// - Should list all failed deletions with error messages
+    /// - Should display help text
+    #[test]
+    fn test_results_failed_tab() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with failed status
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Failed("Branch is checked out".to_string()),
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Failed("Protected branch".to_string()),
+                },
+            ];
+
+            let mut state = CleanupResultsState::new();
+            state.current_tab = ResultTab::Failed;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("failed_tab", harness.backend());
+        });
+    }
+
+    /// # Cleanup Results Mixed Results Test
+    ///
+    /// Tests the results screen with both successes and failures.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with mixed success and failed statuses
+    /// - Renders the results screen on the Success tab
+    ///
+    /// ## Expected Outcome
+    /// - Should display both tabs with correct counts
+    /// - Should show only successful deletions on Success tab
+    /// - Should allow navigation between tabs
+    #[test]
+    fn test_results_mixed() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with mixed statuses
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.3".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.3".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Failed("Branch is checked out".to_string()),
+                },
+                CleanupBranch {
+                    name: "patch/next-6.6.1".to_string(),
+                    target: "next".to_string(),
+                    version: "6.6.1".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+            ];
+
+            let state = Box::new(CleanupResultsState::new());
+            harness.render_state(state);
+            assert_snapshot!("mixed_results", harness.backend());
+        });
+    }
+
+    /// # Cleanup Results No Failures Test
+    ///
+    /// Tests the results screen when all deletions succeeded.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Adds branches with only success status
+    /// - Switches to the Failed tab
+    /// - Renders the results screen showing empty failures
+    ///
+    /// ## Expected Outcome
+    /// - Should display "❌ Failed (0)" tab
+    /// - Should show message "No failures - all selected branches were successfully deleted!"
+    #[test]
+    fn test_results_no_failures() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            // Add branches with only success status
+            harness.app.cleanup_branches = vec![
+                CleanupBranch {
+                    name: "patch/main-6.6.3".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.3".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+                CleanupBranch {
+                    name: "patch/main-6.6.2".to_string(),
+                    target: "main".to_string(),
+                    version: "6.6.2".to_string(),
+                    is_merged: true,
+                    selected: true,
+                    status: CleanupStatus::Success,
+                },
+            ];
+
+            let mut state = CleanupResultsState::new();
+            state.current_tab = ResultTab::Failed;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("no_failures", harness.backend());
+        });
+    }
+}

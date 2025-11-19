@@ -1,9 +1,9 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{
-        AppConfig, CherryPickItem, CherryPickStatus, CreatedBy, DefaultModeConfig, Label,
-        MergeCommit, MigrationAnalysis, MigrationModeConfig, PullRequest, PullRequestWithWorkItems,
-        SharedConfig, WorkItem, WorkItemFields,
+        AppConfig, CherryPickItem, CherryPickStatus, CleanupModeConfig, CreatedBy,
+        DefaultModeConfig, Label, MergeCommit, MigrationAnalysis, MigrationModeConfig, PullRequest,
+        PullRequestWithWorkItems, SharedConfig, WorkItem, WorkItemFields,
     },
     parsed_property::ParsedProperty,
     ui::{App, state::AppState},
@@ -98,6 +98,16 @@ pub fn create_test_config_migration() -> AppConfig {
                 "Closed".to_string(),
                 "Resolved".to_string(),
             ]),
+        },
+    }
+}
+
+/// Create a cleanup mode test configuration
+pub fn create_test_config_cleanup() -> AppConfig {
+    AppConfig::Cleanup {
+        shared: create_test_shared_config(),
+        cleanup: CleanupModeConfig {
+            target: ParsedProperty::Default("main".to_string()),
         },
     }
 }

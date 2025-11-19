@@ -105,8 +105,7 @@ impl CleanupDataLoadingState {
                     if branches.is_empty() {
                         self.status = "No patch branches found.".to_string();
                         self.error = Some(
-                            "No patch branches matching 'patch/*' pattern were found."
-                                .to_string(),
+                            "No patch branches matching 'patch/*' pattern were found.".to_string(),
                         );
                     } else {
                         self.status = format!("Found {} patch branches.", branches.len());
@@ -257,5 +256,136 @@ impl AppState for CleanupDataLoadingState {
             }
             _ => StateChange::Keep,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::testing::*;
+    use insta::assert_snapshot;
+
+    /// # Cleanup Data Loading Initial State Test
+    ///
+    /// Tests the initial loading screen when cleanup mode starts.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Renders the initial data loading screen
+    /// - Shows "Initializing cleanup analysis..." message
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Loading Branches" title
+    /// - Should show progress bar at 0%
+    /// - Should show "Initializing cleanup analysis..." status
+    /// - Should display help text for quitting/canceling
+    #[test]
+    fn test_data_loading_initial() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let state = Box::new(CleanupDataLoadingState::new(config));
+
+            harness.render_state(state);
+            assert_snapshot!("initial", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading Progress Test
+    ///
+    /// Tests the loading screen while loading branches.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Simulates loading progress at 10%
+    /// - Shows "Loading patch branches..." message
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Loading Branches" title
+    /// - Should show progress bar at 10%
+    /// - Should show "Loading patch branches..." status
+    #[test]
+    fn test_data_loading_in_progress() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate loading in progress
+            state.status = "Loading patch branches...".to_string();
+            state.progress = 0.1;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("in_progress", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading Error Test
+    ///
+    /// Tests the loading screen when an error occurs.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Simulates an error during branch loading
+    /// - Shows error message in red
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Loading Branches" title
+    /// - Should show "Error:" in red
+    /// - Should display the error message
+    /// - Should show help text to exit
+    #[test]
+    fn test_data_loading_error() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate error
+            state.error = Some("Failed to load branches: git command failed".to_string());
+            state.status = "Error loading branches".to_string();
+            state.loaded = true;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("error", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading Complete Test
+    ///
+    /// Tests the loading screen when branch loading is complete.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Simulates successful branch loading
+    /// - Shows completion message
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Cleanup Mode - Loading Branches" title
+    /// - Should show progress bar at 100%
+    /// - Should show "Found X patch branches" message
+    #[test]
+    fn test_data_loading_complete() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate completion
+            state.status = "Found 5 patch branches.".to_string();
+            state.progress = 1.0;
+            state.loaded = true;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("complete", harness.backend());
+        });
     }
 }
