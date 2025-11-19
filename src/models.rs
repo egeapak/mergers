@@ -257,46 +257,19 @@ impl Args {
             create_config: _,
         } = self;
 
-        // Extract shared args and mode-specific args from command using trait
-        // Default to merge mode if no command is specified (backward compatibility)
-        let (shared, mode_command) = match command {
-            Some(cmd) => {
-                // Extract shared args using the trait method
-                let shared = cmd.shared_args().clone();
-                (shared, cmd)
-            }
-            None => {
-                // Default to merge mode with default shared args
-                (
-                    SharedArgs::default(),
-                    Commands::Merge(MergeArgs {
-                        shared: SharedArgs::default(),
-                        work_item_state: None,
-                    }),
-                )
-            }
-        };
+        // Use command or default to merge mode
+        let mode_command = command.unwrap_or_else(|| {
+            Commands::Merge(MergeArgs {
+                shared: SharedArgs::default(),
+                work_item_state: None,
+            })
+        });
 
-        // Extract values from shared args
-        let SharedArgs {
-            path,
-            organization,
-            project,
-            repository,
-            pat,
-            dev_branch,
-            target_branch,
-            local_repo,
-            tag_prefix,
-            parallel_limit,
-            max_concurrent_network,
-            max_concurrent_processing,
-            since,
-            skip_confirmation,
-        } = shared;
+        // Access shared args through the command using the trait
+        let shared = mode_command.shared_args();
 
         // Determine local_repo path (positional arg takes precedence over --local-repo flag)
-        let local_repo_path = path.or(local_repo);
+        let local_repo_path = shared.path.as_ref().or(shared.local_repo.as_ref());
 
         // Load from config file (lowest priority)
         let file_config = Config::load_from_file()?;
@@ -305,29 +278,52 @@ impl Args {
         let env_config = Config::load_from_env();
 
         // Try to detect from git remote if we have a local repo path
-        let git_config = if let Some(ref repo_path) = local_repo_path {
+        let git_config = if let Some(repo_path) = local_repo_path {
             Config::detect_from_git_remote(repo_path)
         } else {
             Config::default()
         };
 
         let cli_config = Config {
-            organization: organization.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            project: project.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            repository: repository.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            pat: pat.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            dev_branch: dev_branch.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            target_branch: target_branch.map(|v| ParsedProperty::Cli(v.clone(), v)),
-            local_repo: local_repo_path
-                .clone()
-                .map(|v| ParsedProperty::Cli(v.clone(), v)),
+            organization: shared
+                .organization
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            project: shared
+                .project
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            repository: shared
+                .repository
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            pat: shared
+                .pat
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            dev_branch: shared
+                .dev_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            target_branch: shared
+                .target_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
             work_item_state: None, // Will be set based on command
-            parallel_limit: parallel_limit.map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_network: max_concurrent_network
+            parallel_limit: shared
+                .parallel_limit
                 .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_processing: max_concurrent_processing
+            max_concurrent_network: shared
+                .max_concurrent_network
                 .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            tag_prefix: tag_prefix.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            max_concurrent_processing: shared
+                .max_concurrent_processing
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            tag_prefix: shared
+                .tag_prefix
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
         };
 
         // Merge configs: file < git_remote < env < cli
@@ -351,7 +347,7 @@ impl Args {
         })?;
 
         // Handle since field parsing
-        let since = if let Some(ref since_str) = since {
+        let since = if let Some(since_str) = &shared.since {
             let parsed_date = parse_since_date(since_str)
                 .with_context(|| format!("Failed to parse since date: {}", since_str))?;
             Some(ParsedProperty::Cli(parsed_date, since_str.clone()))
@@ -370,7 +366,7 @@ impl Args {
             target_branch: merged_config
                 .target_branch
                 .unwrap_or_else(|| "next".to_string().into()),
-            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v)),
+            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
             parallel_limit: merged_config.parallel_limit.unwrap_or(300.into()),
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100.into()),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10.into()),
@@ -378,7 +374,7 @@ impl Args {
                 .tag_prefix
                 .unwrap_or_else(|| "merged-".to_string().into()),
             since,
-            skip_confirmation,
+            skip_confirmation: shared.skip_confirmation,
         };
 
         // Return appropriate configuration based on command
