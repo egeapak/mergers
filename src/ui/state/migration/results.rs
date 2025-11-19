@@ -262,25 +262,25 @@ impl MigrationState {
                 let (override_indicator, space_action) = match app.has_manual_override(pr.pr.id) {
                     Some(true) => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →❌", // will mark not eligible
-                            MigrationTab::Unsure => " →◎",    // will reset override
-                            MigrationTab::NotMerged => " →◎", // will reset override
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Reset",          // will reset override
+                            MigrationTab::NotMerged => " → Reset",       // will reset override
                         };
-                        (" [📌 Manual]", action)
+                        (" ✅ [Manual]", action)
                     }
                     Some(false) => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →◎",   // will reset override
-                            MigrationTab::Unsure => " →📌",    // will mark eligible
-                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " → Reset",     // will reset override
+                            MigrationTab::Unsure => " → Eligible",    // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible", // will mark eligible
                         };
-                        (" [❌ Manual]", action)
+                        (" ❌ [Manual Override]", action)
                     }
                     None => {
                         let action = match self.current_tab {
-                            MigrationTab::Eligible => " →❌",  // will mark not eligible
-                            MigrationTab::Unsure => " →📌",    // will mark eligible
-                            MigrationTab::NotMerged => " →📌", // will mark eligible
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Eligible",       // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible",    // will mark eligible
                         };
                         ("", action)
                     }
@@ -634,6 +634,105 @@ mod tests {
 
             // Snapshot the full display to verify visual layout
             assert_snapshot!("bottom_bar_fully_visible", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - With Manual Eligible Override
+    ///
+    /// Tests the migration results screen showing manual eligible overrides.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Loads migration analysis with PRs
+    /// - Manually marks a not-merged PR as eligible using manual override
+    /// - Renders the results showing the ✅ [Manual] indicator
+    ///
+    /// ## Expected Outcome
+    /// - Should display the not-merged PR in eligible tab with ✅ [Manual] indicator
+    /// - Should show the action indicator "→ Not Eligible" for what Space will do
+    #[test]
+    fn test_migration_results_manual_eligible_override() {
+        use crate::models::ManualOverrides;
+        use std::collections::HashSet;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut analysis = create_test_migration_analysis();
+
+            // Create manual overrides with PR 102 marked as eligible
+            let mut marked_as_eligible = HashSet::new();
+            marked_as_eligible.insert(102);
+            analysis.manual_overrides = ManualOverrides {
+                marked_as_eligible,
+                marked_as_not_eligible: HashSet::new(),
+            };
+
+            // Move PR 102 from not_merged to eligible to simulate the manual override
+            if let Some(pr) = analysis.not_merged_prs.first().cloned() {
+                analysis.eligible_prs.push(pr);
+                analysis.not_merged_prs.clear();
+            }
+
+            harness.app.migration_analysis = Some(analysis);
+
+            let state = Box::new(MigrationState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("manual_eligible_override", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - With Manual Not-Eligible Override
+    ///
+    /// Tests the migration results screen showing manual not-eligible overrides.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Loads migration analysis with PRs
+    /// - Manually marks an eligible PR as not-eligible using manual override
+    /// - Switches to not-merged tab
+    /// - Renders the results showing the ❌ [Manual Override] indicator
+    ///
+    /// ## Expected Outcome
+    /// - Should display the PR in not-merged tab with ❌ [Manual Override] indicator
+    /// - Should show the action indicator "→ Eligible" for what Space will do
+    #[test]
+    fn test_migration_results_manual_not_eligible_override() {
+        use crate::models::ManualOverrides;
+        use std::collections::HashSet;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut analysis = create_test_migration_analysis();
+
+            // Create manual overrides with PR 100 marked as not eligible
+            let mut marked_as_not_eligible = HashSet::new();
+            marked_as_not_eligible.insert(100);
+            analysis.manual_overrides = ManualOverrides {
+                marked_as_eligible: HashSet::new(),
+                marked_as_not_eligible,
+            };
+
+            // Move PR 100 from eligible to not_merged to simulate the manual override
+            if let Some(pr) = analysis.eligible_prs.first().cloned() {
+                analysis.not_merged_prs.push(pr);
+                analysis.eligible_prs.remove(0);
+            }
+
+            harness.app.migration_analysis = Some(analysis);
+
+            let mut state = MigrationState::new();
+            // Switch to not-merged tab to see the manual override
+            state.current_tab = MigrationTab::NotMerged;
+            state.not_merged_list_state.select(Some(0));
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("manual_not_eligible_override", harness.backend());
         });
     }
 }
