@@ -1,6 +1,8 @@
 use crate::{
     api::AzureDevOpsClient,
-    models::{AppConfig, CherryPickItem, MigrationAnalysis, PullRequestWithWorkItems},
+    models::{
+        AppConfig, CherryPickItem, CleanupBranch, MigrationAnalysis, PullRequestWithWorkItems,
+    },
     ui::state::AppState,
 };
 use std::{process::Command, sync::Arc};
@@ -21,6 +23,9 @@ pub struct App {
 
     // Migration state
     pub migration_analysis: Option<MigrationAnalysis>,
+
+    // Cleanup state
+    pub cleanup_branches: Vec<CleanupBranch>,
 
     // Initial state for state machine
     pub initial_state: Option<Box<dyn AppState>>,
@@ -43,6 +48,7 @@ impl App {
             current_cherry_pick_index: 0,
             error_message: None,
             migration_analysis: None,
+            cleanup_branches: Vec::new(),
             initial_state: None,
         }
     }
@@ -80,6 +86,7 @@ impl App {
         match &*self.config {
             AppConfig::Default { default, .. } => default.work_item_state.value(),
             AppConfig::Migration { .. } => "Next Merged", // Default fallback for migration mode
+            AppConfig::Cleanup { .. } => "Next Merged",   // Default fallback for cleanup mode
         }
     }
 

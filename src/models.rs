@@ -85,6 +85,17 @@ pub struct MigrateArgs {
     pub terminal_states: String,
 }
 
+/// Arguments specific to cleanup mode
+#[derive(ClapArgs, Clone)]
+pub struct CleanupArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
+    /// Target branch to check for merged patches
+    #[arg(long)]
+    pub target: Option<String>,
+}
+
 /// Trait to extract shared arguments from command-specific argument structs
 pub trait HasSharedArgs {
     fn shared_args(&self) -> &SharedArgs;
@@ -111,6 +122,16 @@ impl HasSharedArgs for MigrateArgs {
     }
 }
 
+impl HasSharedArgs for CleanupArgs {
+    fn shared_args(&self) -> &SharedArgs {
+        &self.shared
+    }
+
+    fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        &mut self.shared
+    }
+}
+
 /// Available commands
 #[derive(Subcommand, Clone)]
 pub enum Commands {
@@ -120,6 +141,9 @@ pub enum Commands {
     /// Migration mode - analyze PRs for migration eligibility
     #[command(visible_alias = "mi")]
     Migrate(MigrateArgs),
+    /// Cleanup mode - clean up merged patch branches
+    #[command(visible_alias = "c")]
+    Cleanup(CleanupArgs),
 }
 
 impl Commands {
@@ -128,6 +152,7 @@ impl Commands {
         match self {
             Commands::Merge(args) => args.shared_args(),
             Commands::Migrate(args) => args.shared_args(),
+            Commands::Cleanup(args) => args.shared_args(),
         }
     }
 
@@ -136,6 +161,7 @@ impl Commands {
         match self {
             Commands::Merge(args) => args.shared_args_mut(),
             Commands::Migrate(args) => args.shared_args_mut(),
+            Commands::Cleanup(args) => args.shared_args_mut(),
         }
     }
 }
@@ -221,6 +247,12 @@ pub struct MigrationModeConfig {
     pub terminal_states: ParsedProperty<Vec<String>>,
 }
 
+/// Configuration specific to cleanup mode
+#[derive(Debug, Clone)]
+pub struct CleanupModeConfig {
+    pub target: ParsedProperty<String>,
+}
+
 /// Resolved configuration with mode-specific settings
 #[derive(Debug, Clone)]
 pub enum AppConfig {
@@ -232,6 +264,10 @@ pub enum AppConfig {
         shared: SharedConfig,
         migration: MigrationModeConfig,
     },
+    Cleanup {
+        shared: SharedConfig,
+        cleanup: CleanupModeConfig,
+    },
 }
 
 impl AppConfig {
@@ -239,11 +275,16 @@ impl AppConfig {
         match self {
             AppConfig::Default { shared, .. } => shared,
             AppConfig::Migration { shared, .. } => shared,
+            AppConfig::Cleanup { shared, .. } => shared,
         }
     }
 
     pub fn is_migration_mode(&self) -> bool {
         matches!(self, AppConfig::Migration { .. })
+    }
+
+    pub fn is_cleanup_mode(&self) -> bool {
+        matches!(self, AppConfig::Cleanup { .. })
     }
 }
 
@@ -405,6 +446,17 @@ impl Args {
                     },
                 },
             }),
+            Commands::Cleanup(cleanup_args) => {
+                let target = cleanup_args
+                    .target
+                    .map(|t| ParsedProperty::Cli(t.clone(), t))
+                    .or_else(|| Some(shared_config.target_branch.clone()))
+                    .unwrap();
+                Ok(AppConfig::Cleanup {
+                    shared: shared_config,
+                    cleanup: CleanupModeConfig { target },
+                })
+            }
         }
     }
 }
@@ -550,6 +602,24 @@ pub struct PRAnalysisResult {
     pub commit_title_in_target: bool,
     pub unsure_reason: Option<String>,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CleanupBranch {
+    pub name: String,
+    pub target: String,
+    pub version: String,
+    pub is_merged: bool,
+    pub selected: bool,
+    pub status: CleanupStatus,
+}
+
+#[derive(Debug, Clone)]
+pub enum CleanupStatus {
+    Pending,
+    InProgress,
+    Success,
+    Failed(String),
 }
 
 #[cfg(test)]

@@ -899,6 +899,7 @@ mod tests {
             Ok(crate::git::CommitHistory {
                 commit_hashes: std::collections::HashSet::new(),
                 commit_messages: Vec::new(),
+                commit_bodies: Vec::new(),
             })
         }));
 

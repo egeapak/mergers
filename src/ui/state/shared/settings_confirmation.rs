@@ -249,6 +249,9 @@ impl SettingsConfirmationState {
                     ),
                 ]));
             }
+            AppConfig::Cleanup { cleanup, .. } => {
+                lines.push(self.format_property_with_source("Target Branch", &cleanup.target));
+            }
         }
         lines.push(Line::from(""));
 
