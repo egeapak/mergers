@@ -1,8 +1,7 @@
 use crate::{
     git,
-    models::CherryPickStatus,
     ui::App,
-    ui::state::{AppState, CherryPickState, StateChange},
+    ui::state::{AppState, CherryPickContinueState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -328,25 +327,11 @@ impl AppState for ConflictResolutionState {
                 // Check if conflicts are resolved
                 match git::check_conflicts_resolved(repo_path) {
                     Ok(true) => {
-                        // Continue cherry-pick
-                        match git::continue_cherry_pick(repo_path) {
-                            Ok(_) => {
-                                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                                    CherryPickStatus::Success;
-                                app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(
-                                    CherryPickState::continue_after_conflict(),
-                                ))
-                            }
-                            Err(e) => {
-                                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                                    CherryPickStatus::Failed(e.to_string());
-                                app.current_cherry_pick_index += 1;
-                                StateChange::Change(Box::new(
-                                    CherryPickState::continue_after_conflict(),
-                                ))
-                            }
-                        }
+                        // Transition to CherryPickContinueState to process the commit with feedback
+                        StateChange::Change(Box::new(CherryPickContinueState::new(
+                            self.conflicted_files.clone(),
+                            repo_path.clone(),
+                        )))
                     }
                     Ok(false) => StateChange::Keep, // Conflicts not resolved
                     Err(_) => StateChange::Keep,
@@ -409,5 +394,127 @@ mod tests {
 
             assert_snapshot!("conflict_display", harness.backend());
         });
+    }
+
+    /// # Conflict Resolution - Continue with Unresolved Conflicts
+    ///
+    /// Tests behavior when user presses 'c' but conflicts are not resolved.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state
+    /// - Sets up app with a non-existent repo path (will fail git check)
+    /// - Simulates pressing 'c' to continue
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep (stay in same state)
+    /// - This exercises the error path when git::check_conflicts_resolved fails
+    #[tokio::test]
+    async fn test_conflict_resolution_continue_unresolved() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Set up with non-existent repo to trigger error path
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let mut state = ConflictResolutionState::new(conflicted_files);
+
+        // Press 'c' to attempt continue
+        let result = state
+            .process_key(KeyCode::Char('c'), &mut harness.app)
+            .await;
+
+        // Should stay in same state because git operation fails
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Conflict Resolution - Abort Cherry-Pick
+    ///
+    /// Tests behavior when user presses 'a' to abort.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state
+    /// - Simulates pressing 'a' to abort
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to CompletionState
+    /// - This exercises the abort path
+    #[tokio::test]
+    async fn test_conflict_resolution_abort() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Set up with non-existent repo (abort will fail silently which is OK)
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let mut state = ConflictResolutionState::new(conflicted_files);
+
+        // Press 'a' to abort
+        let result = state
+            .process_key(KeyCode::Char('a'), &mut harness.app)
+            .await;
+
+        // Should transition to CompletionState
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Conflict Resolution - Other Key Press
+    ///
+    /// Tests behavior when user presses other keys.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state
+    /// - Simulates pressing various other keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep for all other keys
+    #[tokio::test]
+    async fn test_conflict_resolution_other_keys() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let mut state = ConflictResolutionState::new(conflicted_files);
+
+        // Test various keys that should be ignored
+        for key in [
+            KeyCode::Char('x'),
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Up,
+        ] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
     }
 }
