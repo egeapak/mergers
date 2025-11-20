@@ -1000,4 +1000,511 @@ mod tests {
             assert_snapshot!("analyzing", harness.backend());
         });
     }
+
+    /// Helper to create a test app for async tests
+    fn create_test_app(config: AppConfig) -> App {
+        let client = crate::api::AzureDevOpsClient::new(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "test-pat".to_string(),
+        )
+        .unwrap();
+        App::new(Vec::new(), std::sync::Arc::new(config), client)
+    }
+
+    /// # Quit Command Returns Exit
+    ///
+    /// Tests that pressing 'q' at any loading stage returns StateChange::Exit.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state
+    /// - Calls process_key with 'q' character
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit immediately
+    #[tokio::test]
+    async fn test_quit_command_returns_exit() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+        let mut app = create_test_app(config);
+
+        // Test quit at various stages
+        state.loading_stage = LoadingStage::NotStarted;
+        let result = state.process_key(KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
+
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        let result = state.process_key(KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
+
+        state.loading_stage = LoadingStage::RunningAnalysis;
+        let result = state.process_key(KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Retry Resets State When Error Exists
+    ///
+    /// Tests that pressing 'r' when an error exists resets all state for retry.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state with an error
+    /// - Calls process_key with 'r' character
+    ///
+    /// ## Expected Outcome
+    /// - Error should be cleared
+    /// - Loading stage should reset to NotStarted
+    /// - Progress should reset to 0
+    /// - All task handles should be cleared
+    #[tokio::test]
+    async fn test_retry_resets_state_when_error_exists() {
+        use crate::ui::testing::{create_test_config_migration, create_test_pull_request};
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // Set up error state
+        state.error = Some("Test error".to_string());
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        state.progress = 0.5;
+        state.loaded = true;
+        state.total_prs = 10;
+        state.work_items_fetched = 5;
+        state.prs = vec![create_test_pull_request()];
+
+        let mut app = create_test_app(config);
+
+        // Press 'r' to retry
+        let result = state.process_key(KeyCode::Char('r'), &mut app).await;
+
+        // Verify state was reset
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.error.is_none());
+        assert_eq!(state.loading_stage, LoadingStage::NotStarted);
+        assert_eq!(state.progress, 0.0);
+        assert!(!state.loaded);
+        assert_eq!(state.total_prs, 0);
+        assert_eq!(state.work_items_fetched, 0);
+        assert!(state.prs.is_empty());
+        assert!(state.prs_with_work_items.is_empty());
+        assert!(state.repo_path.is_none());
+        assert!(state.terminal_states.is_none());
+    }
+
+    /// # Retry Ignored Without Error
+    ///
+    /// Tests that pressing 'r' without an error does nothing.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state without error
+    /// - Calls process_key with 'r' character
+    ///
+    /// ## Expected Outcome
+    /// - State should remain unchanged
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_retry_ignored_without_error() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // No error set
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        state.progress = 0.5;
+        state.loaded = true;
+
+        let mut app = create_test_app(config);
+
+        // Press 'r' without error
+        let result = state.process_key(KeyCode::Char('r'), &mut app).await;
+
+        // State should be unchanged
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
+        assert_eq!(state.progress, 0.5);
+        assert!(state.loaded);
+    }
+
+    /// # Any Key Continues After Completion
+    ///
+    /// Tests that pressing any key after completion transitions to results.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state at Complete stage
+    /// - Calls process_key with various keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to MigrationResultsState
+    #[tokio::test]
+    async fn test_any_key_continues_after_completion() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // Set complete state
+        state.loading_stage = LoadingStage::Complete;
+        state.loaded = true;
+
+        let mut app = create_test_app(config);
+
+        // Press Enter to continue
+        let result = state.process_key(KeyCode::Enter, &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // Reset and test with space
+        state.loading_stage = LoadingStage::Complete;
+        let result = state.process_key(KeyCode::Char(' '), &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Loading Message for All Stages
+    ///
+    /// Tests that get_loading_message returns correct message for each stage.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state
+    /// - Tests each loading stage
+    ///
+    /// ## Expected Outcome
+    /// - Each stage should have appropriate loading message
+    #[test]
+    fn test_loading_message_for_all_stages() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config);
+
+        // NotStarted
+        state.loading_stage = LoadingStage::NotStarted;
+        assert_eq!(state.get_loading_message(), "Initializing...");
+
+        // FetchingPullRequests without git history
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        state.git_history_task = None;
+        assert_eq!(state.get_loading_message(), "Fetching pull requests...");
+
+        // SettingUpRepository without git history
+        state.loading_stage = LoadingStage::SettingUpRepository;
+        assert_eq!(state.get_loading_message(), "Setting up repository...");
+
+        // FetchingWorkItems without progress
+        state.loading_stage = LoadingStage::FetchingWorkItems;
+        state.work_items_total = 0;
+        assert_eq!(state.get_loading_message(), "Fetching work items...");
+
+        // FetchingWorkItems with progress
+        state.work_items_total = 10;
+        state.work_items_fetched = 5;
+        assert_eq!(state.get_loading_message(), "Fetching work items (5/10)");
+
+        // WaitingForWorkItems
+        state.loading_stage = LoadingStage::WaitingForWorkItems;
+        assert_eq!(state.get_loading_message(), "Fetching work items (5/10)");
+
+        // RunningAnalysis
+        state.loading_stage = LoadingStage::RunningAnalysis;
+        state.prs_analyzed = 3;
+        state.prs_to_analyze = 10;
+        assert_eq!(state.get_loading_message(), "Analyzing 3/10 PRs...");
+
+        // Complete
+        state.loading_stage = LoadingStage::Complete;
+        assert_eq!(state.get_loading_message(), "Analysis complete");
+    }
+
+    /// # Loading Message With Git History Task
+    ///
+    /// Tests that loading messages include git history when task is running.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state with git_history_task set
+    /// - Tests messages at various stages
+    ///
+    /// ## Expected Outcome
+    /// - Messages should mention git history when task is running
+    #[tokio::test]
+    async fn test_loading_message_with_git_history_task() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config);
+
+        // Set up a git history task
+        state.git_history_task = Some(tokio::spawn(async {
+            Ok(crate::git::CommitHistory {
+                commit_hashes: std::collections::HashSet::new(),
+                commit_messages: Vec::new(),
+                commit_bodies: Vec::new(),
+            })
+        }));
+
+        // FetchingPullRequests with git history
+        state.loading_stage = LoadingStage::FetchingPullRequests;
+        assert_eq!(
+            state.get_loading_message(),
+            "Fetching pull requests and git history..."
+        );
+
+        // SettingUpRepository with git history
+        state.loading_stage = LoadingStage::SettingUpRepository;
+        assert_eq!(
+            state.get_loading_message(),
+            "Setting up repository and fetching git history..."
+        );
+
+        // FetchingWorkItems with git history
+        state.loading_stage = LoadingStage::FetchingWorkItems;
+        state.work_items_total = 10;
+        state.work_items_fetched = 5;
+        assert_eq!(
+            state.get_loading_message(),
+            "Fetching work items (5/10) and git history..."
+        );
+
+        // WaitingForWorkItems with git history
+        state.loading_stage = LoadingStage::WaitingForWorkItems;
+        assert_eq!(
+            state.get_loading_message(),
+            "Fetching work items (5/10) and git history..."
+        );
+    }
+
+    /// # Initial Load Trigger Sets Loading Stage
+    ///
+    /// Tests that the first KeyCode::Null triggers PR fetching.
+    ///
+    /// ## Test Scenario
+    /// - Creates a fresh state with loaded = false
+    /// - Calls process_key with KeyCode::Null
+    ///
+    /// ## Expected Outcome
+    /// - loaded flag should be set to true
+    /// - PR fetch task should be started
+    /// - Returns StateChange::Keep
+    #[tokio::test]
+    async fn test_initial_load_trigger() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // Verify initial state
+        assert!(!state.loaded);
+        assert_eq!(state.loading_stage, LoadingStage::NotStarted);
+
+        let mut app = create_test_app(config);
+
+        // Trigger initial load
+        let result = state.process_key(KeyCode::Null, &mut app).await;
+
+        // Verify state after trigger
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.loaded);
+        assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
+        assert!(state.pr_fetch_task.is_some());
+    }
+
+    /// # Complete Stage Transitions to Results on Null
+    ///
+    /// Tests that KeyCode::Null at Complete stage transitions to results.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state at Complete stage
+    /// - Calls process_key with KeyCode::Null
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to MigrationResultsState
+    #[tokio::test]
+    async fn test_complete_stage_transitions_on_null() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // Set to complete and loaded
+        state.loading_stage = LoadingStage::Complete;
+        state.loaded = true;
+
+        let mut app = create_test_app(config);
+
+        // KeyCode::Null at Complete should transition
+        let result = state.process_key(KeyCode::Null, &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Migration Data Loading - Error State
+    ///
+    /// Tests the loading screen when an error occurs.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state with error
+    /// - Renders the error display
+    ///
+    /// ## Expected Outcome
+    /// - Should display error message in red
+    /// - Should show retry help text
+    #[test]
+    fn test_migration_data_loading_error_state() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let mut state = MigrationDataLoadingState::new(config);
+            state.error = Some("Failed to connect to Azure DevOps API".to_string());
+            state.loading_stage = LoadingStage::FetchingPullRequests;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("error_state", harness.backend());
+        });
+    }
+
+    /// # Migration Data Loading - Complete State
+    ///
+    /// Tests the loading screen when analysis is complete.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state at Complete stage
+    /// - Renders the completion display
+    ///
+    /// ## Expected Outcome
+    /// - Should display completion message
+    /// - Should show 100% progress
+    /// - Should show "press any key" help text
+    #[test]
+    fn test_migration_data_loading_complete_state() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let mut state = MigrationDataLoadingState::new(config);
+            state.loading_stage = LoadingStage::Complete;
+            state.progress = 1.0;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("complete_state", harness.backend());
+        });
+    }
+
+    /// # Migration Data Loading - Work Items Progress
+    ///
+    /// Tests the loading screen during work items fetching.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration data loading state at WaitingForWorkItems
+    /// - Sets progress values
+    /// - Renders the progress display
+    ///
+    /// ## Expected Outcome
+    /// - Should display work items progress (x/y)
+    /// - Should show appropriate progress percentage
+    #[test]
+    fn test_migration_data_loading_work_items_progress() {
+        use crate::ui::{
+            snapshot_testing::with_settings_and_module_path,
+            testing::{TuiTestHarness, create_test_config_migration},
+        };
+        use insta::assert_snapshot;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+
+            let mut state = MigrationDataLoadingState::new(config);
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_total = 25;
+            state.work_items_fetched = 12;
+            state.progress = 0.45;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("work_items_progress", harness.backend());
+        });
+    }
+
+    /// # NotStarted Stage Handling
+    ///
+    /// Tests that NotStarted stage handles KeyCode::Null gracefully.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state at NotStarted with loaded = true
+    /// - Calls process_key with KeyCode::Null
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep without error
+    #[tokio::test]
+    async fn test_not_started_stage_handling() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let mut state = MigrationDataLoadingState::new(config.clone());
+
+        // Edge case: loaded but still NotStarted
+        state.loaded = true;
+        state.loading_stage = LoadingStage::NotStarted;
+
+        let mut app = create_test_app(config);
+
+        // Should handle gracefully
+        let result = state.process_key(KeyCode::Null, &mut app).await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # State Constructor Initializes Correctly
+    ///
+    /// Tests that new() sets all fields to correct initial values.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new MigrationDataLoadingState
+    /// - Checks all field values
+    ///
+    /// ## Expected Outcome
+    /// - All fields should have correct initial values
+    #[test]
+    fn test_state_constructor_initializes_correctly() {
+        use crate::ui::testing::create_test_config_migration;
+
+        let config = create_test_config_migration();
+        let state = MigrationDataLoadingState::new(config);
+
+        // Check all initial values
+        assert_eq!(state.loading_stage, LoadingStage::NotStarted);
+        assert!(!state.loaded);
+        assert_eq!(state.status, "Initializing migration analysis...");
+        assert_eq!(state.progress, 0.0);
+        assert!(state.error.is_none());
+        assert!(state.config.is_some());
+        assert!(state.pr_fetch_task.is_none());
+        assert!(state.repo_setup_task.is_none());
+        assert!(state.git_history_task.is_none());
+        assert!(state.work_items_tasks.is_none());
+        assert!(state.analysis_task.is_none());
+        assert!(state.network_processor.is_none());
+        assert_eq!(state.total_prs, 0);
+        assert_eq!(state.work_items_fetched, 0);
+        assert_eq!(state.work_items_total, 0);
+        assert_eq!(state.prs_analyzed, 0);
+        assert_eq!(state.prs_to_analyze, 0);
+        assert!(state.analysis_progress.is_none());
+        assert!(state.migration_id.starts_with("migration-"));
+        assert!(state.prs.is_empty());
+        assert!(state.prs_with_work_items.is_empty());
+        assert!(state.repo_path.is_none());
+        assert!(state.terminal_states.is_none());
+        assert!(state.commit_history.is_none());
+    }
 }
