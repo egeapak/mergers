@@ -64,13 +64,8 @@ fi
 
 # Update version in Cargo.toml
 print_info "Updating version in Cargo.toml to ${VERSION}"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "0,/^version = \".*\"/s//version = \"${VERSION}\"/" Cargo.toml
-else
-    # Linux
-    sed -i "0,/^version = \".*\"/s//version = \"${VERSION}\"/" Cargo.toml
-fi
+# Use perl for cross-platform compatibility (works on both macOS and Linux)
+perl -i -pe 'BEGIN{$found=0} s/^version = "\K[^"]*/'${VERSION}'/ if !$found && /^\[package\]/../^$/ and $found=/^version =/' Cargo.toml
 
 # Update Cargo.lock
 print_info "Updating Cargo.lock"
