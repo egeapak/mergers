@@ -31,7 +31,8 @@
       "Bash(container-use create:*)",
       "mcp__container-use__environment_file_edit",
       "WebFetch(domain:git-cliff.org)",
-      "Bash(git-cliff:*)"
+      "Bash(git-cliff:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }

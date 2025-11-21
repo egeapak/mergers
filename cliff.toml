@@ -28,6 +28,8 @@ footer = """
 trim = true
 render_always = true
 postprocessors = [
+    # Remove the [MERGE] marker from the final output
+    { pattern = '\[MERGE\] ', replace = "" },
     { pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/egeapak/mergers/issues/${1}))" },
 ]
 
@@ -36,33 +38,28 @@ conventional_commits = true
 filter_unconventional = false
 split_commits = false
 commit_preprocessors = [
-    # Extract PR title from GitHub merge commits (use second line as commit message)
-    # Don't add PR number here - git-cliff will add it from GitHub API
-    { pattern = 'Merge pull request #([0-9]+) from [^\n]+\n\n(.+)', replace = "${2}" },
+    # Extract PR title from GitHub merge commits and add marker
+    # The [MERGE] marker helps us filter to only merge commits
+    { pattern = 'Merge pull request #([0-9]+) from [^\n]+\n\n(.+)', replace = "[MERGE] ${2}" },
     { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "(#${2})" },
 ]
 commit_parsers = [
-    { message = "^feat", group = "<!-- 0 -->Features" },
-    { message = "^fix", group = "<!-- 1 -->Bug Fixes" },
-    { message = "^doc", group = "<!-- 3 -->Documentation" },
-    { message = "^perf", group = "<!-- 4 -->Performance" },
-    { message = "^refactor", group = "<!-- 2 -->Refactor" },
-    { message = "^style", group = "<!-- 5 -->Styling" },
-    { message = "^test", group = "<!-- 6 -->Testing" },
-    { message = "^chore\\(release\\): bump version", skip = true },
-    { message = "^chore\\(release\\): update CHANGELOG", skip = true },
-    { message = "^chore\\(release\\): prepare for", skip = true },
-    { message = "^chore\\(deps.*\\)", skip = true },
-    { message = "^chore\\(pr\\)", skip = true },
-    { message = "^chore\\(pull\\)", skip = true },
-    { message = "^chore|^ci", group = "<!-- 7 -->Miscellaneous Tasks" },
-    { body = ".*security", group = "<!-- 8 -->Security" },
-    { message = "^revert", group = "<!-- 9 -->Revert" },
-    # Catch all non-conventional commits
-    { message = ".*", group = "<!-- 10 -->Other Changes" },
+    # Match merge commits with [MERGE] marker and categorize by PR title
+    { message = "^\\[MERGE\\] feat", group = "<!-- 0 -->Features" },
+    { message = "^\\[MERGE\\] fix", group = "<!-- 1 -->Bug Fixes" },
+    { message = "^\\[MERGE\\] doc", group = "<!-- 3 -->Documentation" },
+    { message = "^\\[MERGE\\] perf", group = "<!-- 4 -->Performance" },
+    { message = "^\\[MERGE\\] refactor", group = "<!-- 2 -->Refactor" },
+    { message = "^\\[MERGE\\] style", group = "<!-- 5 -->Styling" },
+    { message = "^\\[MERGE\\] test", group = "<!-- 6 -->Testing" },
+    { message = "^\\[MERGE\\] (chore|ci)", group = "<!-- 7 -->Miscellaneous Tasks" },
+    { message = "^\\[MERGE\\] revert", group = "<!-- 9 -->Revert" },
+    # Catch all other merge commits (non-conventional)
+    { message = "^\\[MERGE\\]", group = "<!-- 10 -->Other Changes" },
 ]
 protect_breaking_commits = false
-filter_commits = false
+# Only include merge commits (filter out individual commits)
+filter_commits = true
 topo_order = false
 sort_commits = "oldest"
 
