@@ -6,36 +6,36 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
-- feat: add real-time feedback for cherry-pick continue operations ([#11](https://github.com/egeapak/mergers/pull/11))
-- feat: allow CLI arguments without explicit subcommand, default to merge mode ([#14](https://github.com/egeapak/mergers/pull/14))
-- feat: add cherry-pick reference detection for squash merges ([#15](https://github.com/egeapak/mergers/pull/15))
+- add real-time feedback for cherry-pick continue operations ([#11](https://github.com/egeapak/mergers/pull/11))
+- allow CLI arguments without explicit subcommand, default to merge mode ([#14](https://github.com/egeapak/mergers/pull/14))
+- add cherry-pick reference detection for squash merges ([#15](https://github.com/egeapak/mergers/pull/15))
 
 ### Bug Fixes
 
-- fix: increase migration mode bottom bar height to display all content ([#10](https://github.com/egeapak/mergers/pull/10))
-- fix: display migration success screen with completion statistics ([#9](https://github.com/egeapak/mergers/pull/9))
+- increase migration mode bottom bar height to display all content ([#10](https://github.com/egeapak/mergers/pull/10))
+- display migration success screen with completion statistics ([#9](https://github.com/egeapak/mergers/pull/9))
 
 ### Other Changes
 
-- build(release): add github token, remove master push trigger ([#8](https://github.com/egeapak/mergers/pull/8))
+- add github token, remove master push trigger ([#8](https://github.com/egeapak/mergers/pull/8))
 
 ### Refactor
 
-- refactor: restructure CLI to use subcommand pattern with mode as first argument ([#12](https://github.com/egeapak/mergers/pull/12))
-- refactor: replace pin emoji with checkmark in migration mode manual overrides ([#13](https://github.com/egeapak/mergers/pull/13))
+- restructure CLI to use subcommand pattern with mode as first argument ([#12](https://github.com/egeapak/mergers/pull/12))
+- replace pin emoji with checkmark in migration mode manual overrides ([#13](https://github.com/egeapak/mergers/pull/13))
 
 ## [0.1.3] - 2025-10-06
 
 ### Other Changes
 
-- build(release): prepare a release & changelog workflow w/ git-cliff ([#6](https://github.com/egeapak/mergers/pull/6))
+- prepare a release & changelog workflow w/ git-cliff ([#6](https://github.com/egeapak/mergers/pull/6))
 
 ### Testing
 
-- test(snapshot): Implement snapshot testing ([#2](https://github.com/egeapak/mergers/pull/2))
-- test: add more tests to html-parser ([#3](https://github.com/egeapak/mergers/pull/3))
-- test: add snapshot tests for error page ([#4](https://github.com/egeapak/mergers/pull/4))
-- test: add snapshot tests for remaining ui pages ([#5](https://github.com/egeapak/mergers/pull/5))
+- Implement snapshot testing ([#2](https://github.com/egeapak/mergers/pull/2))
+- add more tests to html-parser ([#3](https://github.com/egeapak/mergers/pull/3))
+- add snapshot tests for error page ([#4](https://github.com/egeapak/mergers/pull/4))
+- add snapshot tests for remaining ui pages ([#5](https://github.com/egeapak/mergers/pull/5))
 
 ## [0.1.2] - 2025-09-22
 

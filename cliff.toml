@@ -30,6 +30,8 @@ render_always = true
 postprocessors = [
     # Remove the [MERGE] marker from the final output
     { pattern = '\[MERGE\] ', replace = "" },
+    # Remove conventional commit prefixes (feat:, fix:, etc.) since they're already categorized
+    { pattern = '- (feat|fix|docs?|perf|refactor|style|test|chore|ci|build|revert)(\([^)]+\))?: ', replace = "- " },
     { pattern = '\(#(\d+)\)', replace = "([#${1}](https://github.com/egeapak/mergers/issues/${1}))" },
 ]
 
