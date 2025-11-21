@@ -46,6 +46,8 @@ commit_preprocessors = [
     { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "(#${2})" },
 ]
 commit_parsers = [
+    # Skip release-tagged merge requests
+    { message = "^\\[MERGE\\] (release|chore\\(release\\))", skip = true },
     # Match merge commits with [MERGE] marker and categorize by PR title
     { message = "^\\[MERGE\\] feat", group = "<!-- 0 -->Features" },
     { message = "^\\[MERGE\\] fix", group = "<!-- 1 -->Bug Fixes" },
@@ -73,4 +75,6 @@ initial_tag = "0.1.2"
 [remote.github]
 owner = "egeapak"
 repo = "mergers"
-token = "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"
+# Token is read from GITHUB_TOKEN environment variable
+# For local development: export GITHUB_TOKEN=your_token
+# In GitHub Actions: automatically provided
