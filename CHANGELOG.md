@@ -2,122 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.3] - 2025-10-06
+## [0.2.0] - 2025-11-21
+
+### Features
+
+- add real-time feedback for cherry-pick continue operations ([#11](https://github.com/egeapak/mergers/pull/11))
+- allow CLI arguments without explicit subcommand, default to merge mode ([#14](https://github.com/egeapak/mergers/pull/14))
+- add cherry-pick reference detection for squash merges ([#15](https://github.com/egeapak/mergers/pull/15))
 
 ### Bug Fixes
 
-- Fix badge, update coverage to codecov, install binary nextest for windows
-- Fix references in doctests as well
+- increase migration mode bottom bar height to display all content ([#10](https://github.com/egeapak/mergers/pull/10))
+- display migration success screen with completion statistics ([#9](https://github.com/egeapak/mergers/pull/9))
 
 ### Other Changes
 
-- Deterministic git tests, fix html parser test, add nextest w/ llvm-cov and github actions
-- Run cargo fmt
-- Add lefthook configuration
-- Remove unused items and fix clippy warnings
-- Add more tests for api and config
-- Separate binary and library
-- Accept winget licenses
-- Use codecov token
-- Use standard way to use nextest on github actions
-- Update readme svg badge
-- Generate junit.xml and upload to codecov
-- Add more tests
-- Update lefthook to run clippy on all features and all targets
-- Add more tests and fix some of them
-- Add tests for existing branches and remove ignore from tests
-- Add documentation to each test describing what is being tested
-- Add claude.md file
-- Rename project from merge-tool to mergers
-- Add config source information
-- Separate migrate and merge subcommands
-- Remove intermediate config and share config
-- Add tests for newly added structs
-- Add insta to deps
-- Configure test harness, test settings confirmation
-- Remove extra doc, update claude.md
-- Create environment driven-boar: Add comprehensive tests for utils/html_parser.rs module
-- Adding comprehensive test suite for html_parser module with 30+ new tests covering all missing scenarios
-- Fixing raw string literal to use double hash marks to avoid conflict with # in HTML
-- Fixing test expectation to match actual parser behavior for 3-digit hex colors
-- Update claude to use container-use, format
-- Add snapshot tests for remaining ui pages
-- Add snapshot tests for error page
-- Merge branch 'master' into test/remaining-ui-snapshots
-- Prepare a release & changelog workflow w/ git-cliff
-- **release:** Prepare a release & changelog workflow w/ git-cliff ([#6](https://github.com/egeapak/mergers/pull/6))
-- Add minimal-scoped token
+- add github token, remove master push trigger ([#8](https://github.com/egeapak/mergers/pull/8))
+
+### Refactor
+
+- restructure CLI to use subcommand pattern with mode as first argument ([#12](https://github.com/egeapak/mergers/pull/12))
+- replace pin emoji with checkmark in migration mode manual overrides ([#13](https://github.com/egeapak/mergers/pull/13))
+
+## [0.1.3] - 2025-10-06
+
+### Other Changes
+
+- prepare a release & changelog workflow w/ git-cliff ([#6](https://github.com/egeapak/mergers/pull/6))
 
 ### Testing
 
-- **snapshot:** Implement snapshot testing ([#2](https://github.com/egeapak/mergers/pull/2))
-- Add more tests to html-parser ([#3](https://github.com/egeapak/mergers/pull/3))
-- Add snapshot tests for error page ([#4](https://github.com/egeapak/mergers/pull/4))
-- Add snapshot tests for remaining ui pages ([#5](https://github.com/egeapak/mergers/pull/5))
+- Implement snapshot testing ([#2](https://github.com/egeapak/mergers/pull/2))
+- add more tests to html-parser ([#3](https://github.com/egeapak/mergers/pull/3))
+- add snapshot tests for error page ([#4](https://github.com/egeapak/mergers/pull/4))
+- add snapshot tests for remaining ui pages ([#5](https://github.com/egeapak/mergers/pull/5))
 
 ## [0.1.2] - 2025-09-22
 
-### Bug Fixes
-
-- Fix html links having extra space
-- Fix work item history date to use changeddate
-
 ### Other Changes
 
-- Initial commit
-- Split ui into sub-parts
-- Remove println usages and separate all ui phases into distinct states
-- Remove unused deps, setup repo immediately, use pr close date
-- Apply clippy fix
-- Add README.md for the Azure DevOps merge tool
-
-This commit introduces a comprehensive README.md file that describes the CLI tool's functionality, including:
-
-- Features and capabilities
-- Prerequisites for usage
-- Command-line arguments
-- Usage instructions with examples
-- TUI controls
-- Building instructions
 - Add README.md for the Azure DevOps merge tool ([#1](https://github.com/egeapak/mergers/pull/1))
-- Use split ui for commit and completed phase, update deps
-- Separate data loading into its own state
-- Show work item details on hovered pr items
-- Use repro steps for bugs, stylize work item header
-- Parse html descriptions
-- Remove unused fields
-- Add hotkeys to open pr and work items on completion
-- Update work item state, tag prs
-- Add retry and confirmation to post-completion steps
-- Retry repo init
-- Remove conflict skip option, go back to cehrry pick state on continue
-- Update conflict screen to show details on the commit/pr/work item
-- WIP fetch work item history
-- Show fetch progress, parallelize fetch, fix ui freeze
-- Move branch creation to repo init, update ui on cherry-pick updates
-- Add highlight
-- Update highlight to be more readable
-- Add refresh to pr list
-- Add config file and env support
-- Add initial migration mode
-- Restructure project for different modes
-- Properly load & parallelize migration tasks
-- Remove unused deps
-- Check PR matching using actual title pattern
-- Throttle number of parallel operations
-- Add throttle to processing
-- Run git log once and use it to check for exitence of PR in target
-- Parallelize git history and prs for migration
-- Add pr marking, version tagging for migration
-- Add since option to limit work item dates
-- Add work item state filter
-- 0.1.1
-- Add pr and work item search
-- Apply clippy fix
-- Apply cargo fmt
-- Migrate all errors to anyhow
-- Remove some unused methods
-- Merge branch 'master' of github.com:egeapak/mergers
-- 0.1.2
 
 <!-- generated by git-cliff -->

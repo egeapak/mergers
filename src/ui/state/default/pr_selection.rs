@@ -8,14 +8,15 @@ use crate::{
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use chrono::DateTime;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState},
 };
 use std::collections::HashSet;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 enum SearchQuery {
@@ -40,6 +41,10 @@ pub struct PullRequestSelectionState {
     search_error_message: Option<String>,
     search_iteration_mode: bool,
     last_search_query: String, // Store the last executed search query
+    // Mouse support
+    last_click_time: Option<Instant>,
+    last_click_row: Option<usize>,
+    table_area: Option<Rect>,
 }
 
 impl Default for PullRequestSelectionState {
@@ -65,6 +70,10 @@ impl PullRequestSelectionState {
             search_error_message: None,
             search_iteration_mode: false,
             last_search_query: String::new(),
+            // Mouse support
+            last_click_time: None,
+            last_click_row: None,
+            table_area: None,
         }
     }
 
@@ -950,6 +959,41 @@ impl PullRequestSelectionState {
         f.render_widget(help_widget, chunks[3]);
     }
 
+    /// Convert mouse y-coordinate to table row index
+    fn mouse_y_to_row(&self, y: u16, pr_count: usize) -> Option<usize> {
+        let area = self.table_area?;
+
+        // Table structure: border (1) + header (1) + data rows
+        // So first data row starts at area.y + 2
+        let first_row_y = area.y + 2;
+        let last_row_y = area.y + area.height.saturating_sub(2); // -1 for bottom border, -1 for 0-indexing
+
+        if y < first_row_y || y > last_row_y {
+            return None;
+        }
+
+        let row = (y - first_row_y) as usize;
+
+        // Account for table scroll offset
+        let offset = self.table_state.offset();
+        let actual_row = row + offset;
+
+        if actual_row < pr_count {
+            Some(actual_row)
+        } else {
+            None
+        }
+    }
+
+    /// Check if coordinates are within table bounds
+    fn is_in_table(&self, x: u16, y: u16) -> bool {
+        if let Some(area) = self.table_area {
+            x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
+        } else {
+            false
+        }
+    }
+
     fn render_state_selection_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         use ratatui::text::{Line, Span};
         use ratatui::widgets::Clear;
@@ -1240,6 +1284,8 @@ impl AppState for PullRequestSelectionState {
         .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
+        // Store the table area for mouse hit-testing
+        self.table_area = Some(chunks[chunk_idx]);
         f.render_stateful_widget(table, chunks[chunk_idx], &mut self.table_state);
         chunk_idx += 1;
 
@@ -1454,6 +1500,56 @@ impl AppState for PullRequestSelectionState {
                 }
                 _ => StateChange::Keep,
             }
+        }
+    }
+
+    async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
+        // Don't process mouse events in search mode or multi-select mode
+        if self.search_mode || self.multi_select_mode {
+            return StateChange::Keep;
+        }
+
+        match event.kind {
+            MouseEventKind::ScrollUp => {
+                if self.is_in_table(event.column, event.row) {
+                    self.previous(app);
+                }
+                StateChange::Keep
+            }
+            MouseEventKind::ScrollDown => {
+                if self.is_in_table(event.column, event.row) {
+                    self.next(app);
+                }
+                StateChange::Keep
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(row) = self.mouse_y_to_row(event.row, app.pull_requests.len()) {
+                    let now = Instant::now();
+                    let is_double_click = self
+                        .last_click_time
+                        .map(|t| now.duration_since(t).as_millis() < 500)
+                        .unwrap_or(false)
+                        && self.last_click_row == Some(row);
+
+                    if is_double_click {
+                        // Double-click: toggle selection
+                        self.table_state.select(Some(row));
+                        self.work_item_index = 0;
+                        self.toggle_selection(app);
+                        // Reset for next double-click detection
+                        self.last_click_time = None;
+                        self.last_click_row = None;
+                    } else {
+                        // Single click: highlight (select) the row
+                        self.table_state.select(Some(row));
+                        self.work_item_index = 0;
+                        self.last_click_time = Some(now);
+                        self.last_click_row = Some(row);
+                    }
+                }
+                StateChange::Keep
+            }
+            _ => StateChange::Keep,
         }
     }
 }
@@ -1767,6 +1863,212 @@ mod tests {
             harness.render_state(Box::new(state));
 
             assert_snapshot!("state_dialog_all_selected", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Mouse Scroll Down
+    ///
+    /// Tests that scrolling down with mouse wheel moves selection to next item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - First renders to populate table_area
+    /// - Simulates mouse scroll down event within table bounds
+    ///
+    /// ## Expected Outcome
+    /// - Selection should move from first item (0) to second item (1)
+    /// - Display should show second PR highlighted
+    #[test]
+    fn test_mouse_scroll_down() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.table_state.select(Some(0));
+
+            // First render to populate table_area
+            harness
+                .terminal
+                .draw(|f| state.ui(f, &harness.app))
+                .unwrap();
+
+            // Simulate scroll down within table area
+            let event = MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 10,
+                row: 5, // Within table area
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+
+            // Process mouse event
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                state.process_mouse(event, &mut harness.app).await;
+            });
+
+            // Re-render after mouse event
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("mouse_scroll_down", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Mouse Scroll Up
+    ///
+    /// Tests that scrolling up with mouse wheel moves selection to previous item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - Starts with second item selected
+    /// - Simulates mouse scroll up event within table bounds
+    ///
+    /// ## Expected Outcome
+    /// - Selection should move from second item (1) to first item (0)
+    /// - Display should show first PR highlighted
+    #[test]
+    fn test_mouse_scroll_up() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.table_state.select(Some(1)); // Start at second item
+
+            // First render to populate table_area
+            harness
+                .terminal
+                .draw(|f| state.ui(f, &harness.app))
+                .unwrap();
+
+            // Simulate scroll up within table area
+            let event = MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 10,
+                row: 5,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                state.process_mouse(event, &mut harness.app).await;
+            });
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("mouse_scroll_up", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Mouse Click Highlight
+    ///
+    /// Tests that clicking on a row highlights (selects) that row.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - First item is initially selected
+    /// - Simulates mouse click on third row
+    ///
+    /// ## Expected Outcome
+    /// - Selection should move to the clicked row (index 2)
+    /// - Third PR should be highlighted
+    #[test]
+    fn test_mouse_click_highlight() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.table_state.select(Some(0));
+
+            // First render to populate table_area
+            harness
+                .terminal
+                .draw(|f| state.ui(f, &harness.app))
+                .unwrap();
+
+            // Calculate row position: table starts at y=1 (after margin), +2 for border+header
+            // So first data row is at y=3, second at y=4, third at y=5
+            let click_y = 5; // Third row (index 2)
+
+            let event = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: click_y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                state.process_mouse(event, &mut harness.app).await;
+            });
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("mouse_click_highlight", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Mouse Double Click Toggle
+    ///
+    /// Tests that double-clicking on a row toggles its selection state.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - Simulates two rapid mouse clicks on the same row (double-click)
+    ///
+    /// ## Expected Outcome
+    /// - The clicked row should be toggled (selected with checkmark)
+    /// - Display should show the PR with selection indicator
+    #[test]
+    fn test_mouse_double_click_toggle() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.table_state.select(Some(0));
+
+            // First render to populate table_area
+            harness
+                .terminal
+                .draw(|f| state.ui(f, &harness.app))
+                .unwrap();
+
+            let click_y = 3; // First row (index 0)
+
+            // First click
+            let event1 = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: click_y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                state.process_mouse(event1, &mut harness.app).await;
+            });
+
+            // Second click (same position, within 500ms - simulated by not changing last_click_time)
+            let event2 = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: click_y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+
+            rt.block_on(async {
+                state.process_mouse(event2, &mut harness.app).await;
+            });
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("mouse_double_click_toggle", harness.backend());
         });
     }
 }
