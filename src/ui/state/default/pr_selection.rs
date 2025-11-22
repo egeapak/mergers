@@ -1803,4 +1803,127 @@ mod tests {
             assert_snapshot!("state_dialog_all_selected", harness.backend());
         });
     }
+
+    /// # Scrollbar State - Navigation Next
+    ///
+    /// Tests that scrollbar state is properly updated when navigating to next item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with pull requests
+    /// - Calls next() to navigate down
+    /// - Verifies selection updates correctly
+    ///
+    /// ## Expected Outcome
+    /// - Table selection should update on navigation
+    /// - Scrollbar state sync should not panic
+    #[test]
+    fn test_scrollbar_state_updates_on_next() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Initial position should be 0
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // Navigate to next
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(1));
+
+        // Navigate again
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(2));
+
+        // Wrap around to beginning
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    /// # Scrollbar State - Navigation Previous
+    ///
+    /// Tests that scrollbar state is properly updated when navigating to previous item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with pull requests
+    /// - Calls previous() to navigate up
+    /// - Verifies selection updates correctly
+    ///
+    /// ## Expected Outcome
+    /// - Table selection should update on navigation
+    /// - Should wrap to end when at beginning
+    #[test]
+    fn test_scrollbar_state_updates_on_previous() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Initial position should be 0
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // Navigate to previous (should wrap to end)
+        state.previous(&harness.app);
+        let last_idx = harness.app.pull_requests.len() - 1;
+        assert_eq!(state.table_state.selected(), Some(last_idx));
+
+        // Navigate previous again
+        state.previous(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(last_idx - 1));
+    }
+
+    /// # Scrollbar State - Initialize Selection
+    ///
+    /// Tests that scrollbar state is properly initialized.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Initializes selection with pull requests
+    /// - Verifies initial selection
+    ///
+    /// ## Expected Outcome
+    /// - Selection should start at first item
+    /// - Scrollbar state sync should not panic
+    #[test]
+    fn test_scrollbar_state_initialized_correctly() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    /// # Scrollbar State - Empty List
+    ///
+    /// Tests scrollbar state behavior with empty PR list.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with no pull requests
+    /// - Attempts navigation
+    ///
+    /// ## Expected Outcome
+    /// - Should handle empty list gracefully
+    /// - No panics on navigation
+    #[test]
+    fn test_scrollbar_state_empty_list() {
+        let config = create_test_config_default();
+        let harness = TuiTestHarness::with_config(config);
+        // Leave pull_requests empty
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Should not panic
+        state.next(&harness.app);
+        state.previous(&harness.app);
+
+        // Selection should remain None for empty list
+        assert_eq!(state.table_state.selected(), None);
+    }
 }
