@@ -10,7 +10,7 @@ pub use migration::*;
 pub use shared::*;
 
 use crate::ui::App;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
 
 pub enum StateChange {
@@ -23,6 +23,9 @@ pub enum StateChange {
 pub trait AppState: Send + Sync {
     fn ui(&mut self, f: &mut Frame, app: &App);
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange;
+    async fn process_mouse(&mut self, _event: MouseEvent, _app: &mut App) -> StateChange {
+        StateChange::Keep
+    }
 }
 
 /// Factory function to create the initial state based on app configuration
