@@ -2,6 +2,20 @@ use crossterm::event::{self, Event, KeyCode};
 use ratatui::Terminal;
 use state::{AppState, DataLoadingState, StateChange};
 
+/// Macro to process state changes and handle Keep/Change/Exit
+macro_rules! handle_state_change {
+    ($result:expr, $current_state:expr) => {
+        match $result {
+            StateChange::Keep => {}
+            StateChange::Change(new_state) => {
+                $current_state = new_state;
+                continue;
+            }
+            StateChange::Exit => break,
+        }
+    };
+}
+
 mod app;
 #[cfg(test)]
 pub mod snapshot_testing;
@@ -25,26 +39,27 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         // Use poll with timeout to allow states to execute immediately
         if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                match current_state.process_key(key.code, app).await {
-                    StateChange::Keep => {}
-                    StateChange::Change(new_state) => {
-                        current_state = new_state;
-                        continue; // Immediately process the new state
-                    }
-                    StateChange::Exit => break,
+            match event::read()? {
+                Event::Key(key) => {
+                    handle_state_change!(
+                        current_state.process_key(key.code, app).await,
+                        current_state
+                    );
                 }
+                Event::Mouse(mouse) => {
+                    handle_state_change!(
+                        current_state.process_mouse(mouse, app).await,
+                        current_state
+                    );
+                }
+                _ => {}
             }
         } else {
             // No event, but still allow state to process (for immediate execution)
-            match current_state.process_key(KeyCode::Null, app).await {
-                StateChange::Keep => {}
-                StateChange::Change(new_state) => {
-                    current_state = new_state;
-                    continue;
-                }
-                StateChange::Exit => break,
-            }
+            handle_state_change!(
+                current_state.process_key(KeyCode::Null, app).await,
+                current_state
+            );
         }
     }
 
