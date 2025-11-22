@@ -1,22 +1,22 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 2071
+assertion_line: 2228
 expression: harness.backend()
 ---
 "                                                                                "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
-" │      PR #     Date         Title           Author          Work Items      │ "
-" │→ ✓   100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)  │ "
-" │      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)  │ "
-" │      102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved)│ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
-" │                                                                            │ "
+" │      PR #     Date         Title           Author          Work Items      ↑ "
+" │→ ✓   100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)  █ "
+" │      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)  █ "
+" │      102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved)█ "
+" │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            ║ "
+" │                                                                            ↓ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Work Item (1/1)─────────────────────────────────────────────────────────────┐ "
 " │Bug         #1001   Login button not responding                             │ "

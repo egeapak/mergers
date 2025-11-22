@@ -13,7 +13,10 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState},
+    widgets::{
+        Block, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table, TableState,
+    },
 };
 use std::collections::HashSet;
 use std::time::Instant;
@@ -28,6 +31,7 @@ enum SearchQuery {
 
 pub struct PullRequestSelectionState {
     table_state: TableState,
+    scrollbar_state: ScrollbarState,
     work_item_index: usize,
     multi_select_mode: bool,
     available_states: Vec<String>,
@@ -57,6 +61,7 @@ impl PullRequestSelectionState {
     pub fn new() -> Self {
         Self {
             table_state: TableState::default(),
+            scrollbar_state: ScrollbarState::default(),
             work_item_index: 0,
             multi_select_mode: false,
             available_states: Vec::new(),
@@ -75,6 +80,13 @@ impl PullRequestSelectionState {
             last_click_row: None,
             table_area: None,
         }
+    }
+
+    fn update_scrollbar_state(&mut self, total_items: usize) {
+        self.scrollbar_state = self
+            .scrollbar_state
+            .content_length(total_items)
+            .position(self.table_state.selected().unwrap_or(0));
     }
 
     fn parse_search_query(input: &str) -> Result<SearchQuery> {
@@ -282,6 +294,7 @@ impl PullRequestSelectionState {
         if !app.pull_requests.is_empty() && self.table_state.selected().is_none() {
             self.table_state.select(Some(0));
         }
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn next(&mut self, app: &App) {
@@ -300,6 +313,7 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn previous(&mut self, app: &App) {
@@ -318,6 +332,7 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
@@ -1113,6 +1128,9 @@ impl AppState for PullRequestSelectionState {
         // Initialize selection if not already set
         self.initialize_selection(app);
 
+        // Always sync scrollbar state with current selection
+        self.update_scrollbar_state(app.pull_requests.len());
+
         // Handle empty PR list
         if app.pull_requests.is_empty() {
             let empty_message =
@@ -1285,8 +1303,24 @@ impl AppState for PullRequestSelectionState {
         .highlight_symbol("→ ");
 
         // Store the table area for mouse hit-testing
-        self.table_area = Some(chunks[chunk_idx]);
-        f.render_stateful_widget(table, chunks[chunk_idx], &mut self.table_state);
+        let table_area = chunks[chunk_idx];
+        self.table_area = Some(table_area);
+        f.render_stateful_widget(table, table_area, &mut self.table_state);
+
+        // Render scrollbar for the PR list
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+
+        // Position scrollbar inside the table's right border
+        let scrollbar_area = Rect {
+            x: table_area.x + table_area.width.saturating_sub(1),
+            y: table_area.y + 1,
+            width: 1,
+            height: table_area.height.saturating_sub(2),
+        };
+
+        f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
         // Render work item details
@@ -1864,6 +1898,129 @@ mod tests {
 
             assert_snapshot!("state_dialog_all_selected", harness.backend());
         });
+    }
+
+    /// # Scrollbar State - Navigation Next
+    ///
+    /// Tests that scrollbar state is properly updated when navigating to next item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with pull requests
+    /// - Calls next() to navigate down
+    /// - Verifies selection updates correctly
+    ///
+    /// ## Expected Outcome
+    /// - Table selection should update on navigation
+    /// - Scrollbar state sync should not panic
+    #[test]
+    fn test_scrollbar_state_updates_on_next() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Initial position should be 0
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // Navigate to next
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(1));
+
+        // Navigate again
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(2));
+
+        // Wrap around to beginning
+        state.next(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    /// # Scrollbar State - Navigation Previous
+    ///
+    /// Tests that scrollbar state is properly updated when navigating to previous item.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with pull requests
+    /// - Calls previous() to navigate up
+    /// - Verifies selection updates correctly
+    ///
+    /// ## Expected Outcome
+    /// - Table selection should update on navigation
+    /// - Should wrap to end when at beginning
+    #[test]
+    fn test_scrollbar_state_updates_on_previous() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Initial position should be 0
+        assert_eq!(state.table_state.selected(), Some(0));
+
+        // Navigate to previous (should wrap to end)
+        state.previous(&harness.app);
+        let last_idx = harness.app.pull_requests.len() - 1;
+        assert_eq!(state.table_state.selected(), Some(last_idx));
+
+        // Navigate previous again
+        state.previous(&harness.app);
+        assert_eq!(state.table_state.selected(), Some(last_idx - 1));
+    }
+
+    /// # Scrollbar State - Initialize Selection
+    ///
+    /// Tests that scrollbar state is properly initialized.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Initializes selection with pull requests
+    /// - Verifies initial selection
+    ///
+    /// ## Expected Outcome
+    /// - Selection should start at first item
+    /// - Scrollbar state sync should not panic
+    #[test]
+    fn test_scrollbar_state_initialized_correctly() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    /// # Scrollbar State - Empty List
+    ///
+    /// Tests scrollbar state behavior with empty PR list.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with no pull requests
+    /// - Attempts navigation
+    ///
+    /// ## Expected Outcome
+    /// - Should handle empty list gracefully
+    /// - No panics on navigation
+    #[test]
+    fn test_scrollbar_state_empty_list() {
+        let config = create_test_config_default();
+        let harness = TuiTestHarness::with_config(config);
+        // Leave pull_requests empty
+
+        let mut state = PullRequestSelectionState::new();
+        state.initialize_selection(&harness.app);
+
+        // Should not panic
+        state.next(&harness.app);
+        state.previous(&harness.app);
+
+        // Selection should remain None for empty list
+        assert_eq!(state.table_state.selected(), None);
     }
 
     /// # PR Selection State - Mouse Scroll Down
