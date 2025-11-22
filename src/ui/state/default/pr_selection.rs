@@ -11,9 +11,12 @@ use chrono::DateTime;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState},
+    widgets::{
+        Block, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Table, TableState,
+    },
 };
 use std::collections::HashSet;
 
@@ -27,6 +30,7 @@ enum SearchQuery {
 
 pub struct PullRequestSelectionState {
     table_state: TableState,
+    scrollbar_state: ScrollbarState,
     work_item_index: usize,
     multi_select_mode: bool,
     available_states: Vec<String>,
@@ -52,6 +56,7 @@ impl PullRequestSelectionState {
     pub fn new() -> Self {
         Self {
             table_state: TableState::default(),
+            scrollbar_state: ScrollbarState::default(),
             work_item_index: 0,
             multi_select_mode: false,
             available_states: Vec::new(),
@@ -66,6 +71,13 @@ impl PullRequestSelectionState {
             search_iteration_mode: false,
             last_search_query: String::new(),
         }
+    }
+
+    fn update_scrollbar_state(&mut self, total_items: usize) {
+        self.scrollbar_state = self
+            .scrollbar_state
+            .content_length(total_items)
+            .position(self.table_state.selected().unwrap_or(0));
     }
 
     fn parse_search_query(input: &str) -> Result<SearchQuery> {
@@ -273,6 +285,7 @@ impl PullRequestSelectionState {
         if !app.pull_requests.is_empty() && self.table_state.selected().is_none() {
             self.table_state.select(Some(0));
         }
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn next(&mut self, app: &App) {
@@ -291,6 +304,7 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn previous(&mut self, app: &App) {
@@ -309,6 +323,7 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
+        self.update_scrollbar_state(app.pull_requests.len());
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
@@ -1069,6 +1084,9 @@ impl AppState for PullRequestSelectionState {
         // Initialize selection if not already set
         self.initialize_selection(app);
 
+        // Always sync scrollbar state with current selection
+        self.update_scrollbar_state(app.pull_requests.len());
+
         // Handle empty PR list
         if app.pull_requests.is_empty() {
             let empty_message =
@@ -1240,7 +1258,23 @@ impl AppState for PullRequestSelectionState {
         .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
-        f.render_stateful_widget(table, chunks[chunk_idx], &mut self.table_state);
+        let table_area = chunks[chunk_idx];
+        f.render_stateful_widget(table, table_area, &mut self.table_state);
+
+        // Render scrollbar for the PR list
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+
+        // Position scrollbar inside the table's right border
+        let scrollbar_area = Rect {
+            x: table_area.x + table_area.width.saturating_sub(1),
+            y: table_area.y + 1,
+            width: 1,
+            height: table_area.height.saturating_sub(2),
+        };
+
+        f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
         // Render work item details
