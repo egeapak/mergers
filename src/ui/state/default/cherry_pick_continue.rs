@@ -42,7 +42,7 @@ impl CherryPickContinueState {
         thread::spawn(move || {
             let mut child = match Command::new("git")
                 .current_dir(&repo_path)
-                .args(["cherry-pick", "--continue"])
+                .args(["cherry-pick", "--continue", "--no-edit"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -569,5 +569,180 @@ mod tests {
             harness.render_state(state);
             assert_snapshot!("failure", harness.backend());
         });
+    }
+
+    /// # Cherry Pick Continue - Non-Interactive Mode Integration Test
+    ///
+    /// Tests that git cherry-pick --continue runs in non-interactive mode
+    /// without prompting for a commit message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a git repository with conflicting changes
+    /// - Triggers a cherry-pick conflict
+    /// - Resolves the conflict and stages files
+    /// - Runs the actual CherryPickContinueState which executes git cherry-pick --continue --no-edit
+    ///
+    /// ## Expected Outcome
+    /// - The cherry-pick continue command should complete successfully
+    /// - No editor should be opened for commit message input
+    /// - The original commit message should be preserved
+    #[test]
+    fn test_cherry_pick_continue_non_interactive() {
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        // Set up test repository
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().to_path_buf();
+
+        // Initialize git repo
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+
+        // Configure git user for commits
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+
+        // Disable commit signing for test
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "commit.gpgsign", "false"])
+            .output()
+            .unwrap();
+
+        // Set default branch to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "main"])
+            .output()
+            .unwrap();
+
+        // Create initial commit with a file
+        std::fs::write(repo_path.join("conflict.txt"), "original content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create feature branch and modify the same file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "feature content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Feature commit message"])
+            .output()
+            .unwrap();
+
+        // Get feature commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and modify the same file differently to create conflict
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "main content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Main commit"])
+            .output()
+            .unwrap();
+
+        // Start cherry-pick which will create a conflict
+        let cherry_pick_result = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["cherry-pick", &feature_hash])
+            .output()
+            .unwrap();
+
+        // Verify cherry-pick failed due to conflict
+        assert!(
+            !cherry_pick_result.status.success(),
+            "Expected cherry-pick to fail with conflict"
+        );
+
+        // Resolve the conflict by choosing the feature content
+        std::fs::write(repo_path.join("conflict.txt"), "resolved content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "conflict.txt"])
+            .output()
+            .unwrap();
+
+        // Now create the CherryPickContinueState which will run git cherry-pick --continue --no-edit
+        let conflicted_files = vec!["conflict.txt".to_string()];
+        let state = CherryPickContinueState::new(conflicted_files, repo_path.clone());
+
+        // Wait for the command to complete (with timeout)
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(10);
+
+        while !*state.is_complete.lock().unwrap() {
+            if start.elapsed() > timeout {
+                panic!("Timed out waiting for cherry-pick continue to complete");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        // Verify success
+        let success = *state.success.lock().unwrap();
+        assert_eq!(
+            success,
+            Some(true),
+            "Cherry-pick continue should succeed without prompting for commit message"
+        );
+
+        // Verify the commit was created with the original message
+        let log_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["log", "--oneline", "-1"])
+            .output()
+            .unwrap();
+        let log_message = String::from_utf8_lossy(&log_output.stdout);
+        assert!(
+            log_message.contains("Feature commit message"),
+            "Original commit message should be preserved, got: {}",
+            log_message
+        );
     }
 }
