@@ -42,7 +42,7 @@ impl CherryPickContinueState {
         thread::spawn(move || {
             let mut child = match Command::new("git")
                 .current_dir(&repo_path)
-                .args(["cherry-pick", "--continue"])
+                .args(["cherry-pick", "--continue", "--no-edit"])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
