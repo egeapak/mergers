@@ -3,6 +3,7 @@ use ratatui::Terminal;
 use state::{AppState, DataLoadingState, StateChange};
 
 /// Macro to process state changes and handle Keep/Change/Exit
+#[allow(clippy::needless_continue)]
 macro_rules! handle_state_change {
     ($result:expr, $current_state:expr) => {
         match $result {

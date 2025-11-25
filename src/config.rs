@@ -44,7 +44,7 @@ struct ConfigFile {
     pub tag_prefix: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub organization: Option<ParsedProperty<String>>,
     pub project: Option<ParsedProperty<String>>,
@@ -1177,43 +1177,42 @@ invalid toml syntax here [
         assert_eq!(path, temp_dir.path().join("mergers").join("config.toml"));
     }
 
-    // /// # Config Serialization
-    // ///
-    // /// Tests serialization and deserialization of configuration objects.
-    // ///
-    // /// ## Test Scenario
-    // /// - Creates a configuration object with various values
-    // /// - Serializes to TOML and deserializes back
-    // ///
-    // /// ## Expected Outcome
-    // /// - Configuration serializes correctly to TOML
-    // /// - Deserialized object matches original configuration
-    // #[test]
-    // fn test_config_serialization() {
-    //     // Note: Disabled because Config contains ParsedProperty which doesn't implement Serialize/Deserialize
-    //     let config = Config {
-    //         organization: Some(ParsedProperty::Default("test-org".to_string())),
-    //         project: Some(ParsedProperty::Default("test-project".to_string())),
-    //         repository: Some(ParsedProperty::Default("test-repo".to_string())),
-    //         pat: Some(ParsedProperty::Default("test-pat".to_string())),
-    //         dev_branch: Some(ParsedProperty::Default("develop".to_string())),
-    //         target_branch: Some(ParsedProperty::Default("main".to_string())),
-    //         local_repo: Some(ParsedProperty::Default("/tmp/repo".to_string())),
-    //         work_item_state: Some(ParsedProperty::Default("Done".to_string())),
-    //         parallel_limit: Some(ParsedProperty::Default(500)),
-    //         max_concurrent_network: Some(ParsedProperty::Default(200)),
-    //         max_concurrent_processing: Some(ParsedProperty::Default(20)),
-    //         tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
-    //     };
+    /// # Config Serialization
+    ///
+    /// Tests serialization and deserialization of configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration object with various values
+    /// - Serializes to TOML and deserializes back
+    ///
+    /// ## Expected Outcome
+    /// - Configuration serializes correctly to TOML
+    /// - Deserialized object matches original configuration
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
+            organization: Some(ParsedProperty::Default("test-org".to_string())),
+            project: Some(ParsedProperty::Default("test-project".to_string())),
+            repository: Some(ParsedProperty::Default("test-repo".to_string())),
+            pat: Some(ParsedProperty::Default("test-pat".to_string())),
+            dev_branch: Some(ParsedProperty::Default("develop".to_string())),
+            target_branch: Some(ParsedProperty::Default("main".to_string())),
+            local_repo: Some(ParsedProperty::Default("/tmp/repo".to_string())),
+            work_item_state: Some(ParsedProperty::Default("Done".to_string())),
+            parallel_limit: Some(ParsedProperty::Default(500)),
+            max_concurrent_network: Some(ParsedProperty::Default(200)),
+            max_concurrent_processing: Some(ParsedProperty::Default(20)),
+            tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
+        };
 
-    //     // Test serialization to TOML
-    //     let toml_string = toml::to_string(&config).unwrap();
-    //     assert!(toml_string.contains("organization = \"test-org\""));
-    //     assert!(toml_string.contains("parallel_limit = 500"));
+        // Test serialization to TOML (serializes with enum variant info)
+        let toml_string = toml::to_string(&config).unwrap();
+        assert!(toml_string.contains("test-org"));
+        assert!(toml_string.contains("500"));
 
-    //     // Test deserialization from TOML
-    //     let deserialized: Config = toml::from_str(&toml_string).unwrap();
-    //     assert_eq!(deserialized.organization, config.organization);
-    //     assert_eq!(deserialized.parallel_limit, config.parallel_limit);
-    // }
+        // Test deserialization from TOML
+        let deserialized: Config = toml::from_str(&toml_string).unwrap();
+        assert_eq!(deserialized.organization, config.organization);
+        assert_eq!(deserialized.parallel_limit, config.parallel_limit);
+    }
 }
