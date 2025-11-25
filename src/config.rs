@@ -551,7 +551,22 @@ mod tests {
     /// - No errors occur when environment variables are missing
     #[test]
     fn test_load_from_env_no_variables() {
-        // Ensure no relevant env vars are set
+        // Ensure no relevant env vars are set - clean up from other tests
+        unsafe {
+            env::remove_var("MERGERS_ORGANIZATION");
+            env::remove_var("MERGERS_PROJECT");
+            env::remove_var("MERGERS_REPOSITORY");
+            env::remove_var("MERGERS_PAT");
+            env::remove_var("MERGERS_DEV_BRANCH");
+            env::remove_var("MERGERS_TARGET_BRANCH");
+            env::remove_var("MERGERS_LOCAL_REPO");
+            env::remove_var("MERGERS_WORK_ITEM_STATE");
+            env::remove_var("MERGERS_PARALLEL_LIMIT");
+            env::remove_var("MERGERS_MAX_CONCURRENT_NETWORK");
+            env::remove_var("MERGERS_MAX_CONCURRENT_PROCESSING");
+            env::remove_var("MERGERS_TAG_PREFIX");
+        }
+
         let config = Config::load_from_env();
 
         assert_eq!(config.organization, None);
@@ -774,6 +789,14 @@ mod tests {
     /// - All configuration values are properly loaded
     #[test]
     fn test_load_from_file_valid_toml() {
+        // Clean up env vars from other tests that could interfere
+        unsafe {
+            env::remove_var("MERGERS_ORGANIZATION");
+            env::remove_var("MERGERS_PROJECT");
+            env::remove_var("MERGERS_REPOSITORY");
+            env::remove_var("MERGERS_PAT");
+        }
+
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.toml");
 

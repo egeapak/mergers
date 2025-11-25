@@ -188,6 +188,11 @@ async fn test_client_creation() {
 /// - Configuration resolution succeeds with environment sources
 #[test]
 fn test_args_resolution_with_env() {
+    // Clean up XDG_CONFIG_HOME first to prevent loading from config files left by other tests
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     // Test that Args can resolve configuration from environment variables
 
     // Set up test environment variables
@@ -256,6 +261,23 @@ fn test_args_resolution_with_env() {
 /// - File-based configuration values are properly applied
 #[test]
 fn test_args_resolution_with_file() {
+    // Clean up any env vars from other tests that could interfere
+    // This is needed because tests run in parallel and share the same process
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+        std::env::remove_var("MERGERS_DEV_BRANCH");
+        std::env::remove_var("MERGERS_TARGET_BRANCH");
+        std::env::remove_var("MERGERS_LOCAL_REPO");
+        std::env::remove_var("MERGERS_WORK_ITEM_STATE");
+        std::env::remove_var("MERGERS_PARALLEL_LIMIT");
+        std::env::remove_var("MERGERS_MAX_CONCURRENT_NETWORK");
+        std::env::remove_var("MERGERS_MAX_CONCURRENT_PROCESSING");
+        std::env::remove_var("MERGERS_TAG_PREFIX");
+    }
+
     // Test that Args can resolve configuration from a config file
 
     let temp_dir = TempDir::new().unwrap();
@@ -434,6 +456,11 @@ fn test_migration_mode_initialization() {
 /// - Default mode settings are properly configured
 #[test]
 fn test_default_mode_initialization() {
+    // Clean up any XDG_CONFIG_HOME that might be left over from previous tests
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     // Test default mode configuration (when migrate flag is false)
 
     unsafe {
