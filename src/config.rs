@@ -44,7 +44,7 @@ struct ConfigFile {
     pub tag_prefix: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     pub organization: Option<ParsedProperty<String>>,
     pub project: Option<ParsedProperty<String>>,
@@ -326,6 +326,7 @@ max_concurrent_processing = 10
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::file_serial;
     use std::env;
     use tempfile::TempDir;
 
@@ -388,6 +389,7 @@ mod tests {
     /// - All environment variables are correctly parsed
     /// - Configuration reflects all provided environment values
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_all_variables() {
         // Set up environment variables
         unsafe {
@@ -550,8 +552,24 @@ mod tests {
     /// - Returns empty/default configuration
     /// - No errors occur when environment variables are missing
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_no_variables() {
-        // Ensure no relevant env vars are set
+        // Ensure no relevant env vars are set - clean up from other tests
+        unsafe {
+            env::remove_var("MERGERS_ORGANIZATION");
+            env::remove_var("MERGERS_PROJECT");
+            env::remove_var("MERGERS_REPOSITORY");
+            env::remove_var("MERGERS_PAT");
+            env::remove_var("MERGERS_DEV_BRANCH");
+            env::remove_var("MERGERS_TARGET_BRANCH");
+            env::remove_var("MERGERS_LOCAL_REPO");
+            env::remove_var("MERGERS_WORK_ITEM_STATE");
+            env::remove_var("MERGERS_PARALLEL_LIMIT");
+            env::remove_var("MERGERS_MAX_CONCURRENT_NETWORK");
+            env::remove_var("MERGERS_MAX_CONCURRENT_PROCESSING");
+            env::remove_var("MERGERS_TAG_PREFIX");
+        }
+
         let config = Config::load_from_env();
 
         assert_eq!(config.organization, None);
@@ -580,6 +598,7 @@ mod tests {
     /// - Invalid numeric values are handled gracefully
     /// - Configuration uses defaults for unparseable numbers
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_invalid_numeric_values() {
         unsafe {
             env::set_var("MERGERS_PARALLEL_LIMIT", "not-a-number");
@@ -773,7 +792,16 @@ mod tests {
     /// - TOML file is correctly parsed
     /// - All configuration values are properly loaded
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_valid_toml() {
+        // Clean up env vars from other tests that could interfere
+        unsafe {
+            env::remove_var("MERGERS_ORGANIZATION");
+            env::remove_var("MERGERS_PROJECT");
+            env::remove_var("MERGERS_REPOSITORY");
+            env::remove_var("MERGERS_PAT");
+        }
+
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("config.toml");
 
@@ -916,6 +944,7 @@ tag_prefix = "file-"
     /// - Missing file doesn't cause errors
     /// - Default configuration is returned when file is missing
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_missing_file_returns_default() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -959,6 +988,7 @@ tag_prefix = "file-"
     /// - Invalid TOML is handled gracefully
     /// - Error is returned or default config is used
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_invalid_toml() {
         let temp_dir = TempDir::new().unwrap();
         let mergers_dir = temp_dir.path().join("mergers");
@@ -1029,6 +1059,7 @@ invalid toml syntax here [
     /// - Sample config file is successfully created
     /// - File contains expected configuration template
     #[test]
+    #[file_serial(env_tests)]
     fn test_create_sample_config_creates_file() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -1074,6 +1105,7 @@ invalid toml syntax here [
     /// - Existing files are not overwritten
     /// - Safe behavior prevents data loss
     #[test]
+    #[file_serial(env_tests)]
     fn test_create_sample_config_does_not_overwrite() {
         let temp_dir = TempDir::new().unwrap();
         let mergers_dir = temp_dir.path().join("mergers");
@@ -1119,6 +1151,7 @@ invalid toml syntax here [
     /// - Configuration path uses XDG_CONFIG_HOME when set
     /// - Path follows XDG Base Directory specification
     #[test]
+    #[file_serial(env_tests)]
     fn test_get_config_path_uses_xdg_config_home() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -1144,43 +1177,42 @@ invalid toml syntax here [
         assert_eq!(path, temp_dir.path().join("mergers").join("config.toml"));
     }
 
-    // /// # Config Serialization
-    // ///
-    // /// Tests serialization and deserialization of configuration objects.
-    // ///
-    // /// ## Test Scenario
-    // /// - Creates a configuration object with various values
-    // /// - Serializes to TOML and deserializes back
-    // ///
-    // /// ## Expected Outcome
-    // /// - Configuration serializes correctly to TOML
-    // /// - Deserialized object matches original configuration
-    // #[test]
-    // fn test_config_serialization() {
-    //     // Note: Disabled because Config contains ParsedProperty which doesn't implement Serialize/Deserialize
-    //     let config = Config {
-    //         organization: Some(ParsedProperty::Default("test-org".to_string())),
-    //         project: Some(ParsedProperty::Default("test-project".to_string())),
-    //         repository: Some(ParsedProperty::Default("test-repo".to_string())),
-    //         pat: Some(ParsedProperty::Default("test-pat".to_string())),
-    //         dev_branch: Some(ParsedProperty::Default("develop".to_string())),
-    //         target_branch: Some(ParsedProperty::Default("main".to_string())),
-    //         local_repo: Some(ParsedProperty::Default("/tmp/repo".to_string())),
-    //         work_item_state: Some(ParsedProperty::Default("Done".to_string())),
-    //         parallel_limit: Some(ParsedProperty::Default(500)),
-    //         max_concurrent_network: Some(ParsedProperty::Default(200)),
-    //         max_concurrent_processing: Some(ParsedProperty::Default(20)),
-    //         tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
-    //     };
+    /// # Config Serialization
+    ///
+    /// Tests serialization and deserialization of configuration objects.
+    ///
+    /// ## Test Scenario
+    /// - Creates a configuration object with various values
+    /// - Serializes to TOML and deserializes back
+    ///
+    /// ## Expected Outcome
+    /// - Configuration serializes correctly to TOML
+    /// - Deserialized object matches original configuration
+    #[test]
+    fn test_config_serialization() {
+        let config = Config {
+            organization: Some(ParsedProperty::Default("test-org".to_string())),
+            project: Some(ParsedProperty::Default("test-project".to_string())),
+            repository: Some(ParsedProperty::Default("test-repo".to_string())),
+            pat: Some(ParsedProperty::Default("test-pat".to_string())),
+            dev_branch: Some(ParsedProperty::Default("develop".to_string())),
+            target_branch: Some(ParsedProperty::Default("main".to_string())),
+            local_repo: Some(ParsedProperty::Default("/tmp/repo".to_string())),
+            work_item_state: Some(ParsedProperty::Default("Done".to_string())),
+            parallel_limit: Some(ParsedProperty::Default(500)),
+            max_concurrent_network: Some(ParsedProperty::Default(200)),
+            max_concurrent_processing: Some(ParsedProperty::Default(20)),
+            tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
+        };
 
-    //     // Test serialization to TOML
-    //     let toml_string = toml::to_string(&config).unwrap();
-    //     assert!(toml_string.contains("organization = \"test-org\""));
-    //     assert!(toml_string.contains("parallel_limit = 500"));
+        // Test serialization to TOML (serializes with enum variant info)
+        let toml_string = toml::to_string(&config).unwrap();
+        assert!(toml_string.contains("test-org"));
+        assert!(toml_string.contains("500"));
 
-    //     // Test deserialization from TOML
-    //     let deserialized: Config = toml::from_str(&toml_string).unwrap();
-    //     assert_eq!(deserialized.organization, config.organization);
-    //     assert_eq!(deserialized.parallel_limit, config.parallel_limit);
-    // }
+        // Test deserialization from TOML
+        let deserialized: Config = toml::from_str(&toml_string).unwrap();
+        assert_eq!(deserialized.organization, config.organization);
+        assert_eq!(deserialized.parallel_limit, config.parallel_limit);
+    }
 }

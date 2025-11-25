@@ -100,17 +100,15 @@ impl PullRequestSelectionState {
         if let Some(pr_id_str) = trimmed.strip_prefix('!') {
             if let Ok(pr_id) = pr_id_str.parse::<i32>() {
                 return Ok(SearchQuery::PullRequestId(pr_id));
-            } else {
-                bail!("Invalid PR ID format");
             }
+            bail!("Invalid PR ID format");
         }
 
         if let Some(wi_id_str) = trimmed.strip_prefix('#') {
             if let Ok(wi_id) = wi_id_str.parse::<i32>() {
                 return Ok(SearchQuery::WorkItemId(wi_id));
-            } else {
-                bail!("Invalid work item ID format");
             }
+            bail!("Invalid work item ID format");
         }
 
         // Handle tag:query format

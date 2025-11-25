@@ -7,6 +7,7 @@ use mergers::{
     AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs, SharedArgs,
     parsed_property::ParsedProperty,
 };
+use serial_test::file_serial;
 use std::fs;
 use tempfile::TempDir;
 
@@ -57,6 +58,7 @@ fn create_empty_migrate_args() -> Args {
 /// - Configuration loading works correctly across different sources
 /// - Merging rules are properly applied with correct precedence
 #[test]
+#[file_serial(env_tests)]
 fn test_config_loading_and_merging() {
     // Test that config loading doesn't panic and returns sensible defaults
     let _config = Config::load_from_file().expect("Should load config or return defaults");
@@ -187,7 +189,13 @@ async fn test_client_creation() {
 /// - Environment variables are correctly parsed into configuration
 /// - Configuration resolution succeeds with environment sources
 #[test]
+#[file_serial(env_tests)]
 fn test_args_resolution_with_env() {
+    // Clean up XDG_CONFIG_HOME first to prevent loading from config files left by other tests
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     // Test that Args can resolve configuration from environment variables
 
     // Set up test environment variables
@@ -255,7 +263,25 @@ fn test_args_resolution_with_env() {
 /// - Configuration file is correctly parsed
 /// - File-based configuration values are properly applied
 #[test]
+#[file_serial(env_tests)]
 fn test_args_resolution_with_file() {
+    // Clean up any env vars from other tests that could interfere
+    // This is needed because tests run in parallel and share the same process
+    unsafe {
+        std::env::remove_var("MERGERS_ORGANIZATION");
+        std::env::remove_var("MERGERS_PROJECT");
+        std::env::remove_var("MERGERS_REPOSITORY");
+        std::env::remove_var("MERGERS_PAT");
+        std::env::remove_var("MERGERS_DEV_BRANCH");
+        std::env::remove_var("MERGERS_TARGET_BRANCH");
+        std::env::remove_var("MERGERS_LOCAL_REPO");
+        std::env::remove_var("MERGERS_WORK_ITEM_STATE");
+        std::env::remove_var("MERGERS_PARALLEL_LIMIT");
+        std::env::remove_var("MERGERS_MAX_CONCURRENT_NETWORK");
+        std::env::remove_var("MERGERS_MAX_CONCURRENT_PROCESSING");
+        std::env::remove_var("MERGERS_TAG_PREFIX");
+    }
+
     // Test that Args can resolve configuration from a config file
 
     let temp_dir = TempDir::new().unwrap();
@@ -341,6 +367,7 @@ target_branch = "main"
 /// - Missing required arguments are properly detected
 /// - Appropriate error messages are generated for missing fields
 #[test]
+#[file_serial(env_tests)]
 fn test_missing_required_args() {
     // Test that Args validation catches missing required arguments
 
@@ -370,6 +397,7 @@ fn test_missing_required_args() {
 /// - Application correctly initializes in migration mode
 /// - Migration-specific settings are properly configured
 #[test]
+#[file_serial(env_tests)]
 fn test_migration_mode_initialization() {
     // Test migration mode configuration
 
@@ -433,7 +461,13 @@ fn test_migration_mode_initialization() {
 /// - Application correctly initializes in default mode
 /// - Default mode settings are properly configured
 #[test]
+#[file_serial(env_tests)]
 fn test_default_mode_initialization() {
+    // Clean up any XDG_CONFIG_HOME that might be left over from previous tests
+    unsafe {
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     // Test default mode configuration (when migrate flag is false)
 
     unsafe {
@@ -493,6 +527,7 @@ fn test_default_mode_initialization() {
 /// - Sample configuration file is successfully created
 /// - Generated config contains expected template content
 #[test]
+#[file_serial(env_tests)]
 fn test_create_config_flag_functionality() {
     // Test the --create-config functionality
 
@@ -533,6 +568,7 @@ fn test_create_config_flag_functionality() {
 /// - CLI arguments take precedence over environment variables
 /// - Configuration precedence rules are correctly applied
 #[test]
+#[file_serial(env_tests)]
 fn test_args_cli_precedence() {
     // Test that CLI args take precedence over env vars
 
@@ -619,6 +655,7 @@ fn test_args_cli_precedence() {
 /// - Configuration resolves correctly from environment
 /// - Client creation succeeds using resolved configuration values
 #[test]
+#[file_serial(env_tests)]
 fn test_client_creation_with_resolved_config() {
     // Test that a client can be created from resolved config
 

@@ -9,7 +9,6 @@ macro_rules! handle_state_change {
             StateChange::Keep => {}
             StateChange::Change(new_state) => {
                 $current_state = new_state;
-                continue;
             }
             StateChange::Exit => break,
         }

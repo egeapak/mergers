@@ -17,6 +17,7 @@ pub enum ParsedProperty<T> {
 
 impl<T> ParsedProperty<T> {
     /// Get the parsed value
+    #[must_use]
     pub fn value(&self) -> &T {
         match self {
             ParsedProperty::Cli(value, _) => value,
@@ -28,6 +29,7 @@ impl<T> ParsedProperty<T> {
     }
 
     /// Get the source name as a string
+    #[must_use]
     pub fn source_name(&self) -> &'static str {
         match self {
             ParsedProperty::Cli(_, _) => "cli",
@@ -39,6 +41,7 @@ impl<T> ParsedProperty<T> {
     }
 
     /// Get the original string value if available
+    #[must_use]
     pub fn original(&self) -> Option<&str> {
         match self {
             ParsedProperty::Cli(_, original) => Some(original),
@@ -50,6 +53,7 @@ impl<T> ParsedProperty<T> {
     }
 
     /// Check if this property came from a specific source
+    #[must_use]
     pub fn is_from_source(&self, source: &str) -> bool {
         self.source_name() == source
     }

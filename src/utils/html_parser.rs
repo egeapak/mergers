@@ -2,6 +2,31 @@ use ego_tree::NodeRef;
 use ratatui::prelude::*;
 use scraper::{ElementRef, Html, Node};
 
+/// Convert HTML content to styled ratatui Lines.
+///
+/// Parses HTML and converts it to a vector of `Line` objects suitable for
+/// rendering in a ratatui `Paragraph` widget. Supports common HTML elements
+/// like paragraphs, headers, bold, italic, links, and inline styles.
+///
+/// # Arguments
+///
+/// * `html` - HTML string to parse and convert
+///
+/// # Returns
+///
+/// A vector of `Line` objects with appropriate styling
+///
+/// # Example
+///
+/// ```
+/// use mergers::utils::html_to_lines;
+/// use ratatui::widgets::{Paragraph, Wrap};
+///
+/// let html = "<p>Hello <b>world</b>!</p>";
+/// let lines = html_to_lines(html);
+/// let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+/// ```
+#[must_use]
 pub fn html_to_lines(html: &str) -> Vec<Line<'_>> {
     let document = Html::parse_fragment(html);
     let mut converter = HtmlConverter::new();
@@ -1045,15 +1070,3 @@ mod tests {
         }
     }
 }
-
-// Example usage:
-//
-// use ratatui::prelude::*;
-// use ratatui::widgets::{Block, Borders, Paragraph};
-//
-// fn render_html_content(html: &str) -> Paragraph {
-//     let lines = html_to_lines(html);
-//     Paragraph::new(lines)
-//         .block(Block::default().borders(Borders::ALL).title("HTML Content"))
-//         .wrap(ratatui::widgets::Wrap { trim: true })
-// }

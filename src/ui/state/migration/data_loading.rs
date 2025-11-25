@@ -512,19 +512,19 @@ impl MigrationDataLoadingState {
                         return Err(e).context("Analysis task failed");
                     }
                 }
-            } else {
-                // Update progress while analysis is running
-                if let Some(ref progress_counter) = self.analysis_progress {
-                    self.prs_analyzed = progress_counter.load(Ordering::Relaxed);
-                }
+            }
 
-                // Calculate progress based on analyzed PRs
-                if self.prs_to_analyze > 0 {
-                    let base_progress = 0.7; // Starting progress for analysis phase
-                    let analysis_progress =
-                        (self.prs_analyzed as f64 / self.prs_to_analyze as f64) * 0.25; // 25% of total progress for analysis
-                    self.progress = base_progress + analysis_progress;
-                }
+            // Update progress while analysis is running
+            if let Some(ref progress_counter) = self.analysis_progress {
+                self.prs_analyzed = progress_counter.load(Ordering::Relaxed);
+            }
+
+            // Calculate progress based on analyzed PRs
+            if self.prs_to_analyze > 0 {
+                let base_progress = 0.7; // Starting progress for analysis phase
+                let analysis_progress =
+                    (self.prs_analyzed as f64 / self.prs_to_analyze as f64) * 0.25; // 25% of total progress for analysis
+                self.progress = base_progress + analysis_progress;
             }
         }
         Ok(false)

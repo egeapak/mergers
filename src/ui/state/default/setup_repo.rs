@@ -258,13 +258,13 @@ impl AppState for SetupRepoState {
         match &self.state {
             SetupState::Error { error, .. } => {
                 match code {
-                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                    KeyCode::Char('r' | 'R') => {
                         // Retry - reset state and try again
                         self.state = SetupState::Initializing;
                         self.started = false;
                         self.setup_repository(app).await
                     }
-                    KeyCode::Char('f') | KeyCode::Char('F') => {
+                    KeyCode::Char('f' | 'F') => {
                         // Force - try to resolve the specific error and retry
                         let error_clone = error.clone();
                         self.force_resolve_error(app, error_clone).await
