@@ -326,6 +326,7 @@ max_concurrent_processing = 10
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::file_serial;
     use std::env;
     use tempfile::TempDir;
 
@@ -388,6 +389,7 @@ mod tests {
     /// - All environment variables are correctly parsed
     /// - Configuration reflects all provided environment values
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_all_variables() {
         // Set up environment variables
         unsafe {
@@ -550,6 +552,7 @@ mod tests {
     /// - Returns empty/default configuration
     /// - No errors occur when environment variables are missing
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_no_variables() {
         // Ensure no relevant env vars are set - clean up from other tests
         unsafe {
@@ -595,6 +598,7 @@ mod tests {
     /// - Invalid numeric values are handled gracefully
     /// - Configuration uses defaults for unparseable numbers
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_env_invalid_numeric_values() {
         unsafe {
             env::set_var("MERGERS_PARALLEL_LIMIT", "not-a-number");
@@ -788,6 +792,7 @@ mod tests {
     /// - TOML file is correctly parsed
     /// - All configuration values are properly loaded
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_valid_toml() {
         // Clean up env vars from other tests that could interfere
         unsafe {
@@ -939,6 +944,7 @@ tag_prefix = "file-"
     /// - Missing file doesn't cause errors
     /// - Default configuration is returned when file is missing
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_missing_file_returns_default() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -982,6 +988,7 @@ tag_prefix = "file-"
     /// - Invalid TOML is handled gracefully
     /// - Error is returned or default config is used
     #[test]
+    #[file_serial(env_tests)]
     fn test_load_from_file_invalid_toml() {
         let temp_dir = TempDir::new().unwrap();
         let mergers_dir = temp_dir.path().join("mergers");
@@ -1052,6 +1059,7 @@ invalid toml syntax here [
     /// - Sample config file is successfully created
     /// - File contains expected configuration template
     #[test]
+    #[file_serial(env_tests)]
     fn test_create_sample_config_creates_file() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
@@ -1097,6 +1105,7 @@ invalid toml syntax here [
     /// - Existing files are not overwritten
     /// - Safe behavior prevents data loss
     #[test]
+    #[file_serial(env_tests)]
     fn test_create_sample_config_does_not_overwrite() {
         let temp_dir = TempDir::new().unwrap();
         let mergers_dir = temp_dir.path().join("mergers");
@@ -1142,6 +1151,7 @@ invalid toml syntax here [
     /// - Configuration path uses XDG_CONFIG_HOME when set
     /// - Path follows XDG Base Directory specification
     #[test]
+    #[file_serial(env_tests)]
     fn test_get_config_path_uses_xdg_config_home() {
         let temp_dir = TempDir::new().unwrap();
         let original_xdg = env::var("XDG_CONFIG_HOME").ok();
