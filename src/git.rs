@@ -231,9 +231,12 @@ pub enum CherryPickResult {
 }
 
 pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPickResult> {
+    // Always use -m 1 to handle both regular and merge commits:
+    // - For merge commits: selects the first parent (the branch that was merged into)
+    // - For regular commits: git uses the single parent, -m 1 has no negative effect
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(["cherry-pick", commit_id])
+        .args(["cherry-pick", "-m", "1", commit_id])
         .output()
         .context("Failed to execute cherry-pick command")?;
 
@@ -1964,6 +1967,198 @@ mod tests {
                 // Expected conflict
             }
             _ => panic!("Expected conflict result"),
+        }
+    }
+
+    /// # Cherry Pick Merge Commit Success
+    ///
+    /// Tests that cherry-picking a merge commit works correctly with the -m flag.
+    ///
+    /// ## Test Scenario
+    /// - Creates a merge commit on a feature branch
+    /// - Cherry-picks the merge commit to a different branch
+    /// - Verifies the changes are applied correctly
+    ///
+    /// ## Expected Outcome
+    /// - Cherry-pick succeeds without the "no -m option was given" error
+    /// - Changes from the merged branch are applied to the target
+    #[test]
+    fn test_cherry_pick_merge_commit_success() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main with a base file
+        std::fs::write(repo_path.join("base.txt"), "base content").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create a feature branch and add some changes
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("feature.txt"), "feature content").unwrap();
+        create_commit_with_message(&repo_path, "Feature commit");
+
+        // Go back to main and create a different commit (so merge won't fast-forward)
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("main.txt"), "main content").unwrap();
+        create_commit_with_message(&repo_path, "Main branch commit");
+
+        // Merge feature into main (creates a merge commit)
+        let merge_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "feature", "-m", "Merge feature branch"])
+            .output()
+            .unwrap();
+        assert!(
+            merge_output.status.success(),
+            "Merge failed: {}",
+            String::from_utf8_lossy(&merge_output.stderr)
+        );
+
+        // Get the merge commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let merge_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Create a target branch from before the merge
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target", "HEAD~1"])
+            .output()
+            .unwrap();
+
+        // Verify feature.txt doesn't exist on target branch yet
+        assert!(
+            !repo_path.join("feature.txt").exists(),
+            "feature.txt should not exist before cherry-pick"
+        );
+
+        // Cherry-pick the merge commit (this should use -m 1 internally)
+        let result = cherry_pick_commit(&repo_path, &merge_hash);
+        assert!(result.is_ok(), "Cherry-pick should not error");
+
+        match result.unwrap() {
+            crate::git::CherryPickResult::Success => {
+                // Expected success
+            }
+            crate::git::CherryPickResult::Conflict(files) => {
+                panic!("Unexpected conflict with files: {:?}", files);
+            }
+            crate::git::CherryPickResult::Failed(msg) => {
+                panic!("Cherry-pick failed: {}", msg);
+            }
+        }
+
+        // Verify that the feature changes were applied
+        assert!(
+            repo_path.join("feature.txt").exists(),
+            "feature.txt should exist after cherry-picking the merge commit"
+        );
+
+        let content = std::fs::read_to_string(repo_path.join("feature.txt")).unwrap();
+        assert_eq!(
+            content, "feature content",
+            "Feature file should have correct content"
+        );
+    }
+
+    /// # Cherry Pick Merge Commit With Conflict
+    ///
+    /// Tests that cherry-picking a merge commit correctly detects conflicts.
+    ///
+    /// ## Test Scenario
+    /// - Creates a merge commit with changes to a specific file
+    /// - Creates conflicting changes on the target branch
+    /// - Attempts to cherry-pick the merge commit
+    ///
+    /// ## Expected Outcome
+    /// - Cherry-pick detects the conflict and returns Conflict result
+    #[test]
+    fn test_cherry_pick_merge_commit_conflict() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit on main with a file
+        std::fs::write(repo_path.join("shared.txt"), "original content").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create a feature branch and modify the shared file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("shared.txt"), "feature content").unwrap();
+        create_commit_with_message(&repo_path, "Feature modifies shared");
+
+        // Go back to main and create a different commit
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("unrelated.txt"), "unrelated").unwrap();
+        create_commit_with_message(&repo_path, "Main unrelated commit");
+
+        // Merge feature into main (creates a merge commit)
+        let merge_output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["merge", "feature", "-m", "Merge feature branch"])
+            .output()
+            .unwrap();
+        assert!(
+            merge_output.status.success(),
+            "Merge failed: {}",
+            String::from_utf8_lossy(&merge_output.stderr)
+        );
+
+        // Get the merge commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let merge_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Create a target branch from the initial commit with conflicting changes
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target", "HEAD~2"])
+            .output()
+            .unwrap();
+
+        // Make conflicting changes to shared.txt
+        std::fs::write(repo_path.join("shared.txt"), "target conflicting content").unwrap();
+        create_commit_with_message(&repo_path, "Target conflicting commit");
+
+        // Try to cherry-pick the merge commit - should detect conflict
+        let result = cherry_pick_commit(&repo_path, &merge_hash);
+        assert!(result.is_ok(), "Cherry-pick should not error");
+
+        match result.unwrap() {
+            crate::git::CherryPickResult::Conflict(files) => {
+                assert!(
+                    files.contains(&"shared.txt".to_string()),
+                    "Should report shared.txt as conflicted"
+                );
+            }
+            crate::git::CherryPickResult::Success => {
+                panic!("Expected conflict but got success");
+            }
+            crate::git::CherryPickResult::Failed(msg) => {
+                panic!("Unexpected failure: {}", msg);
+            }
         }
     }
 
