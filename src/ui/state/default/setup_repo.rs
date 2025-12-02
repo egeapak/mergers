@@ -1,3 +1,6 @@
+// Allow deprecated RepositorySetupError usage until full migration to GitError
+#![allow(deprecated)]
+
 use crate::{
     git,
     models::CherryPickItem,

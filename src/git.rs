@@ -1,3 +1,16 @@
+//! Git operations for repository management and cherry-picking.
+//!
+//! This module provides functions for:
+//! - Repository cloning and worktree management
+//! - Cherry-pick operations with conflict detection
+//! - Commit history analysis
+//! - Branch management
+//!
+//! All operations use the system `git` command via `std::process::Command`.
+
+// Allow deprecated RepositorySetupError usage within this module during migration
+#![allow(deprecated)]
+
 use anyhow::{Context, Result};
 use std::{
     collections::HashSet,
@@ -6,13 +19,106 @@ use std::{
 };
 use tempfile::TempDir;
 
+use crate::error::GitError;
+
+/// Trait for abstracting git operations.
+///
+/// This trait allows for mocking git operations in tests and potentially
+/// supporting different git backends (e.g., libgit2) in the future.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use std::path::Path;
+/// use mergers::git::{GitOperations, SystemGit};
+///
+/// let git = SystemGit;
+/// let info = git.get_commit_info(Path::new("/repo"), "HEAD")?;
+/// println!("Latest commit: {}", info.title);
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub trait GitOperations: Send + Sync {
+    /// Cherry-pick a commit into the current branch.
+    fn cherry_pick(&self, repo_path: &Path, commit_id: &str) -> Result<CherryPickResult>;
+
+    /// Get information about a specific commit.
+    fn get_commit_info(&self, repo_path: &Path, commit_id: &str) -> Result<CommitInfo>;
+
+    /// Check if conflicts have been resolved.
+    fn check_conflicts_resolved(&self, repo_path: &Path) -> Result<bool>;
+
+    /// Continue a paused cherry-pick operation.
+    fn continue_cherry_pick(&self, repo_path: &Path) -> Result<()>;
+
+    /// Abort a cherry-pick operation.
+    fn abort_cherry_pick(&self, repo_path: &Path) -> Result<()>;
+
+    /// Create a new branch and check it out.
+    fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<()>;
+
+    /// Fetch specific commits from the remote.
+    fn fetch_commits(&self, repo_path: &Path, commits: &[String]) -> Result<()>;
+
+    /// Get the complete commit history for a branch.
+    fn get_branch_history(&self, repo_path: &Path, branch: &str) -> Result<CommitHistory>;
+}
+
+/// Default implementation using system git command.
+///
+/// This implementation calls the `git` binary via `std::process::Command`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemGit;
+
+impl GitOperations for SystemGit {
+    fn cherry_pick(&self, repo_path: &Path, commit_id: &str) -> Result<CherryPickResult> {
+        cherry_pick_commit(repo_path, commit_id)
+    }
+
+    fn get_commit_info(&self, repo_path: &Path, commit_id: &str) -> Result<CommitInfo> {
+        get_commit_info(repo_path, commit_id)
+    }
+
+    fn check_conflicts_resolved(&self, repo_path: &Path) -> Result<bool> {
+        check_conflicts_resolved(repo_path)
+    }
+
+    fn continue_cherry_pick(&self, repo_path: &Path) -> Result<()> {
+        continue_cherry_pick(repo_path)
+    }
+
+    fn abort_cherry_pick(&self, repo_path: &Path) -> Result<()> {
+        abort_cherry_pick(repo_path)
+    }
+
+    fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<()> {
+        create_branch(repo_path, branch_name)
+    }
+
+    fn fetch_commits(&self, repo_path: &Path, commits: &[String]) -> Result<()> {
+        fetch_commits(repo_path, commits)
+    }
+
+    fn get_branch_history(&self, repo_path: &Path, branch: &str) -> Result<CommitHistory> {
+        get_target_branch_history(repo_path, branch)
+    }
+}
+
+/// Legacy error type for repository setup operations.
+///
+/// **Deprecated**: Use [`GitError`] from the `error` module instead.
+/// This type is kept for backward compatibility.
+#[deprecated(since = "0.2.0", note = "Use GitError from the error module instead")]
 #[derive(Debug, Clone)]
 pub enum RepositorySetupError {
+    /// A branch with the specified name already exists.
     BranchExists(String),
+    /// A worktree already exists at the specified path.
     WorktreeExists(String),
+    /// A generic error message.
     Other(String),
 }
 
+#[allow(deprecated)]
 impl std::fmt::Display for RepositorySetupError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -27,7 +133,70 @@ impl std::fmt::Display for RepositorySetupError {
     }
 }
 
+#[allow(deprecated)]
 impl std::error::Error for RepositorySetupError {}
+
+#[allow(deprecated)]
+impl From<RepositorySetupError> for GitError {
+    fn from(err: RepositorySetupError) -> Self {
+        match err {
+            RepositorySetupError::BranchExists(branch) => GitError::BranchExists { branch },
+            RepositorySetupError::WorktreeExists(path) => GitError::WorktreeExists { path },
+            RepositorySetupError::Other(msg) => GitError::Other(msg),
+        }
+    }
+}
+
+/// Validates that a git reference doesn't contain forbidden characters.
+///
+/// This helps prevent command injection and ensures the reference
+/// is valid for git operations.
+///
+/// # Arguments
+///
+/// * `reference` - The git reference string to validate
+///
+/// # Returns
+///
+/// * `Ok(())` if the reference is valid
+/// * `Err(GitError::InvalidReference)` if the reference contains forbidden characters
+pub fn validate_git_ref(reference: &str) -> std::result::Result<(), GitError> {
+    // Check for control characters and git-specific forbidden characters
+    if reference.is_empty() {
+        return Err(GitError::InvalidReference {
+            reference: reference.to_string(),
+        });
+    }
+
+    // Forbidden characters in git references
+    // See: https://git-scm.com/docs/git-check-ref-format
+    let forbidden_chars = ['~', '^', ':', '?', '*', '[', '\\', '\0'];
+    let has_forbidden = reference
+        .chars()
+        .any(|c| c.is_control() || forbidden_chars.contains(&c));
+
+    if has_forbidden {
+        return Err(GitError::InvalidReference {
+            reference: reference.to_string(),
+        });
+    }
+
+    // Check for ".." which is not allowed
+    if reference.contains("..") {
+        return Err(GitError::InvalidReference {
+            reference: reference.to_string(),
+        });
+    }
+
+    // Check for "@{" which is not allowed
+    if reference.contains("@{") {
+        return Err(GitError::InvalidReference {
+            reference: reference.to_string(),
+        });
+    }
+
+    Ok(())
+}
 
 pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf, TempDir)> {
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
@@ -2940,5 +3109,128 @@ mod tests {
             is_merged,
             "Squash-merged patch with cherry-pick references should be detected"
         );
+    }
+
+    /// # Validate Git Reference (Valid References)
+    ///
+    /// Tests that valid git references pass validation.
+    ///
+    /// ## Test Scenario
+    /// - Tests various valid git reference formats
+    /// - Includes branch names, tags, and commit-like references
+    ///
+    /// ## Expected Outcome
+    /// - All valid references pass without error
+    #[test]
+    fn test_validate_git_ref_valid() {
+        // Simple branch names
+        assert!(validate_git_ref("main").is_ok());
+        assert!(validate_git_ref("develop").is_ok());
+        assert!(validate_git_ref("feature-branch").is_ok());
+        assert!(validate_git_ref("feature/new-feature").is_ok());
+
+        // Tags
+        assert!(validate_git_ref("v1.0.0").is_ok());
+        assert!(validate_git_ref("release-2.0").is_ok());
+
+        // Commit hashes
+        assert!(validate_git_ref("abc123def").is_ok());
+        assert!(validate_git_ref("0123456789abcdef0123456789abcdef01234567").is_ok());
+
+        // HEAD references
+        assert!(validate_git_ref("HEAD").is_ok());
+        assert!(validate_git_ref("FETCH_HEAD").is_ok());
+    }
+
+    /// # Validate Git Reference (Invalid References)
+    ///
+    /// Tests that invalid git references are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Tests references with forbidden characters
+    /// - Tests empty strings and control characters
+    ///
+    /// ## Expected Outcome
+    /// - All invalid references return an error
+    #[test]
+    fn test_validate_git_ref_invalid() {
+        // Empty string
+        assert!(validate_git_ref("").is_err());
+
+        // Control characters
+        assert!(validate_git_ref("branch\0name").is_err());
+        assert!(validate_git_ref("branch\tname").is_err());
+        assert!(validate_git_ref("branch\nname").is_err());
+
+        // Forbidden characters
+        assert!(validate_git_ref("branch~name").is_err());
+        assert!(validate_git_ref("branch^name").is_err());
+        assert!(validate_git_ref("branch:name").is_err());
+        assert!(validate_git_ref("branch?name").is_err());
+        assert!(validate_git_ref("branch*name").is_err());
+        assert!(validate_git_ref("branch[name").is_err());
+        assert!(validate_git_ref("branch\\name").is_err());
+
+        // Double dot sequence
+        assert!(validate_git_ref("branch..name").is_err());
+
+        // @{ sequence
+        assert!(validate_git_ref("branch@{name").is_err());
+    }
+
+    /// # Git Trait Implementation
+    ///
+    /// Tests that the SystemGit struct correctly implements GitOperations trait.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository
+    /// - Uses SystemGit to get commit info through the trait
+    ///
+    /// ## Expected Outcome
+    /// - SystemGit correctly implements GitOperations
+    /// - Operations work through the trait interface
+    #[test]
+    fn test_system_git_trait() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+        create_commit_with_message(&repo_path, "Test commit for trait");
+
+        let git: &dyn GitOperations = &SystemGit;
+
+        // Test get_commit_info through trait
+        let info = git.get_commit_info(&repo_path, "HEAD").unwrap();
+        assert_eq!(info.title, "Test commit for trait");
+        assert_eq!(info.author, "Test User");
+    }
+
+    /// # Git Trait Branch History
+    ///
+    /// Tests getting branch history through the GitOperations trait.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository with commits
+    /// - Uses SystemGit to get branch history through the trait
+    ///
+    /// ## Expected Outcome
+    /// - Branch history is correctly retrieved through the trait
+    #[test]
+    fn test_system_git_branch_history() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+        create_commit_with_message(&repo_path, "First commit");
+        create_commit_with_message(&repo_path, "Second commit");
+
+        let git = SystemGit;
+        let history = git.get_branch_history(&repo_path, "main").unwrap();
+
+        assert!(
+            history
+                .commit_messages
+                .contains(&"First commit".to_string())
+        );
+        assert!(
+            history
+                .commit_messages
+                .contains(&"Second commit".to_string())
+        );
+        assert!(history.commit_hashes.len() >= 2);
     }
 }

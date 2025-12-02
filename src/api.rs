@@ -39,32 +39,90 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use reqwest::{Client, header::HeaderMap};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef};
 use crate::utils::parse_since_date;
 
+/// Azure DevOps API client for pull request and work item management.
+///
+/// The client securely stores the Personal Access Token (PAT) using `SecretString`
+/// to prevent accidental exposure in logs, debug output, or error messages.
 #[derive(Clone)]
 pub struct AzureDevOpsClient {
     client: Client,
     organization: String,
     project: String,
     repository: String,
+    // Note: PAT is stored in the HTTP client's default headers, not as a field,
+    // to avoid accidental exposure. The SecretString is only used during client creation.
 }
 
 impl AzureDevOpsClient {
+    /// Creates a new Azure DevOps API client.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token for authentication (will be securely handled)
+    ///
+    /// # Security
+    ///
+    /// The PAT is only used during client creation to set up the HTTP headers.
+    /// It is not stored as a field and cannot be accidentally exposed through
+    /// Debug output or error messages.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use mergers::AzureDevOpsClient;
+    ///
+    /// let client = AzureDevOpsClient::new(
+    ///     "my-org".to_string(),
+    ///     "my-project".to_string(),
+    ///     "my-repo".to_string(),
+    ///     "my-pat".to_string(),
+    /// )?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn new(
         organization: String,
         project: String,
         repository: String,
         pat: String,
     ) -> Result<Self> {
+        // Wrap the PAT in SecretString for secure handling during client creation
+        let secret_pat = SecretString::from(pat);
+        Self::new_with_secret(organization, project, repository, secret_pat)
+    }
+
+    /// Creates a new Azure DevOps API client with a SecretString PAT.
+    ///
+    /// This is the preferred constructor when the PAT is already wrapped in a SecretString,
+    /// providing end-to-end protection against accidental exposure.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token wrapped in SecretString
+    pub fn new_with_secret(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+    ) -> Result<Self> {
         let client = Client::builder()
             .default_headers({
                 let mut headers = HeaderMap::new();
-                let auth_value =
-                    base64::engine::general_purpose::STANDARD.encode(format!(":{}", pat));
+                // Use expose_secret() only at the point where we need the raw value
+                let auth_value = base64::engine::general_purpose::STANDARD
+                    .encode(format!(":{}", pat.expose_secret()));
                 headers.insert(
                     reqwest::header::AUTHORIZATION,
                     reqwest::header::HeaderValue::from_str(&format!("Basic {}", auth_value))?,
@@ -84,6 +142,21 @@ impl AzureDevOpsClient {
             project,
             repository,
         })
+    }
+
+    /// Returns the organization name.
+    pub fn organization(&self) -> &str {
+        &self.organization
+    }
+
+    /// Returns the project name.
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// Returns the repository name.
+    pub fn repository(&self) -> &str {
+        &self.repository
     }
 
     /// Fetches all pull requests for a given branch using pagination.
