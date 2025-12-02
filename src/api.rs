@@ -38,12 +38,15 @@
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use futures::stream::{self, StreamExt};
 use reqwest::{Client, header::HeaderMap};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef};
+use crate::models::{
+    PullRequest, PullRequestWithWorkItems, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef,
+};
 use crate::utils::parse_since_date;
 
 /// Azure DevOps API client for pull request and work item management.
@@ -117,6 +120,27 @@ impl AzureDevOpsClient {
         repository: String,
         pat: SecretString,
     ) -> Result<Self> {
+        Self::new_with_secret_and_pool_config(organization, project, repository, pat, 100, 90)
+    }
+
+    /// Creates a new Azure DevOps API client with custom connection pool configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token wrapped in SecretString
+    /// * `pool_max_idle_per_host` - Maximum idle connections per host (default: 100)
+    /// * `pool_idle_timeout_secs` - Idle connection timeout in seconds (default: 90)
+    pub fn new_with_secret_and_pool_config(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout_secs: u64,
+    ) -> Result<Self> {
         let client = Client::builder()
             .default_headers({
                 let mut headers = HeaderMap::new();
@@ -134,6 +158,9 @@ impl AzureDevOpsClient {
                 headers
             })
             .timeout(Duration::from_secs(30))
+            // Connection pool configuration for improved performance
+            .pool_max_idle_per_host(pool_max_idle_per_host)
+            .pool_idle_timeout(Duration::from_secs(pool_idle_timeout_secs))
             .build()?;
 
         Ok(Self {
@@ -467,18 +494,100 @@ impl AzureDevOpsClient {
         Ok(history_response.value)
     }
 
-    pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+    /// Fetches work items with their history for a PR, using parallel fetching.
+    ///
+    /// This method fetches work item history in parallel, respecting the provided
+    /// concurrency limit to avoid overwhelming the API.
+    ///
+    /// # Arguments
+    ///
+    /// * `pr_id` - The pull request ID
+    /// * `max_concurrent` - Maximum number of concurrent history fetch requests
+    pub async fn fetch_work_items_with_history_for_pr_parallel(
+        &self,
+        pr_id: i32,
+        max_concurrent: usize,
+    ) -> Result<Vec<WorkItem>> {
         // First get the basic work items
-        let mut work_items = self.fetch_work_items_for_pr(pr_id).await?;
+        let work_items = self.fetch_work_items_for_pr(pr_id).await?;
 
-        // Then fetch history for each work item
-        for work_item in &mut work_items {
-            if let Ok(history) = self.fetch_work_item_history(work_item.id).await {
-                work_item.history = history;
-            }
+        if work_items.is_empty() {
+            return Ok(work_items);
         }
 
-        Ok(work_items)
+        // Fetch history for all work items in parallel with concurrency limit
+        let work_items_with_history: Vec<WorkItem> = stream::iter(work_items)
+            .map(|work_item| {
+                let client = self.clone();
+                async move {
+                    let mut wi = work_item;
+                    if let Ok(history) = client.fetch_work_item_history(wi.id).await {
+                        wi.history = history;
+                    }
+                    wi
+                }
+            })
+            .buffer_unordered(max_concurrent)
+            .collect()
+            .await;
+
+        Ok(work_items_with_history)
+    }
+
+    /// Fetches work items with history for a PR (sequential, for backward compatibility).
+    pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+        // Use default concurrency of 10 for backward compatibility
+        self.fetch_work_items_with_history_for_pr_parallel(pr_id, 10)
+            .await
+    }
+
+    /// Fetches work items with history for multiple PRs in parallel.
+    ///
+    /// This method processes multiple pull requests concurrently, fetching work items
+    /// and their history while respecting the configured concurrency limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `prs` - List of pull requests to process
+    /// * `max_concurrent_prs` - Maximum number of PRs to process concurrently
+    /// * `max_concurrent_history` - Maximum concurrent history fetches per PR
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use mergers::AzureDevOpsClient;
+    /// # async fn example(client: &AzureDevOpsClient, prs: Vec<mergers::models::PullRequest>) {
+    /// // Process up to 10 PRs concurrently, with 5 concurrent history fetches each
+    /// let results = client.fetch_work_items_for_prs_parallel(&prs, 10, 5).await;
+    /// # }
+    /// ```
+    pub async fn fetch_work_items_for_prs_parallel(
+        &self,
+        prs: &[PullRequest],
+        max_concurrent_prs: usize,
+        max_concurrent_history: usize,
+    ) -> Vec<PullRequestWithWorkItems> {
+        stream::iter(prs.iter().cloned())
+            .map(|pr| {
+                let client = self.clone();
+                async move {
+                    let work_items = client
+                        .fetch_work_items_with_history_for_pr_parallel(
+                            pr.id,
+                            max_concurrent_history,
+                        )
+                        .await
+                        .unwrap_or_default();
+                    PullRequestWithWorkItems {
+                        pr,
+                        work_items,
+                        selected: false,
+                    }
+                }
+            })
+            .buffer_unordered(max_concurrent_prs)
+            .collect()
+            .await
     }
 
     pub fn is_work_item_in_terminal_state(
