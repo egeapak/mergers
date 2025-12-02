@@ -33,6 +33,7 @@
 
 pub mod api;
 pub mod config;
+pub mod error;
 pub mod git;
 pub mod git_config;
 pub mod migration;
@@ -44,6 +45,7 @@ pub mod utils;
 // Re-export commonly used types for convenience
 pub use api::AzureDevOpsClient;
 pub use config::Config;
+pub use error::{ApiError, ConfigError, GitError, MergersError, UiError};
 pub use models::{
     AppConfig, Args, Commands, DefaultModeConfig, MergeArgs, MigrateArgs, MigrationModeConfig,
     SharedArgs, SharedConfig,

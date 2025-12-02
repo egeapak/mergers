@@ -38,33 +38,153 @@
 use anyhow::{Context, Result};
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use reqwest::{Client, header::HeaderMap};
+use futures::stream::{self, StreamExt};
+use reqwest::{Client, Response, header::HeaderMap};
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::models::{PullRequest, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef};
+use crate::models::{
+    PullRequest, PullRequestWithWorkItems, RepoDetails, WorkItem, WorkItemHistory, WorkItemRef,
+};
 use crate::utils::parse_since_date;
 
+/// Default number of retry attempts for transient failures.
+pub const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// Default initial backoff delay in milliseconds.
+const DEFAULT_INITIAL_BACKOFF_MS: u64 = 100;
+
+/// Azure DevOps API client for pull request and work item management.
+///
+/// The client securely stores the Personal Access Token (PAT) using `SecretString`
+/// to prevent accidental exposure in logs, debug output, or error messages.
 #[derive(Clone)]
 pub struct AzureDevOpsClient {
     client: Client,
     organization: String,
     project: String,
     repository: String,
+    max_retries: u32,
+    // Note: PAT is stored in the HTTP client's default headers, not as a field,
+    // to avoid accidental exposure. The SecretString is only used during client creation.
 }
 
 impl AzureDevOpsClient {
+    /// Creates a new Azure DevOps API client.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token for authentication (will be securely handled)
+    ///
+    /// # Security
+    ///
+    /// The PAT is only used during client creation to set up the HTTP headers.
+    /// It is not stored as a field and cannot be accidentally exposed through
+    /// Debug output or error messages.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use mergers::AzureDevOpsClient;
+    ///
+    /// let client = AzureDevOpsClient::new(
+    ///     "my-org".to_string(),
+    ///     "my-project".to_string(),
+    ///     "my-repo".to_string(),
+    ///     "my-pat".to_string(),
+    /// )?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
     pub fn new(
         organization: String,
         project: String,
         repository: String,
         pat: String,
     ) -> Result<Self> {
+        // Wrap the PAT in SecretString for secure handling during client creation
+        let secret_pat = SecretString::from(pat);
+        Self::new_with_secret(organization, project, repository, secret_pat)
+    }
+
+    /// Creates a new Azure DevOps API client with a SecretString PAT.
+    ///
+    /// This is the preferred constructor when the PAT is already wrapped in a SecretString,
+    /// providing end-to-end protection against accidental exposure.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token wrapped in SecretString
+    pub fn new_with_secret(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+    ) -> Result<Self> {
+        Self::new_with_secret_and_pool_config(organization, project, repository, pat, 100, 90)
+    }
+
+    /// Creates a new Azure DevOps API client with custom connection pool configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token wrapped in SecretString
+    /// * `pool_max_idle_per_host` - Maximum idle connections per host (default: 100)
+    /// * `pool_idle_timeout_secs` - Idle connection timeout in seconds (default: 90)
+    pub fn new_with_secret_and_pool_config(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout_secs: u64,
+    ) -> Result<Self> {
+        Self::new_with_full_config(
+            organization,
+            project,
+            repository,
+            pat,
+            pool_max_idle_per_host,
+            pool_idle_timeout_secs,
+            DEFAULT_MAX_RETRIES,
+        )
+    }
+
+    /// Creates a new Azure DevOps API client with full configuration options.
+    ///
+    /// # Arguments
+    ///
+    /// * `organization` - Azure DevOps organization name
+    /// * `project` - Azure DevOps project name
+    /// * `repository` - Repository name within the project
+    /// * `pat` - Personal Access Token wrapped in SecretString
+    /// * `pool_max_idle_per_host` - Maximum idle connections per host (default: 100)
+    /// * `pool_idle_timeout_secs` - Idle connection timeout in seconds (default: 90)
+    /// * `max_retries` - Maximum number of retry attempts for transient failures (default: 3)
+    pub fn new_with_full_config(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout_secs: u64,
+        max_retries: u32,
+    ) -> Result<Self> {
         let client = Client::builder()
             .default_headers({
                 let mut headers = HeaderMap::new();
-                let auth_value =
-                    base64::engine::general_purpose::STANDARD.encode(format!(":{}", pat));
+                // Use expose_secret() only at the point where we need the raw value
+                let auth_value = base64::engine::general_purpose::STANDARD
+                    .encode(format!(":{}", pat.expose_secret()));
                 headers.insert(
                     reqwest::header::AUTHORIZATION,
                     reqwest::header::HeaderValue::from_str(&format!("Basic {}", auth_value))?,
@@ -76,6 +196,9 @@ impl AzureDevOpsClient {
                 headers
             })
             .timeout(Duration::from_secs(30))
+            // Connection pool configuration for improved performance
+            .pool_max_idle_per_host(pool_max_idle_per_host)
+            .pool_idle_timeout(Duration::from_secs(pool_idle_timeout_secs))
             .build()?;
 
         Ok(Self {
@@ -83,7 +206,178 @@ impl AzureDevOpsClient {
             organization,
             project,
             repository,
+            max_retries,
         })
+    }
+
+    /// Returns the organization name.
+    pub fn organization(&self) -> &str {
+        &self.organization
+    }
+
+    /// Returns the project name.
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// Returns the repository name.
+    pub fn repository(&self) -> &str {
+        &self.repository
+    }
+
+    /// Returns the maximum number of retries configured for this client.
+    pub fn max_retries(&self) -> u32 {
+        self.max_retries
+    }
+
+    /// Determines if an HTTP status code represents a retryable error.
+    ///
+    /// Retryable errors include:
+    /// - 408 Request Timeout
+    /// - 429 Too Many Requests
+    /// - 500 Internal Server Error
+    /// - 502 Bad Gateway
+    /// - 503 Service Unavailable
+    /// - 504 Gateway Timeout
+    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+        matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504)
+    }
+
+    /// Executes an HTTP GET request with retry logic and exponential backoff.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to fetch
+    ///
+    /// # Returns
+    ///
+    /// The HTTP response if successful, or an error after all retries are exhausted.
+    async fn get_with_retry(&self, url: &str) -> Result<Response> {
+        let mut last_error = None;
+        let mut backoff_ms = DEFAULT_INITIAL_BACKOFF_MS;
+
+        for attempt in 0..=self.max_retries {
+            match self.client.get(url).send().await {
+                Ok(response) => {
+                    if response.status().is_success()
+                        || !Self::is_retryable_status(response.status())
+                    {
+                        return Ok(response);
+                    }
+                    // Retryable status code
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2; // Exponential backoff
+                        continue;
+                    }
+                    return Ok(response); // Return the response even if it's an error status
+                }
+                Err(e) => {
+                    // Network errors are retryable
+                    if attempt < self.max_retries {
+                        last_error = Some(e);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            }
+        }
+
+        Err(last_error.map(|e| anyhow::anyhow!(e)).unwrap_or_else(|| {
+            anyhow::anyhow!("Request failed after {} retries", self.max_retries)
+        }))
+    }
+
+    /// Executes an HTTP POST request with retry logic and exponential backoff.
+    async fn post_with_retry<T: Serialize + ?Sized>(
+        &self,
+        url: &str,
+        body: &T,
+    ) -> Result<Response> {
+        let mut last_error = None;
+        let mut backoff_ms = DEFAULT_INITIAL_BACKOFF_MS;
+
+        for attempt in 0..=self.max_retries {
+            match self.client.post(url).json(body).send().await {
+                Ok(response) => {
+                    if response.status().is_success()
+                        || !Self::is_retryable_status(response.status())
+                    {
+                        return Ok(response);
+                    }
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    if attempt < self.max_retries {
+                        last_error = Some(e);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            }
+        }
+
+        Err(last_error.map(|e| anyhow::anyhow!(e)).unwrap_or_else(|| {
+            anyhow::anyhow!("Request failed after {} retries", self.max_retries)
+        }))
+    }
+
+    /// Executes an HTTP PATCH request with retry logic and exponential backoff.
+    async fn patch_with_retry<T: Serialize + ?Sized>(
+        &self,
+        url: &str,
+        body: &T,
+        content_type: &str,
+    ) -> Result<Response> {
+        let mut last_error = None;
+        let mut backoff_ms = DEFAULT_INITIAL_BACKOFF_MS;
+
+        for attempt in 0..=self.max_retries {
+            match self
+                .client
+                .patch(url)
+                .header("Content-Type", content_type)
+                .json(body)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success()
+                        || !Self::is_retryable_status(response.status())
+                    {
+                        return Ok(response);
+                    }
+                    if attempt < self.max_retries {
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    if attempt < self.max_retries {
+                        last_error = Some(e);
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms *= 2;
+                        continue;
+                    }
+                    return Err(e.into());
+                }
+            }
+        }
+
+        Err(last_error.map(|e| anyhow::anyhow!(e)).unwrap_or_else(|| {
+            anyhow::anyhow!("Request failed after {} retries", self.max_retries)
+        }))
     }
 
     /// Fetches all pull requests for a given branch using pagination.
@@ -133,9 +427,7 @@ impl AzureDevOpsClient {
             );
 
             let response = self
-                .client
-                .get(&url)
-                .send()
+                .get_with_retry(&url)
                 .await
                 .context("Failed to fetch pull requests")?;
 
@@ -195,7 +487,7 @@ impl AzureDevOpsClient {
             self.organization, self.project, self.repository, pr_id
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
 
         #[derive(Deserialize)]
         struct WorkItemsResponse {
@@ -221,14 +513,14 @@ impl AzureDevOpsClient {
             self.organization, self.project, ids_param
         );
 
-        let batch_response = self.client.get(&batch_url).send().await?;
+        let batch_response = self.get_with_retry(&batch_url).await?;
 
         if !batch_response.status().is_success() {
             // Fallback to basic fetch
             let mut work_items = Vec::new();
             for wi_ref in work_item_refs.value {
                 let wi_url = format!("{}?api-version=7.0", wi_ref.url);
-                let wi_response = self.client.get(&wi_url).send().await?;
+                let wi_response = self.get_with_retry(&wi_url).await?;
                 if let Ok(work_item) = wi_response.json::<WorkItem>().await {
                     work_items.push(work_item);
                 }
@@ -251,7 +543,7 @@ impl AzureDevOpsClient {
             self.organization, self.project, self.repository
         );
 
-        let response = self.client.get(&url).send().await?;
+        let response = self.get_with_retry(&url).await?;
         let repo_details: RepoDetails = response.json().await?;
         Ok(repo_details)
     }
@@ -263,9 +555,7 @@ impl AzureDevOpsClient {
         );
 
         let response = self
-            .client
-            .get(&url)
-            .send()
+            .get_with_retry(&url)
             .await
             .context("Failed to fetch pull request details")?;
 
@@ -300,10 +590,7 @@ impl AzureDevOpsClient {
         };
 
         let response = self
-            .client
-            .post(&url)
-            .json(&label_request)
-            .send()
+            .post_with_retry(&url, &label_request)
             .await
             .context("Failed to add label to pull request")?;
 
@@ -341,11 +628,7 @@ impl AzureDevOpsClient {
         }];
 
         let response = self
-            .client
-            .patch(&url)
-            .header("Content-Type", "application/json-patch+json")
-            .json(&update)
-            .send()
+            .patch_with_retry(&url, &update, "application/json-patch+json")
             .await
             .context("Failed to update work item state")?;
 
@@ -370,9 +653,7 @@ impl AzureDevOpsClient {
         );
 
         let response = self
-            .client
-            .get(&url)
-            .send()
+            .get_with_retry(&url)
             .await
             .context("Failed to fetch work item history")?;
 
@@ -394,18 +675,100 @@ impl AzureDevOpsClient {
         Ok(history_response.value)
     }
 
-    pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+    /// Fetches work items with their history for a PR, using parallel fetching.
+    ///
+    /// This method fetches work item history in parallel, respecting the provided
+    /// concurrency limit to avoid overwhelming the API.
+    ///
+    /// # Arguments
+    ///
+    /// * `pr_id` - The pull request ID
+    /// * `max_concurrent` - Maximum number of concurrent history fetch requests
+    pub async fn fetch_work_items_with_history_for_pr_parallel(
+        &self,
+        pr_id: i32,
+        max_concurrent: usize,
+    ) -> Result<Vec<WorkItem>> {
         // First get the basic work items
-        let mut work_items = self.fetch_work_items_for_pr(pr_id).await?;
+        let work_items = self.fetch_work_items_for_pr(pr_id).await?;
 
-        // Then fetch history for each work item
-        for work_item in &mut work_items {
-            if let Ok(history) = self.fetch_work_item_history(work_item.id).await {
-                work_item.history = history;
-            }
+        if work_items.is_empty() {
+            return Ok(work_items);
         }
 
-        Ok(work_items)
+        // Fetch history for all work items in parallel with concurrency limit
+        let work_items_with_history: Vec<WorkItem> = stream::iter(work_items)
+            .map(|work_item| {
+                let client = self.clone();
+                async move {
+                    let mut wi = work_item;
+                    if let Ok(history) = client.fetch_work_item_history(wi.id).await {
+                        wi.history = history;
+                    }
+                    wi
+                }
+            })
+            .buffer_unordered(max_concurrent)
+            .collect()
+            .await;
+
+        Ok(work_items_with_history)
+    }
+
+    /// Fetches work items with history for a PR (sequential, for backward compatibility).
+    pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+        // Use default concurrency of 10 for backward compatibility
+        self.fetch_work_items_with_history_for_pr_parallel(pr_id, 10)
+            .await
+    }
+
+    /// Fetches work items with history for multiple PRs in parallel.
+    ///
+    /// This method processes multiple pull requests concurrently, fetching work items
+    /// and their history while respecting the configured concurrency limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `prs` - List of pull requests to process
+    /// * `max_concurrent_prs` - Maximum number of PRs to process concurrently
+    /// * `max_concurrent_history` - Maximum concurrent history fetches per PR
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use mergers::AzureDevOpsClient;
+    /// # async fn example(client: &AzureDevOpsClient, prs: Vec<mergers::models::PullRequest>) {
+    /// // Process up to 10 PRs concurrently, with 5 concurrent history fetches each
+    /// let results = client.fetch_work_items_for_prs_parallel(&prs, 10, 5).await;
+    /// # }
+    /// ```
+    pub async fn fetch_work_items_for_prs_parallel(
+        &self,
+        prs: &[PullRequest],
+        max_concurrent_prs: usize,
+        max_concurrent_history: usize,
+    ) -> Vec<PullRequestWithWorkItems> {
+        stream::iter(prs.iter().cloned())
+            .map(|pr| {
+                let client = self.clone();
+                async move {
+                    let work_items = client
+                        .fetch_work_items_with_history_for_pr_parallel(
+                            pr.id,
+                            max_concurrent_history,
+                        )
+                        .await
+                        .unwrap_or_default();
+                    PullRequestWithWorkItems {
+                        pr,
+                        work_items,
+                        selected: false,
+                    }
+                }
+            })
+            .buffer_unordered(max_concurrent_prs)
+            .collect()
+            .await
     }
 
     pub fn is_work_item_in_terminal_state(
@@ -472,6 +835,7 @@ mod tests {
             organization: "test-org".to_string(),
             project: "test-project".to_string(),
             repository: "test-repo".to_string(),
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 
@@ -562,6 +926,7 @@ mod tests {
             organization: server.url(),
             project: "test-project".to_string(),
             repository: "test-repo".to_string(),
+            max_retries: DEFAULT_MAX_RETRIES,
         };
 
         // This test would need URL rewriting to work properly with mockito
