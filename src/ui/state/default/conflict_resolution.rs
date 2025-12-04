@@ -1,7 +1,8 @@
 use crate::{
     git,
+    models::CherryPickStatus,
     ui::App,
-    ui::state::{AppState, CherryPickContinueState, StateChange},
+    ui::state::{AppState, CherryPickContinueState, CherryPickState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -308,7 +309,7 @@ impl AppState for ConflictResolutionState {
             ]),
             Line::from("Please resolve conflicts in another terminal and stage the changes."),
             Line::from(vec![Span::styled(
-                "c: Continue (after resolving) | a: Abort",
+                "c: Continue (after resolving) | s: Skip commit | a: Abort (cleanup)",
                 Style::default().fg(Color::Gray),
             )]),
         ];
@@ -337,9 +338,24 @@ impl AppState for ConflictResolutionState {
                     Err(_) => StateChange::Keep,
                 }
             }
-            KeyCode::Char('a') => {
-                // Abort entire process
+            KeyCode::Char('s') => {
+                // Skip current commit - abort cherry-pick, mark as skipped, continue
                 let _ = git::abort_cherry_pick(repo_path);
+                app.cherry_pick_items[app.current_cherry_pick_index].status =
+                    CherryPickStatus::Skipped;
+                app.current_cherry_pick_index += 1;
+                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+            }
+            KeyCode::Char('a') => {
+                // Abort entire process with cleanup
+                let version = app.version.as_ref().unwrap();
+                let target_branch = app.target_branch().to_string();
+                let _ = git::cleanup_cherry_pick(
+                    app.base_repo_path.as_deref(),
+                    repo_path,
+                    version,
+                    &target_branch,
+                );
                 StateChange::Change(Box::new(super::CompletionState::new()))
             }
             _ => StateChange::Keep,
@@ -457,6 +473,7 @@ mod tests {
 
         // Set up with non-existent repo (abort will fail silently which is OK)
         harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.version = Some("v1.0.0".to_string()); // Required for cleanup
         harness.app.cherry_pick_items = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,

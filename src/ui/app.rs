@@ -16,7 +16,8 @@ pub struct App {
     // Runtime state
     pub version: Option<String>,
     pub repo_path: Option<std::path::PathBuf>,
-    pub _temp_dir: Option<TempDir>, // Keeps temp directory alive
+    pub base_repo_path: Option<std::path::PathBuf>, // Original repo path (for worktree cleanup)
+    pub _temp_dir: Option<TempDir>,                 // Keeps temp directory alive
     pub cherry_pick_items: Vec<CherryPickItem>,
     pub current_cherry_pick_index: usize,
     pub error_message: Option<String>,
@@ -43,6 +44,7 @@ impl App {
             client,
             version: None,
             repo_path: None,
+            base_repo_path: None,
             _temp_dir: None,
             cherry_pick_items: Vec::new(),
             current_cherry_pick_index: 0,

@@ -104,6 +104,7 @@ impl AppState for CompletionState {
                     CherryPickStatus::Success => ("✅", Color::Green),
                     CherryPickStatus::Failed(_) => ("❌", Color::Red),
                     CherryPickStatus::Conflict => ("⚠️", Color::Yellow),
+                    CherryPickStatus::Skipped => ("⏭", Color::Gray),
                     _ => ("❓", Color::White),
                 };
 

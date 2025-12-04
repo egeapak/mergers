@@ -75,6 +75,7 @@ impl AppState for CherryPickState {
                     CherryPickStatus::InProgress => ("⏳", Color::Yellow),
                     CherryPickStatus::Success => ("✅", Color::Green),
                     CherryPickStatus::Conflict => ("⚠️", Color::Yellow),
+                    CherryPickStatus::Skipped => ("⏭", Color::Gray),
                     CherryPickStatus::Failed(_) => ("❌", Color::Red),
                 };
 
@@ -149,6 +150,7 @@ impl AppState for CherryPickState {
                         CherryPickStatus::InProgress => "In Progress",
                         CherryPickStatus::Success => "Success",
                         CherryPickStatus::Conflict => "Conflict",
+                        CherryPickStatus::Skipped => "Skipped",
                         CherryPickStatus::Failed(_) => "Failed",
                     },
                     Style::default().fg(match &current_item.status {
@@ -156,6 +158,7 @@ impl AppState for CherryPickState {
                         CherryPickStatus::Failed(_) => Color::Red,
                         CherryPickStatus::Conflict => Color::Yellow,
                         CherryPickStatus::InProgress => Color::Yellow,
+                        CherryPickStatus::Skipped => Color::Gray,
                         _ => Color::White,
                     }),
                 ),

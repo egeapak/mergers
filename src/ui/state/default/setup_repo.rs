@@ -105,11 +105,16 @@ impl SetupRepoState {
             Ok(setup) => {
                 match setup {
                     git::RepositorySetup::Local(path) => {
+                        // Store the base repo path for cleanup (worktree case)
+                        if let Some(local_repo) = app.local_repo() {
+                            app.base_repo_path = Some(std::path::PathBuf::from(local_repo));
+                        }
                         app.repo_path = Some(path);
                     }
                     git::RepositorySetup::Clone(path, temp_dir) => {
                         app.repo_path = Some(path);
                         app._temp_dir = Some(temp_dir);
+                        // base_repo_path stays None for cloned repos
                     }
                 }
 

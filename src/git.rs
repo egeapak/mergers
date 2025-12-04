@@ -346,6 +346,47 @@ pub fn force_delete_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Clean up a cherry-pick operation by removing the worktree and branch.
+/// This is used when aborting the entire cherry-pick process.
+///
+/// # Arguments
+/// * `base_repo_path` - The base repository path (for worktree cleanup)
+/// * `worktree_path` - The worktree path that was created
+/// * `version` - The version string used to name the worktree and branch
+/// * `target_branch` - The target branch name (used to construct the patch branch name)
+pub fn cleanup_cherry_pick(
+    base_repo_path: Option<&Path>,
+    worktree_path: &Path,
+    version: &str,
+    target_branch: &str,
+) -> Result<()> {
+    // First abort any ongoing cherry-pick
+    let _ = abort_cherry_pick(worktree_path);
+
+    // Construct the branch name
+    let branch_name = format!("patch/{}-{}", target_branch, version);
+
+    // If we have a base repo path, we're using worktrees
+    if let Some(base_path) = base_repo_path {
+        // First, checkout to a detached HEAD to allow branch deletion
+        let _ = Command::new("git")
+            .current_dir(worktree_path)
+            .args(["checkout", "--detach"])
+            .output();
+
+        // Remove the worktree
+        let _ = force_remove_worktree(base_path, version);
+
+        // Delete the branch from the base repo
+        let _ = force_delete_branch(base_path, &branch_name);
+    } else {
+        // For cloned repos, just delete the branch (temp dir will be cleaned up automatically)
+        let _ = force_delete_branch(worktree_path, &branch_name);
+    }
+
+    Ok(())
+}
+
 pub enum RepositorySetup {
     Local(PathBuf),
     Clone(PathBuf, TempDir),
@@ -403,9 +444,10 @@ pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPic
     // Always use -m 1 to handle both regular and merge commits:
     // - For merge commits: selects the first parent (the branch that was merged into)
     // - For regular commits: git uses the single parent, -m 1 has no negative effect
+    // Use --allow-empty to handle commits that may result in no changes (already applied)
     let output = Command::new("git")
         .current_dir(repo_path)
-        .args(["cherry-pick", "-m", "1", commit_id])
+        .args(["cherry-pick", "-m", "1", "--allow-empty", commit_id])
         .output()
         .context("Failed to execute cherry-pick command")?;
 

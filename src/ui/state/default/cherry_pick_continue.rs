@@ -1,4 +1,5 @@
 use crate::{
+    git,
     models::CherryPickStatus,
     ui::App,
     ui::state::{AppState, CherryPickState, ConflictResolutionState, StateChange},
@@ -22,6 +23,7 @@ pub struct CherryPickContinueState {
     output: Arc<Mutex<Vec<String>>>,
     is_complete: Arc<Mutex<bool>>,
     success: Arc<Mutex<Option<bool>>>,
+    #[allow(dead_code)] // Used in tests and may be useful for future display
     error_message: Arc<Mutex<Option<String>>>,
     conflicted_files: Vec<String>,
 }
@@ -249,7 +251,7 @@ impl AppState for CherryPickContinueState {
         let instructions = if is_complete {
             match success {
                 Some(true) => "Press any key to continue to next commit",
-                Some(false) => "r: Retry | a: Abort cherry-pick process",
+                Some(false) => "r: Retry | s: Skip commit | a: Abort (cleanup)",
                 None => "Press any key to continue",
             }
         } else {
@@ -281,7 +283,7 @@ impl AppState for CherryPickContinueState {
                 StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
             }
             Some(false) => {
-                // Failed - allow retry or abort
+                // Failed - allow retry, skip, or abort
                 match code {
                     KeyCode::Char('r') => {
                         // Retry - go back to conflict resolution
@@ -289,18 +291,25 @@ impl AppState for CherryPickContinueState {
                             self.conflicted_files.clone(),
                         )))
                     }
-                    KeyCode::Char('a') => {
-                        // Abort - mark as failed and continue
-                        let error_msg = self
-                            .error_message
-                            .lock()
-                            .unwrap()
-                            .clone()
-                            .unwrap_or_else(|| "Unknown error".to_string());
+                    KeyCode::Char('s') => {
+                        // Skip - mark as skipped and continue to next commit
                         app.cherry_pick_items[app.current_cherry_pick_index].status =
-                            CherryPickStatus::Failed(error_msg);
+                            CherryPickStatus::Skipped;
                         app.current_cherry_pick_index += 1;
                         StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                    }
+                    KeyCode::Char('a') => {
+                        // Abort entire process with cleanup
+                        let repo_path = app.repo_path.as_ref().unwrap();
+                        let version = app.version.as_ref().unwrap();
+                        let target_branch = app.target_branch().to_string();
+                        let _ = git::cleanup_cherry_pick(
+                            app.base_repo_path.as_deref(),
+                            repo_path,
+                            version,
+                            &target_branch,
+                        );
+                        StateChange::Change(Box::new(super::CompletionState::new()))
                     }
                     _ => StateChange::Keep,
                 }
