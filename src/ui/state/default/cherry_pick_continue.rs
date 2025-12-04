@@ -1,4 +1,5 @@
 use crate::{
+    git,
     models::CherryPickStatus,
     ui::App,
     ui::state::{AppState, CherryPickState, ConflictResolutionState, StateChange},
@@ -22,6 +23,7 @@ pub struct CherryPickContinueState {
     output: Arc<Mutex<Vec<String>>>,
     is_complete: Arc<Mutex<bool>>,
     success: Arc<Mutex<Option<bool>>>,
+    #[allow(dead_code)] // Used in tests and may be useful for future display
     error_message: Arc<Mutex<Option<String>>>,
     conflicted_files: Vec<String>,
 }
@@ -249,7 +251,7 @@ impl AppState for CherryPickContinueState {
         let instructions = if is_complete {
             match success {
                 Some(true) => "Press any key to continue to next commit",
-                Some(false) => "r: Retry | a: Abort cherry-pick process",
+                Some(false) => "r: Retry | s: Skip commit | a: Abort (cleanup)",
                 None => "Press any key to continue",
             }
         } else {
@@ -281,7 +283,7 @@ impl AppState for CherryPickContinueState {
                 StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
             }
             Some(false) => {
-                // Failed - allow retry or abort
+                // Failed - allow retry, skip, or abort
                 match code {
                     KeyCode::Char('r') => {
                         // Retry - go back to conflict resolution
@@ -289,18 +291,25 @@ impl AppState for CherryPickContinueState {
                             self.conflicted_files.clone(),
                         )))
                     }
-                    KeyCode::Char('a') => {
-                        // Abort - mark as failed and continue
-                        let error_msg = self
-                            .error_message
-                            .lock()
-                            .unwrap()
-                            .clone()
-                            .unwrap_or_else(|| "Unknown error".to_string());
+                    KeyCode::Char('s') => {
+                        // Skip - mark as skipped and continue to next commit
                         app.cherry_pick_items[app.current_cherry_pick_index].status =
-                            CherryPickStatus::Failed(error_msg);
+                            CherryPickStatus::Skipped;
                         app.current_cherry_pick_index += 1;
                         StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                    }
+                    KeyCode::Char('a') => {
+                        // Abort entire process with cleanup
+                        let repo_path = app.repo_path.as_ref().unwrap();
+                        let version = app.version.as_ref().unwrap();
+                        let target_branch = app.target_branch().to_string();
+                        let _ = git::cleanup_cherry_pick(
+                            app.base_repo_path.as_deref(),
+                            repo_path,
+                            version,
+                            &target_branch,
+                        );
+                        StateChange::Change(Box::new(super::CompletionState::new()))
                     }
                     _ => StateChange::Keep,
                 }
@@ -744,5 +753,304 @@ mod tests {
             "Original commit message should be preserved, got: {}",
             log_message
         );
+    }
+
+    /// # Cherry Pick Continue - Skip After Failure
+    ///
+    /// Tests behavior when user presses 's' to skip after continue fails.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state that has failed
+    /// - Simulates pressing 's' to skip
+    ///
+    /// ## Expected Outcome
+    /// - Should mark the commit as Skipped
+    /// - Should increment cherry_pick_index
+    /// - Should return StateChange::Change to CherryPickState
+    #[tokio::test]
+    async fn test_cherry_pick_continue_skip_after_failure() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+        harness.app.cherry_pick_items = vec![
+            CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Test PR 1".to_string(),
+                status: CherryPickStatus::Conflict,
+            },
+            CherryPickItem {
+                commit_id: "def456".to_string(),
+                pr_id: 101,
+                pr_title: "Test PR 2".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+        ];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let error_message = Some("Pre-commit hook failed".to_string());
+
+        let mut state = CherryPickContinueState::new_test(
+            conflicted_files,
+            vec!["Error output".to_string()],
+            true,        // Complete
+            Some(false), // Failed
+            error_message,
+        );
+
+        // Press 's' to skip
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+
+        // Should transition to CherryPickState
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // Should mark the commit as Skipped
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Skipped
+        ));
+
+        // Should increment index
+        assert_eq!(harness.app.current_cherry_pick_index, 1);
+    }
+
+    /// # Cherry Pick Continue - Abort After Failure
+    ///
+    /// Tests behavior when user presses 'a' to abort after continue fails.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state that has failed
+    /// - Simulates pressing 'a' to abort with cleanup
+    ///
+    /// ## Expected Outcome
+    /// - Should call cleanup_cherry_pick
+    /// - Should return StateChange::Change to CompletionState
+    #[tokio::test]
+    async fn test_cherry_pick_continue_abort_after_failure() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/path"));
+        harness.app.version = Some("v1.0.0".to_string());
+        harness.app.base_repo_path = None;
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let error_message = Some("Pre-commit hook failed".to_string());
+
+        let mut state = CherryPickContinueState::new_test(
+            conflicted_files,
+            vec!["Error output".to_string()],
+            true,        // Complete
+            Some(false), // Failed
+            error_message,
+        );
+
+        // Press 'a' to abort
+        let result = state
+            .process_key(KeyCode::Char('a'), &mut harness.app)
+            .await;
+
+        // Should transition to CompletionState
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Cherry Pick Continue - Skip Does Not Trigger When Successful
+    ///
+    /// Tests that 's' key does not trigger skip when the continue was successful.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state that succeeded
+    /// - Simulates pressing 's'
+    ///
+    /// ## Expected Outcome
+    /// - Should mark as Success (normal success path)
+    /// - Should NOT mark as Skipped
+    #[tokio::test]
+    async fn test_cherry_pick_continue_skip_ignored_on_success() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+
+        let mut state = CherryPickContinueState::new_test(
+            conflicted_files,
+            vec!["Success output".to_string()],
+            true,       // Complete
+            Some(true), // Success
+            None,
+        );
+
+        // Press 's' (any key continues on success)
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+
+        // Should transition to CherryPickState
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // Should mark as Success, NOT Skipped
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Success
+        ));
+    }
+
+    /// # Cherry Pick Continue - Skip Preserves Other Commits
+    ///
+    /// Tests that skipping one commit doesn't affect other commits.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state with multiple commits
+    /// - Simulates pressing 's' to skip after failure
+    ///
+    /// ## Expected Outcome
+    /// - First commit marked as Skipped
+    /// - Second commit still Pending
+    #[tokio::test]
+    async fn test_cherry_pick_continue_skip_preserves_other_commits() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+        harness.app.cherry_pick_items = vec![
+            CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Test PR 1".to_string(),
+                status: CherryPickStatus::Conflict,
+            },
+            CherryPickItem {
+                commit_id: "def456".to_string(),
+                pr_id: 101,
+                pr_title: "Test PR 2".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+            CherryPickItem {
+                commit_id: "ghi789".to_string(),
+                pr_id: 102,
+                pr_title: "Test PR 3".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+        ];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+
+        let mut state = CherryPickContinueState::new_test(
+            conflicted_files,
+            vec!["Error output".to_string()],
+            true,        // Complete
+            Some(false), // Failed
+            Some("Hook error".to_string()),
+        );
+
+        // Press 's' to skip
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // First commit should be Skipped
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Skipped
+        ));
+
+        // Second and third commits should still be Pending
+        assert!(matches!(
+            harness.app.cherry_pick_items[1].status,
+            CherryPickStatus::Pending
+        ));
+        assert!(matches!(
+            harness.app.cherry_pick_items[2].status,
+            CherryPickStatus::Pending
+        ));
+
+        // Index should be at second commit
+        assert_eq!(harness.app.current_cherry_pick_index, 1);
+    }
+
+    /// # Cherry Pick Continue - Retry Keeps Same Index
+    ///
+    /// Tests that retrying doesn't increment the index.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick continue state that has failed
+    /// - Simulates pressing 'r' to retry
+    ///
+    /// ## Expected Outcome
+    /// - Index stays the same
+    /// - Returns ConflictResolutionState
+    #[tokio::test]
+    async fn test_cherry_pick_continue_retry_keeps_index() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+        harness.app.cherry_pick_items = vec![CherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 100,
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Conflict,
+        }];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+
+        let mut state = CherryPickContinueState::new_test(
+            conflicted_files,
+            vec!["Error output".to_string()],
+            true,        // Complete
+            Some(false), // Failed
+            Some("Hook error".to_string()),
+        );
+
+        // Press 'r' to retry
+        let result = state
+            .process_key(KeyCode::Char('r'), &mut harness.app)
+            .await;
+
+        // Should transition to ConflictResolutionState
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // Index should still be 0
+        assert_eq!(harness.app.current_cherry_pick_index, 0);
+
+        // Status should still be Conflict (not changed)
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Conflict
+        ));
     }
 }

@@ -29,6 +29,6 @@ expression: harness.backend()
 " ┌Instructions────────────────────────────────────────────────────────────────┐ "
 " │Repository: /path/to/repo                                                   │ "
 " │Please resolve conflicts in another terminal and stage the changes.         │ "
-" │c: Continue (after resolving) | a: Abort                                    │ "
+" │c: Continue (after resolving) | s: Skip commit | a: Abort (cleanup)         │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

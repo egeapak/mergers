@@ -566,6 +566,7 @@ pub enum CherryPickStatus {
     InProgress,
     Success,
     Conflict,
+    Skipped,
     Failed(String),
 }
 
