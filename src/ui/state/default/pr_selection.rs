@@ -1226,8 +1226,9 @@ impl AppState for PullRequestSelectionState {
                     && self.search_results.get(self.current_search_index) == Some(&pr_index);
 
                 // Apply background highlighting for selected items and search results
+                // Selected items use dark green for contrast with DarkGray cursor highlight
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::DarkGray)
+                    Style::default().bg(Color::Rgb(0, 60, 0))
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
