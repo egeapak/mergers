@@ -534,4 +534,133 @@ mod tests {
             assert!(matches!(result, StateChange::Keep));
         }
     }
+
+    /// # Conflict Resolution - Skip Commit
+    ///
+    /// Tests behavior when user presses 's' to skip current commit.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state
+    /// - Simulates pressing 's' to skip
+    ///
+    /// ## Expected Outcome
+    /// - Should mark the commit as Skipped
+    /// - Should increment cherry_pick_index
+    /// - Should return StateChange::Change to CherryPickState
+    #[tokio::test]
+    async fn test_conflict_resolution_skip() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Set up with non-existent repo (abort will fail silently which is OK)
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.cherry_pick_items = vec![
+            CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Test PR 1".to_string(),
+                status: CherryPickStatus::Conflict,
+            },
+            CherryPickItem {
+                commit_id: "def456".to_string(),
+                pr_id: 101,
+                pr_title: "Test PR 2".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+        ];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let mut state = ConflictResolutionState::new(conflicted_files);
+
+        // Press 's' to skip
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+
+        // Should transition to CherryPickState
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // Should mark the commit as Skipped
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Skipped
+        ));
+
+        // Should increment index
+        assert_eq!(harness.app.current_cherry_pick_index, 1);
+    }
+
+    /// # Conflict Resolution - Skip Preserves Second Commit Status
+    ///
+    /// Tests that skipping one commit doesn't affect other commits.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state with multiple commits
+    /// - Simulates pressing 's' to skip
+    ///
+    /// ## Expected Outcome
+    /// - First commit marked as Skipped
+    /// - Second commit still Pending
+    #[tokio::test]
+    async fn test_conflict_resolution_skip_preserves_other_commits() {
+        use crossterm::event::KeyCode;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
+        harness.app.cherry_pick_items = vec![
+            CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Test PR 1".to_string(),
+                status: CherryPickStatus::Conflict,
+            },
+            CherryPickItem {
+                commit_id: "def456".to_string(),
+                pr_id: 101,
+                pr_title: "Test PR 2".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+            CherryPickItem {
+                commit_id: "ghi789".to_string(),
+                pr_id: 102,
+                pr_title: "Test PR 3".to_string(),
+                status: CherryPickStatus::Pending,
+            },
+        ];
+        harness.app.current_cherry_pick_index = 0;
+
+        let conflicted_files = vec!["test.rs".to_string()];
+        let mut state = ConflictResolutionState::new(conflicted_files);
+
+        // Press 's' to skip
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+
+        assert!(matches!(result, StateChange::Change(_)));
+
+        // First commit should be Skipped
+        assert!(matches!(
+            harness.app.cherry_pick_items[0].status,
+            CherryPickStatus::Skipped
+        ));
+
+        // Second and third commits should still be Pending
+        assert!(matches!(
+            harness.app.cherry_pick_items[1].status,
+            CherryPickStatus::Pending
+        ));
+        assert!(matches!(
+            harness.app.cherry_pick_items[2].status,
+            CherryPickStatus::Pending
+        ));
+
+        // Index should be at second commit
+        assert_eq!(harness.app.current_cherry_pick_index, 1);
+    }
 }

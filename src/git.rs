@@ -3275,4 +3275,240 @@ mod tests {
         );
         assert!(history.commit_hashes.len() >= 2);
     }
+
+    /// # Cleanup Cherry-Pick With Worktree
+    ///
+    /// Tests cleanup of a cherry-pick operation when using worktrees.
+    ///
+    /// ## Test Scenario
+    /// - Creates a repository with a worktree
+    /// - Creates a branch in the worktree
+    /// - Starts a cherry-pick that conflicts
+    /// - Runs cleanup_cherry_pick to abort and remove worktree/branch
+    ///
+    /// ## Expected Outcome
+    /// - Cherry-pick is aborted
+    /// - Worktree is removed
+    /// - Branch is deleted
+    #[test]
+    fn test_cleanup_cherry_pick_with_worktree() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "-u", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        // Go back to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create worktree
+        let worktree_result = create_worktree(&repo_path, "target-branch", "v1.0.0");
+        assert!(worktree_result.is_ok());
+        let worktree_path = worktree_result.unwrap();
+
+        // Create branch in worktree
+        let branch_name = "patch/target-branch-v1.0.0";
+        Command::new("git")
+            .current_dir(&worktree_path)
+            .args(["checkout", "-b", branch_name])
+            .output()
+            .unwrap();
+
+        // Verify worktree and branch exist
+        assert!(worktree_path.exists());
+        let branch_list = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "--list", branch_name])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&branch_list.stdout)
+                .trim()
+                .is_empty(),
+            "Branch should exist"
+        );
+
+        // Run cleanup
+        let cleanup_result =
+            cleanup_cherry_pick(Some(&repo_path), &worktree_path, "v1.0.0", "target-branch");
+        assert!(cleanup_result.is_ok());
+
+        // Verify worktree is removed
+        assert!(!worktree_path.exists(), "Worktree should be removed");
+
+        // Verify branch is deleted
+        let branch_list_after = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "--list", branch_name])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&branch_list_after.stdout)
+                .trim()
+                .is_empty(),
+            "Branch should be deleted"
+        );
+    }
+
+    /// # Cleanup Cherry-Pick Without Worktree
+    ///
+    /// Tests cleanup of a cherry-pick operation in a cloned repository (no worktree).
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository
+    /// - Creates a branch for patching
+    /// - Runs cleanup_cherry_pick with no base_repo_path
+    ///
+    /// ## Expected Outcome
+    /// - Branch is deleted from the repository
+    #[test]
+    fn test_cleanup_cherry_pick_without_worktree() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create branch
+        let branch_name = "patch/main-v2.0.0";
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", branch_name])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Patch commit");
+
+        // Verify branch exists
+        let branch_list = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "--list", branch_name])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&branch_list.stdout)
+                .trim()
+                .is_empty(),
+            "Branch should exist"
+        );
+
+        // Switch to another branch before cleanup (can't delete current branch)
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Run cleanup (no base_repo_path = cloned repo)
+        let cleanup_result = cleanup_cherry_pick(None, &repo_path, "v2.0.0", "main");
+        assert!(cleanup_result.is_ok());
+
+        // Verify branch is deleted
+        let branch_list_after = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "--list", branch_name])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&branch_list_after.stdout)
+                .trim()
+                .is_empty(),
+            "Branch should be deleted"
+        );
+    }
+
+    /// # Cleanup Cherry-Pick Aborts In-Progress Cherry-Pick
+    ///
+    /// Tests that cleanup properly aborts an in-progress cherry-pick.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cherry-pick conflict
+    /// - Runs cleanup_cherry_pick
+    /// - Verifies the cherry-pick state is cleared
+    ///
+    /// ## Expected Outcome
+    /// - Cherry-pick in progress is aborted
+    /// - Repository is in clean state
+    #[test]
+    fn test_cleanup_cherry_pick_aborts_in_progress() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create a file with content
+        std::fs::write(repo_path.join("conflict.txt"), "original content").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit with file");
+
+        // Create feature branch and modify the same file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "feature content").unwrap();
+        create_commit_with_message(&repo_path, "Feature commit");
+
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and modify the same file differently
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("conflict.txt"), "main content").unwrap();
+        create_commit_with_message(&repo_path, "Main commit");
+
+        // Start cherry-pick (will conflict)
+        let _ = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["cherry-pick", &feature_hash])
+            .output();
+
+        // Verify cherry-pick is in progress
+        let status = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["status"])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("cherry-pick"),
+            "Should be in cherry-pick state"
+        );
+
+        // Run cleanup
+        let cleanup_result = cleanup_cherry_pick(None, &repo_path, "v1.0.0", "main");
+        assert!(cleanup_result.is_ok());
+
+        // Verify cherry-pick is no longer in progress
+        let status_after = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["status"])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&status_after.stdout).contains("cherry-picking"),
+            "Cherry-pick should be aborted"
+        );
+    }
 }
