@@ -1,6 +1,16 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
+use std::sync::OnceLock;
+
+// Static regex pattern compiled once using OnceLock
+static RELATIVE_DATE_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_relative_date_regex() -> &'static Regex {
+    RELATIVE_DATE_REGEX.get_or_init(|| {
+        Regex::new(r"^(\d+)(mo|w|d|h)$").expect("Failed to compile relative date regex")
+    })
+}
 
 /// Parse a date string that can be either:
 /// - A relative date like "1mo", "2w", "3d", "4h" (month, week, day, hour)
@@ -16,8 +26,7 @@ pub fn parse_since_date(since_str: &str) -> Result<DateTime<Utc>> {
 }
 
 fn parse_relative_date(since_str: &str) -> Result<DateTime<Utc>> {
-    let re = Regex::new(r"^(\d+)(mo|w|d|h)$")
-        .context("Failed to create regex for relative date parsing")?;
+    let re = get_relative_date_regex();
 
     let caps = re
         .captures(since_str)
