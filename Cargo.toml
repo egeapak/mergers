@@ -4,7 +4,7 @@ version = "0.1.2"
 edition = "2024"
 description = "A comprehensive tool for managing Azure DevOps pull request merging and migration workflows"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/your-org/mergers"
+repository = "https://github.com/egeapak/mergers"
 keywords = ["azure-devops", "git", "merge", "migration", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 

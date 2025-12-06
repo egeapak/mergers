@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/default/cherry_pick_continue.rs
+assertion_line: 605
 expression: harness.backend()
 ---
 "                                                                                "
@@ -19,14 +20,14 @@ expression: harness.backend()
 " │   |                                 ││• migrations/001_initial.sql         │ "
 " │error: could not compile `project`   ││                                     │ "
 " │due to previous error                ││                                     │ "
-" │                                     ││                                     │ "
-" │Pre-commit hook failed. Fix the      ││                                     │ "
-" │issues and retry.                    ││                                     │ "
-" │                                     ││                                     │ "
-" │                                     ││                                     │ "
-" │                                     ││                                     │ "
-" │                                     ││                                     │ "
-" │                                     ││                                     │ "
+" │                                     ││Error:                               │ "
+" │Pre-commit hook failed. Fix the      ││Running pre-commit hooks...          │ "
+" │issues and retry.                    ││Checking code formatting... ✓        │ "
+" │                                     ││Running clippy...                    │ "
+" │                                     ││error: this function has too many    │ "
+" │                                     ││arguments (9/7)                      │ "
+" │                                     ││--> src/db/schema.rs:42:1            │ "
+" │                                     ││... and 7 more lines (see Git Output)│ "
 " └─────────────────────────────────────┘└─────────────────────────────────────┘ "
 " ┌Instructions────────────────────────────────────────────────────────────────┐ "
 " │r: Retry | s: Skip commit | a: Abort (cleanup)                              │ "
