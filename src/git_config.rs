@@ -53,6 +53,23 @@ fn get_legacy_regex() -> &'static Regex {
     })
 }
 
+/// Extract Azure DevOps configuration from regex captures.
+///
+/// This helper function reduces code duplication by extracting organization,
+/// project, and repository from regex captures using the specified indices.
+fn extract_config_from_captures(
+    captures: &regex::Captures,
+    org_idx: usize,
+    proj_idx: usize,
+    repo_idx: usize,
+) -> AzureDevOpsConfig {
+    AzureDevOpsConfig {
+        organization: captures.get(org_idx).unwrap().as_str().to_string(),
+        project: captures.get(proj_idx).unwrap().as_str().to_string(),
+        repository: captures.get(repo_idx).unwrap().as_str().to_string(),
+    }
+}
+
 /// Extract Azure DevOps configuration from a git repository's remote URL
 pub fn detect_azure_devops_config<P: AsRef<Path>>(
     repo_path: P,
@@ -102,68 +119,26 @@ fn get_git_remote_url<P: AsRef<Path>>(repo_path: P) -> Result<String> {
 
 /// Parse Azure DevOps configuration from various URL formats
 fn parse_azure_devops_url(url: &str) -> Result<Option<AzureDevOpsConfig>> {
-    // Try SSH formats first (most common)
+    // Try SSH formats first (most common) - org/project/repo at indices 2/3/4
     if let Some(captures) = get_ssh_legacy_regex().captures(url) {
-        let organization = captures.get(2).unwrap().as_str().to_string();
-        let project = captures.get(3).unwrap().as_str().to_string();
-        let repository = captures.get(4).unwrap().as_str().to_string();
-
-        return Ok(Some(AzureDevOpsConfig {
-            organization,
-            project,
-            repository,
-        }));
+        return Ok(Some(extract_config_from_captures(&captures, 2, 3, 4)));
     }
 
     if let Some(captures) = get_ssh_modern_regex().captures(url) {
-        let organization = captures.get(2).unwrap().as_str().to_string();
-        let project = captures.get(3).unwrap().as_str().to_string();
-        let repository = captures.get(4).unwrap().as_str().to_string();
-
-        return Ok(Some(AzureDevOpsConfig {
-            organization,
-            project,
-            repository,
-        }));
+        return Ok(Some(extract_config_from_captures(&captures, 2, 3, 4)));
     }
 
-    // Try HTTPS format with _git
+    // Try HTTPS formats - org/project/repo at indices 1/2/3
     if let Some(captures) = get_https_git_regex().captures(url) {
-        let organization = captures.get(1).unwrap().as_str().to_string();
-        let project = captures.get(2).unwrap().as_str().to_string();
-        let repository = captures.get(3).unwrap().as_str().to_string();
-
-        return Ok(Some(AzureDevOpsConfig {
-            organization,
-            project,
-            repository,
-        }));
+        return Ok(Some(extract_config_from_captures(&captures, 1, 2, 3)));
     }
 
-    // Try simple HTTPS format without _git
     if let Some(captures) = get_https_simple_regex().captures(url) {
-        let organization = captures.get(1).unwrap().as_str().to_string();
-        let project = captures.get(2).unwrap().as_str().to_string();
-        let repository = captures.get(3).unwrap().as_str().to_string();
-
-        return Ok(Some(AzureDevOpsConfig {
-            organization,
-            project,
-            repository,
-        }));
+        return Ok(Some(extract_config_from_captures(&captures, 1, 2, 3)));
     }
 
-    // Try legacy HTTPS format
     if let Some(captures) = get_legacy_regex().captures(url) {
-        let organization = captures.get(1).unwrap().as_str().to_string();
-        let project = captures.get(2).unwrap().as_str().to_string();
-        let repository = captures.get(3).unwrap().as_str().to_string();
-
-        return Ok(Some(AzureDevOpsConfig {
-            organization,
-            project,
-            repository,
-        }));
+        return Ok(Some(extract_config_from_captures(&captures, 1, 2, 3)));
     }
 
     // Not an Azure DevOps URL

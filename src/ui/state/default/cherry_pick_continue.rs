@@ -23,7 +23,6 @@ pub struct CherryPickContinueState {
     output: Arc<Mutex<Vec<String>>>,
     is_complete: Arc<Mutex<bool>>,
     success: Arc<Mutex<Option<bool>>>,
-    #[allow(dead_code)] // Used in tests and may be useful for future display
     error_message: Arc<Mutex<Option<String>>>,
     conflicted_files: Vec<String>,
 }
@@ -234,6 +233,33 @@ impl AppState for CherryPickContinueState {
                 )]));
                 for file in &self.conflicted_files {
                     details_text.push(Line::from(format!("  • {}", file)));
+                }
+            }
+
+            // Display error message when cherry-pick fails
+            if is_complete
+                && success == Some(false)
+                && let Some(ref error_msg) = *self.error_message.lock().unwrap()
+            {
+                details_text.push(Line::from(""));
+                details_text.push(Line::from(""));
+                details_text.push(Line::from(vec![Span::styled(
+                    "Error:",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )]));
+                // Show first few lines of error to avoid overwhelming the display
+                for line in error_msg.lines().take(5) {
+                    details_text.push(Line::from(vec![Span::styled(
+                        format!("  {}", line),
+                        Style::default().fg(Color::Red),
+                    )]));
+                }
+                let line_count = error_msg.lines().count();
+                if line_count > 5 {
+                    details_text.push(Line::from(vec![Span::styled(
+                        format!("  ... and {} more lines (see Git Output)", line_count - 5),
+                        Style::default().fg(Color::DarkGray),
+                    )]));
                 }
             }
         }
