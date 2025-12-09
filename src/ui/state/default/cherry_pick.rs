@@ -359,4 +359,209 @@ mod tests {
             assert_snapshot!("with_conflict", harness.backend());
         });
     }
+
+    /// # Cherry Pick State - With Failed Items
+    ///
+    /// Tests the cherry-pick screen showing failed items.
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick items with some failed
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should show failed status with error message
+    #[test]
+    fn test_cherry_pick_with_failed() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            items[0].status = CherryPickStatus::Success;
+            items[1].status = CherryPickStatus::Failed("Unable to apply patch".to_string());
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 2;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_failed", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick State - With Skipped Items
+    ///
+    /// Tests the cherry-pick screen showing skipped items.
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick items with some skipped
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should show skipped status indicator
+    #[test]
+    fn test_cherry_pick_with_skipped() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            items[0].status = CherryPickStatus::Success;
+            items[1].status = CherryPickStatus::Skipped;
+            items[2].status = CherryPickStatus::Skipped;
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 3;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_skipped", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick State - All Success
+    ///
+    /// Tests the cherry-pick screen with all items successful.
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick items all with success status
+    /// - Renders the display at the end
+    ///
+    /// ## Expected Outcome
+    /// - Should show all items as successful
+    #[test]
+    fn test_cherry_pick_all_success() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            for item in &mut items {
+                item.status = CherryPickStatus::Success;
+            }
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 4;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("all_success", harness.backend());
+        });
+    }
+
+    /// # CherryPickState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates CherryPickState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with processing=true (same as new)
+    #[test]
+    fn test_cherry_pick_default() {
+        let state = CherryPickState::default();
+        assert!(state.processing);
+    }
+
+    /// # CherryPickState New Implementation
+    ///
+    /// Tests the new() method.
+    ///
+    /// ## Test Scenario
+    /// - Creates CherryPickState using new()
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with processing=true
+    #[test]
+    fn test_cherry_pick_new() {
+        let state = CherryPickState::new();
+        assert!(state.processing);
+    }
+
+    /// # CherryPickState Continue After Conflict
+    ///
+    /// Tests the continue_after_conflict() method.
+    ///
+    /// ## Test Scenario
+    /// - Creates CherryPickState using continue_after_conflict()
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with processing=false
+    #[test]
+    fn test_cherry_pick_continue_after_conflict() {
+        let state = CherryPickState::continue_after_conflict();
+        assert!(!state.processing);
+    }
+
+    /// # Cherry Pick State - Initial Index
+    ///
+    /// Tests rendering at initial index (0).
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick state at index 0
+    /// - First item is pending
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should show first item as pending/in progress
+    #[test]
+    fn test_cherry_pick_initial_index() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            items[0].status = CherryPickStatus::Pending;
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 0;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("initial_index", harness.backend());
+        });
+    }
+
+    /// # Cherry Pick State - Mixed Statuses End
+    ///
+    /// Tests rendering at the end with mixed statuses.
+    ///
+    /// ## Test Scenario
+    /// - Creates cherry-pick items with mixed statuses
+    /// - Index is at the end
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should show all items with their final status
+    #[test]
+    fn test_cherry_pick_mixed_end() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            items[0].status = CherryPickStatus::Success;
+            items[1].status = CherryPickStatus::Skipped;
+            items[2].status = CherryPickStatus::Success;
+            items[3].status = CherryPickStatus::Failed("Merge conflict".to_string());
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.current_cherry_pick_index = 4;
+
+            let state = Box::new(CherryPickState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("mixed_end", harness.backend());
+        });
+    }
 }

@@ -735,4 +735,497 @@ mod tests {
             assert_snapshot!("manual_not_eligible_override", harness.backend());
         });
     }
+
+    /// # Migration Results State - Unsure Tab Display
+    ///
+    /// Tests the migration results screen on the unsure tab.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Adds unsure PRs to the analysis
+    /// - Switches to unsure tab
+    /// - Renders the results
+    ///
+    /// ## Expected Outcome
+    /// - Should display unsure PRs with yellow styling
+    #[test]
+    fn test_migration_results_unsure_tab() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut analysis = create_test_migration_analysis();
+            // Move a PR to unsure
+            if let Some(pr) = analysis.eligible_prs.pop() {
+                analysis.unsure_prs.push(pr);
+            }
+
+            harness.app.migration_analysis = Some(analysis);
+
+            let mut state = MigrationState::new();
+            state.current_tab = MigrationTab::Unsure;
+            state.unsure_list_state.select(Some(0));
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("unsure_tab", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - With Details Panel
+    ///
+    /// Tests the migration results screen with details panel visible.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Enables show_details
+    /// - Renders the results with details panel
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR list on left (60%)
+    /// - Should display details panel on right (40%)
+    #[test]
+    fn test_migration_results_with_details() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+            let mut state = MigrationState::new();
+            state.show_details = true;
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("with_details", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - Not Merged Tab
+    ///
+    /// Tests the migration results screen on the not merged tab.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Switches to not merged tab
+    /// - Renders the results
+    ///
+    /// ## Expected Outcome
+    /// - Should display not merged PRs with red styling
+    #[test]
+    fn test_migration_results_not_merged_tab() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+            let mut state = MigrationState::new();
+            state.current_tab = MigrationTab::NotMerged;
+            state.not_merged_list_state.select(Some(0));
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("not_merged_tab", harness.backend());
+        });
+    }
+
+    /// # Migration Results State - Navigation Down
+    ///
+    /// Tests keyboard navigation with down arrow.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state with multiple eligible PRs
+    /// - Processes down arrow key
+    ///
+    /// ## Expected Outcome
+    /// - Selection should move to next item
+    #[tokio::test]
+    async fn test_migration_results_navigation_down() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
+
+        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.eligible_list_state.selected(), Some(1));
+    }
+
+    /// # Migration Results State - Navigation Up
+    ///
+    /// Tests keyboard navigation with up arrow.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state
+    /// - Processes up arrow key (should wrap to end)
+    ///
+    /// ## Expected Outcome
+    /// - Selection should wrap to last item
+    #[tokio::test]
+    async fn test_migration_results_navigation_up() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
+
+        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        // Should wrap to last item (there are 2 eligible PRs)
+        assert_eq!(state.eligible_list_state.selected(), Some(1));
+    }
+
+    /// # Migration Results State - Tab Switch Right
+    ///
+    /// Tests tab switching with right arrow.
+    ///
+    /// ## Test Scenario
+    /// - Starts on Eligible tab
+    /// - Processes right arrow key
+    ///
+    /// ## Expected Outcome
+    /// - Should switch to Unsure tab
+    #[tokio::test]
+    async fn test_migration_results_tab_switch_right() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        assert_eq!(state.current_tab, MigrationTab::Eligible);
+
+        let result = state.process_key(KeyCode::Right, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.current_tab, MigrationTab::Unsure);
+    }
+
+    /// # Migration Results State - Tab Switch Left
+    ///
+    /// Tests tab switching with left arrow.
+    ///
+    /// ## Test Scenario
+    /// - Starts on Eligible tab
+    /// - Processes left arrow key (should wrap to NotMerged)
+    ///
+    /// ## Expected Outcome
+    /// - Should switch to NotMerged tab (wrapping)
+    #[tokio::test]
+    async fn test_migration_results_tab_switch_left() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        assert_eq!(state.current_tab, MigrationTab::Eligible);
+
+        let result = state.process_key(KeyCode::Left, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.current_tab, MigrationTab::NotMerged);
+    }
+
+    /// # Migration Results State - Toggle Details
+    ///
+    /// Tests 'd' key to toggle details panel.
+    ///
+    /// ## Test Scenario
+    /// - Creates a migration results state with show_details=false
+    /// - Processes 'd' key
+    ///
+    /// ## Expected Outcome
+    /// - show_details should be true
+    #[tokio::test]
+    async fn test_migration_results_toggle_details() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        assert!(!state.show_details);
+
+        let result = state
+            .process_key(KeyCode::Char('d'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.show_details);
+
+        // Toggle back
+        let result = state
+            .process_key(KeyCode::Char('d'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(!state.show_details);
+    }
+
+    /// # Migration Results State - Quit
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_migration_results_quit() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Migration Results State - Enter to Proceed
+    ///
+    /// Tests Enter key to proceed to version input.
+    ///
+    /// ## Test Scenario
+    /// - Processes Enter key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to MigrationVersionInputState
+    #[tokio::test]
+    async fn test_migration_results_enter_to_proceed() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+
+        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Migration Results State - Open PR in Browser
+    ///
+    /// Tests 'o' key to open PR in browser.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'o' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep (browser opens externally)
+    #[tokio::test]
+    async fn test_migration_results_open_pr() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('o'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Migration Results State - Space Toggle Eligibility
+    ///
+    /// Tests Space key to toggle PR eligibility.
+    ///
+    /// ## Test Scenario
+    /// - Processes Space key on eligible tab
+    ///
+    /// ## Expected Outcome
+    /// - Should toggle eligibility and return StateChange::Keep
+    #[tokio::test]
+    async fn test_migration_results_toggle_eligibility() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        // Get the PR ID before toggling (it will be moved to a different list)
+        let pr_id = harness
+            .app
+            .migration_analysis
+            .as_ref()
+            .unwrap()
+            .eligible_prs[0]
+            .pr
+            .id;
+
+        let mut state = MigrationState::new();
+
+        let result = state
+            .process_key(KeyCode::Char(' '), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+
+        // Check that the override was applied
+        assert!(harness.app.has_manual_override(pr_id).is_some());
+    }
+
+    /// # Migration Results State - Other Keys Ignored
+    ///
+    /// Tests that unrecognized keys are ignored.
+    ///
+    /// ## Test Scenario
+    /// - Processes various unrecognized keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep for all
+    #[tokio::test]
+    async fn test_migration_results_other_keys() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+
+        for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Tab] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # Migration Results State - Empty Analysis
+    ///
+    /// Tests rendering when no analysis is present.
+    ///
+    /// ## Test Scenario
+    /// - Creates state without migration analysis
+    /// - Renders (should return early)
+    ///
+    /// ## Expected Outcome
+    /// - Should render empty screen (early return)
+    #[test]
+    fn test_migration_results_empty_analysis() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let harness = TuiTestHarness::with_config(config);
+
+            // No migration_analysis set
+            let mut harness = harness;
+            let state = Box::new(MigrationState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("empty_analysis", harness.backend());
+        });
+    }
+
+    /// # Migration Tab - Cycle Through Tabs
+    ///
+    /// Tests cycling through all tabs with right arrow.
+    ///
+    /// ## Test Scenario
+    /// - Start on Eligible
+    /// - Press Right -> Unsure
+    /// - Press Right -> NotMerged
+    /// - Press Right -> Eligible (wrap)
+    ///
+    /// ## Expected Outcome
+    /// - Should cycle through all tabs correctly
+    #[tokio::test]
+    async fn test_migration_tab_cycle() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+
+        // Eligible -> Unsure
+        state.process_key(KeyCode::Right, &mut harness.app).await;
+        assert_eq!(state.current_tab, MigrationTab::Unsure);
+
+        // Unsure -> NotMerged
+        state.process_key(KeyCode::Right, &mut harness.app).await;
+        assert_eq!(state.current_tab, MigrationTab::NotMerged);
+
+        // NotMerged -> Eligible (wrap)
+        state.process_key(KeyCode::Right, &mut harness.app).await;
+        assert_eq!(state.current_tab, MigrationTab::Eligible);
+    }
+
+    /// # Migration Tab - Cycle Left
+    ///
+    /// Tests cycling through tabs with left arrow.
+    ///
+    /// ## Test Scenario
+    /// - Start on Unsure
+    /// - Press Left -> Eligible
+    ///
+    /// ## Expected Outcome
+    /// - Should navigate left correctly
+    #[tokio::test]
+    async fn test_migration_tab_cycle_left() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.migration_analysis = Some(create_test_migration_analysis());
+
+        let mut state = MigrationState::new();
+        state.current_tab = MigrationTab::Unsure;
+
+        // Unsure -> Eligible
+        state.process_key(KeyCode::Left, &mut harness.app).await;
+        assert_eq!(state.current_tab, MigrationTab::Eligible);
+    }
+
+    /// # MigrationState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates MigrationState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should have Eligible tab selected
+    /// - Should have selection at index 0
+    #[test]
+    fn test_migration_state_default() {
+        let state = MigrationState::default();
+        assert_eq!(state.current_tab, MigrationTab::Eligible);
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
+        assert!(!state.show_details);
+    }
+
+    /// # Migration - Empty List Navigation
+    ///
+    /// Tests navigation when a tab has no items.
+    ///
+    /// ## Test Scenario
+    /// - Creates analysis with empty unsure list
+    /// - Switches to unsure tab
+    /// - Tries to navigate
+    ///
+    /// ## Expected Outcome
+    /// - Should not panic on empty list navigation
+    #[tokio::test]
+    async fn test_migration_empty_list_navigation() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut analysis = create_test_migration_analysis();
+        analysis.unsure_prs.clear();
+        harness.app.migration_analysis = Some(analysis);
+
+        let mut state = MigrationState::new();
+        state.current_tab = MigrationTab::Unsure;
+
+        // Try navigating in empty list - should not panic
+        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+
+        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+    }
 }

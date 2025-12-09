@@ -464,4 +464,219 @@ mod tests {
             assert_snapshot!("complete", harness.backend());
         });
     }
+
+    /// # Data Loading State - Quit During Loading
+    ///
+    /// Tests that pressing 'q' exits during loading.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_data_loading_quit() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Data Loading State - First Null Key Sets Loaded
+    ///
+    /// Tests that first Null key starts loading.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new data loading state
+    /// - Processes Null key (tick event)
+    ///
+    /// ## Expected Outcome
+    /// - Should set loaded=true
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_data_loading_first_tick() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+        assert!(!state.loaded);
+
+        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.loaded);
+    }
+
+    /// # Data Loading State - Other Keys Ignored During Loading
+    ///
+    /// Tests that other keys are ignored during loading.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Processes various keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep for all except 'q'
+    #[tokio::test]
+    async fn test_data_loading_other_keys_ignored() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+
+        for key in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Char('x'),
+        ] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # Data Loading State - Default Trait Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates DataLoadingState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should match DataLoadingState::new()
+    #[test]
+    fn test_data_loading_default() {
+        let state = DataLoadingState::default();
+        assert!(!state.loaded);
+        assert_eq!(state.work_items_fetched, 0);
+        assert_eq!(state.work_items_total, 0);
+    }
+
+    /// # Data Loading State - Starting Work Items
+    ///
+    /// Tests the state when starting to fetch work items.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to FetchingWorkItems (initial stage)
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Starting work items fetch..." message
+    #[test]
+    fn test_data_loading_starting_work_items() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::FetchingWorkItems;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("starting_work_items", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Work Items No Total
+    ///
+    /// Tests work items loading with zero total (fallback message).
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to WaitingForWorkItems with 0 total
+    ///
+    /// ## Expected Outcome
+    /// - Should display fallback "Fetching work items..." message
+    #[test]
+    fn test_data_loading_work_items_no_total() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_total = 0;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("work_items_no_total", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Commit Info No Total
+    ///
+    /// Tests commit info loading with zero total (fallback message).
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to FetchingCommitInfo with 0 total
+    ///
+    /// ## Expected Outcome
+    /// - Should display fallback "Fetching commit information..." message
+    #[test]
+    fn test_data_loading_commit_info_no_total() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::FetchingCommitInfo;
+            state.commit_info_total = 0;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("commit_info_no_total", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Complete Stage Key Processing
+    ///
+    /// Tests that pressing Null key in Complete stage transitions to PR selection.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state in Complete stage
+    /// - Sets loaded=true
+    /// - Processes Null key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to PullRequestSelectionState
+    #[tokio::test]
+    async fn test_data_loading_complete_stage_transitions() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+        state.loaded = true;
+        state.loading_stage = LoadingStage::Complete;
+
+        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Data Loading State - FetchingCommitInfo Stage Key Processing
+    ///
+    /// Tests that pressing Null key in FetchingCommitInfo stage transitions.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state in FetchingCommitInfo stage
+    /// - Sets loaded=true
+    /// - Processes Null key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to PullRequestSelectionState
+    #[tokio::test]
+    async fn test_data_loading_fetching_commit_info_transitions() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+        state.loaded = true;
+        state.loading_stage = LoadingStage::FetchingCommitInfo;
+
+        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
 }

@@ -466,4 +466,139 @@ mod tests {
             assert_snapshot!("other_error", harness.backend());
         });
     }
+
+    /// # SetupRepoState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates SetupRepoState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with Initializing state and started=false
+    #[test]
+    fn test_setup_repo_default() {
+        let state = SetupRepoState::default();
+        assert!(!state.started);
+        assert!(matches!(state.state, SetupState::Initializing));
+    }
+
+    /// # Setup Repo State - Escape Key in Error State
+    ///
+    /// Tests Escape key handling in error state.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with error
+    /// - Processes Escape key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change (to ErrorState)
+    #[tokio::test]
+    async fn test_setup_repo_escape_in_error() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = SetupRepoState::new();
+        state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
+
+        let result = state.process_key(KeyCode::Esc, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Setup Repo State - Other Keys in Error State
+    ///
+    /// Tests that unrecognized keys are ignored in error state.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with error
+    /// - Processes various unrecognized keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_setup_repo_other_keys_in_error() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = SetupRepoState::new();
+        state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
+
+        for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # Setup Repo State - Key in Normal State When Started
+    ///
+    /// Tests key handling when setup has already started.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets started=true
+    /// - Processes a key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep (already started)
+    #[tokio::test]
+    async fn test_setup_repo_key_when_started() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = SetupRepoState::new();
+        state.started = true;
+
+        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Setup Repo State - Creating Branch Status
+    ///
+    /// Tests the creating branch status message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets status to "Creating branch..."
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Creating branch..." message
+    #[test]
+    fn test_setup_repo_creating_branch() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.set_status("Creating branch...".to_string());
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("creating_branch", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Fetching Repo Details Status
+    ///
+    /// Tests the fetching repository details status message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state
+    /// - Sets status to "Fetching repository details..."
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Fetching repository details..." message
+    #[test]
+    fn test_setup_repo_fetching_details() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = SetupRepoState::new();
+            state.set_status("Fetching repository details...".to_string());
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("fetching_details", harness.backend());
+        });
+    }
 }
