@@ -66,6 +66,63 @@ impl TuiTestHarness {
     pub fn backend(&self) -> &TestBackend {
         self.terminal.backend()
     }
+
+    /// Set the initial state for the app
+    pub fn with_initial_state(mut self, state: Box<dyn AppState>) -> Self {
+        self.app.initial_state = Some(state);
+        self
+    }
+
+    /// Run the app loop with mock events until exit or events exhausted.
+    ///
+    /// This method is useful for integration testing the full app loop.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_source` - The mock event source containing events to process
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let events = MockEventSource::new()
+    ///     .with_key(KeyCode::Down)
+    ///     .with_key(KeyCode::Char('q'));
+    /// harness.run_with_events(&events).await?;
+    /// ```
+    pub async fn run_with_events(
+        &mut self,
+        event_source: &crate::ui::MockEventSource,
+    ) -> anyhow::Result<()> {
+        crate::ui::run_app_with_events(&mut self.terminal, &mut self.app, event_source).await
+    }
+
+    /// Run the app with a sequence of key codes.
+    ///
+    /// Convenience method that creates a MockEventSource from a list of keys.
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - The sequence of key codes to process
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// harness.run_with_keys(vec![
+    ///     KeyCode::Down,
+    ///     KeyCode::Enter,
+    ///     KeyCode::Char('q'),
+    /// ]).await?;
+    /// ```
+    pub async fn run_with_keys(
+        &mut self,
+        keys: Vec<crossterm::event::KeyCode>,
+    ) -> anyhow::Result<()> {
+        let events = crate::ui::MockEventSource::new();
+        for key in keys {
+            events.push_key(key);
+        }
+        self.run_with_events(&events).await
+    }
 }
 
 /// Create a test Azure DevOps client (minimal implementation for testing)
