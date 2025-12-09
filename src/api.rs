@@ -66,6 +66,7 @@ pub struct AzureDevOpsClient {
     project: String,
     repository: String,
     max_retries: u32,
+    base_url: String,
     // Note: PAT is stored in the HTTP client's default headers, not as a field,
     // to avoid accidental exposure. The SecretString is only used during client creation.
 }
@@ -207,6 +208,85 @@ impl AzureDevOpsClient {
             project,
             repository,
             max_retries,
+            base_url: "https://dev.azure.com".to_string(),
+        })
+    }
+
+    /// Creates a new Azure DevOps API client with a custom base URL.
+    /// This is primarily intended for testing with mock servers.
+    #[cfg(test)]
+    pub fn new_with_base_url(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: String,
+        base_url: String,
+    ) -> Result<Self> {
+        let secret_pat = SecretString::from(pat);
+        let client = Client::builder()
+            .default_headers({
+                let mut headers = HeaderMap::new();
+                let auth_value = base64::engine::general_purpose::STANDARD
+                    .encode(format!(":{}", secret_pat.expose_secret()));
+                headers.insert(
+                    reqwest::header::AUTHORIZATION,
+                    reqwest::header::HeaderValue::from_str(&format!("Basic {}", auth_value))?,
+                );
+                headers.insert(
+                    reqwest::header::CONTENT_TYPE,
+                    reqwest::header::HeaderValue::from_static("application/json"),
+                );
+                headers
+            })
+            .timeout(Duration::from_secs(30))
+            .build()?;
+
+        Ok(Self {
+            client,
+            organization,
+            project,
+            repository,
+            max_retries: DEFAULT_MAX_RETRIES,
+            base_url,
+        })
+    }
+
+    /// Creates a new Azure DevOps API client with a custom base URL and no retries.
+    /// This is primarily intended for testing.
+    #[cfg(test)]
+    pub fn new_with_base_url_no_retries(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: String,
+        base_url: String,
+    ) -> Result<Self> {
+        let secret_pat = SecretString::from(pat);
+        let client = Client::builder()
+            .default_headers({
+                let mut headers = HeaderMap::new();
+                let auth_value = base64::engine::general_purpose::STANDARD
+                    .encode(format!(":{}", secret_pat.expose_secret()));
+                headers.insert(
+                    reqwest::header::AUTHORIZATION,
+                    reqwest::header::HeaderValue::from_str(&format!("Basic {}", auth_value))?,
+                );
+                headers.insert(
+                    reqwest::header::CONTENT_TYPE,
+                    reqwest::header::HeaderValue::from_static("application/json"),
+                );
+                headers
+            })
+            .timeout(Duration::from_secs(30))
+            .build()?;
+
+        Ok(Self {
+            client,
+            organization,
+            project,
+            repository,
+            max_retries: 0,
+            base_url,
         })
     }
 
@@ -422,8 +502,14 @@ impl AzureDevOpsClient {
             }
 
             let url = format!(
-                "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top={}&$skip={}",
-                self.organization, self.project, self.repository, dev_branch, top, skip
+                "{}/{}/{}/_apis/git/repositories/{}/pullrequests?searchCriteria.targetRefName=refs/heads/{}&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top={}&$skip={}",
+                self.base_url,
+                self.organization,
+                self.project,
+                self.repository,
+                dev_branch,
+                top,
+                skip
             );
 
             let response = self
@@ -483,8 +569,8 @@ impl AzureDevOpsClient {
 
     pub async fn fetch_work_items_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.0",
-            self.organization, self.project, self.repository, pr_id
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/workitems?api-version=7.0",
+            self.base_url, self.organization, self.project, self.repository, pr_id
         );
 
         let response = self.get_with_retry(&url).await?;
@@ -509,8 +595,8 @@ impl AzureDevOpsClient {
         let ids_param = work_item_ids.join(",");
 
         let batch_url = format!(
-            "https://dev.azure.com/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps,System.CreatedDate&api-version=7.0",
-            self.organization, self.project, ids_param
+            "{}/{}/{}/_apis/wit/workitems?ids={}&fields=System.Title,System.State,System.WorkItemType,System.AssignedTo,System.AreaPath,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps,System.CreatedDate&api-version=7.0",
+            self.base_url, self.organization, self.project, ids_param
         );
 
         let batch_response = self.get_with_retry(&batch_url).await?;
@@ -539,8 +625,8 @@ impl AzureDevOpsClient {
 
     pub async fn fetch_repo_details(&self) -> Result<RepoDetails> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}?api-version=7.0",
-            self.organization, self.project, self.repository
+            "{}/{}/{}/_apis/git/repositories/{}?api-version=7.0",
+            self.base_url, self.organization, self.project, self.repository
         );
 
         let response = self.get_with_retry(&url).await?;
@@ -550,8 +636,8 @@ impl AzureDevOpsClient {
 
     pub async fn fetch_pr_commit(&self, pr_id: i32) -> Result<crate::models::MergeCommit> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullRequests/{}?api-version=7.0",
-            self.organization, self.project, self.repository, pr_id
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}?api-version=7.0",
+            self.base_url, self.organization, self.project, self.repository, pr_id
         );
 
         let response = self
@@ -576,8 +662,8 @@ impl AzureDevOpsClient {
 
     pub async fn add_label_to_pr(&self, pr_id: i32, label: &str) -> Result<()> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/git/repositories/{}/pullRequests/{}/labels?api-version=7.0",
-            self.organization, self.project, self.repository, pr_id
+            "{}/{}/{}/_apis/git/repositories/{}/pullRequests/{}/labels?api-version=7.0",
+            self.base_url, self.organization, self.project, self.repository, pr_id
         );
 
         #[derive(Serialize)]
@@ -610,8 +696,8 @@ impl AzureDevOpsClient {
 
     pub async fn update_work_item_state(&self, work_item_id: i32, new_state: &str) -> Result<()> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}?api-version=7.0",
-            self.organization, self.project, work_item_id
+            "{}/{}/{}/_apis/wit/workitems/{}?api-version=7.0",
+            self.base_url, self.organization, self.project, work_item_id
         );
 
         #[derive(Serialize)]
@@ -648,8 +734,8 @@ impl AzureDevOpsClient {
 
     pub async fn fetch_work_item_history(&self, work_item_id: i32) -> Result<Vec<WorkItemHistory>> {
         let url = format!(
-            "https://dev.azure.com/{}/{}/_apis/wit/workitems/{}/updates?api-version=7.0",
-            self.organization, self.project, work_item_id
+            "{}/{}/{}/_apis/wit/workitems/{}/updates?api-version=7.0",
+            self.base_url, self.organization, self.project, work_item_id
         );
 
         let response = self
@@ -829,6 +915,31 @@ mod tests {
     use mockito::Server;
     use serde_json::json;
 
+    /// Creates a test client that uses the mock server URL.
+    fn create_mock_client(server_url: &str) -> AzureDevOpsClient {
+        AzureDevOpsClient::new_with_base_url(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "test-pat".to_string(),
+            server_url.to_string(),
+        )
+        .unwrap()
+    }
+
+    /// Creates a test client with no retries for faster tests.
+    fn create_mock_client_no_retry(server_url: &str) -> AzureDevOpsClient {
+        AzureDevOpsClient::new_with_base_url_no_retries(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "test-pat".to_string(),
+            server_url.to_string(),
+        )
+        .unwrap()
+    }
+
+    /// Old helper for backward compatibility with existing tests
     fn create_test_client(_server_url: &str) -> AzureDevOpsClient {
         AzureDevOpsClient {
             client: reqwest::Client::new(),
@@ -836,6 +947,7 @@ mod tests {
             project: "test-project".to_string(),
             repository: "test-repo".to_string(),
             max_retries: DEFAULT_MAX_RETRIES,
+            base_url: "https://dev.azure.com".to_string(),
         }
     }
 
@@ -918,25 +1030,16 @@ mod tests {
             .create_async()
             .await;
 
-        let _client = create_test_client(&server.url());
+        // Use the mock client to actually fetch PRs
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pull_requests("dev", None).await;
 
-        // We need to modify the client to use our mock server URL
-        let _modified_client = AzureDevOpsClient {
-            client: reqwest::Client::new(),
-            organization: server.url(),
-            project: "test-project".to_string(),
-            repository: "test-repo".to_string(),
-            max_retries: DEFAULT_MAX_RETRIES,
-        };
-
-        // This test would need URL rewriting to work properly with mockito
-        // For now, we'll test the URL construction logic
-        let expected_url_pattern = "https://dev.azure.com/test-org/test-project/_apis/git/repositories/test-repo/pullrequests?searchCriteria.targetRefName=refs/heads/dev&searchCriteria.status=completed&api-version=7.0&$expand=lastMergeCommit&$top=100&$skip=0".to_string();
-
-        // Test URL construction - this validates the logic without network calls
-        assert!(expected_url_pattern.contains("test-org"));
-        assert!(expected_url_pattern.contains("test-project"));
-        assert!(expected_url_pattern.contains("test-repo"));
+        // Verify the API call succeeded and returned the expected data
+        assert!(result.is_ok());
+        let prs = result.unwrap();
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].id, 123);
+        assert_eq!(prs[0].title, "Test PR");
     }
 
     /// # Fetch Pull Requests with Since Date Filter
@@ -2136,5 +2239,1457 @@ mod tests {
         // This would test the actual combined functionality
         // but requires URL interception for proper testing
         assert_eq!(pr_id, 123);
+    }
+
+    // =============================================================================
+    // Integration tests using mockito
+    // =============================================================================
+
+    /// # Client Accessor Methods
+    ///
+    /// Tests the accessor methods for client configuration.
+    ///
+    /// ## Test Scenario
+    /// - Create a client with known configuration values
+    /// - Access each configuration through accessor methods
+    ///
+    /// ## Expected Outcome
+    /// - All accessor methods return the correct values
+    #[test]
+    fn test_client_accessor_methods() {
+        let client = AzureDevOpsClient::new(
+            "my-org".to_string(),
+            "my-project".to_string(),
+            "my-repo".to_string(),
+            "my-pat".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "my-org");
+        assert_eq!(client.project(), "my-project");
+        assert_eq!(client.repository(), "my-repo");
+        assert_eq!(client.max_retries(), DEFAULT_MAX_RETRIES);
+    }
+
+    /// # Client Creation with SecretString PAT
+    ///
+    /// Tests client creation using SecretString-wrapped PAT.
+    ///
+    /// ## Test Scenario
+    /// - Create a SecretString from a PAT
+    /// - Create client using new_with_secret
+    ///
+    /// ## Expected Outcome
+    /// - Client is created successfully with correct configuration
+    #[test]
+    fn test_client_creation_with_secret_string() {
+        let secret_pat = SecretString::from("test-pat".to_string());
+        let result = AzureDevOpsClient::new_with_secret(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            secret_pat,
+        );
+
+        assert!(result.is_ok());
+        let client = result.unwrap();
+        assert_eq!(client.organization(), "test-org");
+    }
+
+    /// # Client Creation with Pool Config
+    ///
+    /// Tests client creation with custom connection pool settings.
+    ///
+    /// ## Test Scenario
+    /// - Create client with custom pool_max_idle_per_host and pool_idle_timeout_secs
+    ///
+    /// ## Expected Outcome
+    /// - Client is created successfully with the specified pool configuration
+    #[test]
+    fn test_client_creation_with_pool_config() {
+        let secret_pat = SecretString::from("test-pat".to_string());
+        let result = AzureDevOpsClient::new_with_secret_and_pool_config(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            secret_pat,
+            50,  // custom pool_max_idle_per_host
+            120, // custom pool_idle_timeout_secs
+        );
+
+        assert!(result.is_ok());
+        let client = result.unwrap();
+        assert_eq!(client.organization(), "test-org");
+        assert_eq!(client.max_retries(), DEFAULT_MAX_RETRIES);
+    }
+
+    /// # Client Creation with Full Config
+    ///
+    /// Tests client creation with all configuration options.
+    ///
+    /// ## Test Scenario
+    /// - Create client with custom pool settings and retry count
+    ///
+    /// ## Expected Outcome
+    /// - Client is created with all specified settings
+    #[test]
+    fn test_client_creation_with_full_config() {
+        let secret_pat = SecretString::from("test-pat".to_string());
+        let result = AzureDevOpsClient::new_with_full_config(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            secret_pat,
+            50,  // pool_max_idle_per_host
+            120, // pool_idle_timeout_secs
+            5,   // max_retries
+        );
+
+        assert!(result.is_ok());
+        let client = result.unwrap();
+        assert_eq!(client.max_retries(), 5);
+    }
+
+    /// # Is Retryable Status
+    ///
+    /// Tests the is_retryable_status method for various HTTP status codes.
+    ///
+    /// ## Test Scenario
+    /// - Test various HTTP status codes for retryability
+    ///
+    /// ## Expected Outcome
+    /// - 408, 429, 500, 502, 503, 504 are retryable
+    /// - Other status codes are not retryable
+    #[test]
+    fn test_is_retryable_status() {
+        use reqwest::StatusCode;
+
+        // Retryable status codes
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::REQUEST_TIMEOUT
+        )); // 408
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::TOO_MANY_REQUESTS
+        )); // 429
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::INTERNAL_SERVER_ERROR
+        )); // 500
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::BAD_GATEWAY
+        )); // 502
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::SERVICE_UNAVAILABLE
+        )); // 503
+        assert!(AzureDevOpsClient::is_retryable_status(
+            StatusCode::GATEWAY_TIMEOUT
+        )); // 504
+
+        // Non-retryable status codes
+        assert!(!AzureDevOpsClient::is_retryable_status(StatusCode::OK)); // 200
+        assert!(!AzureDevOpsClient::is_retryable_status(
+            StatusCode::BAD_REQUEST
+        )); // 400
+        assert!(!AzureDevOpsClient::is_retryable_status(
+            StatusCode::UNAUTHORIZED
+        )); // 401
+        assert!(!AzureDevOpsClient::is_retryable_status(
+            StatusCode::FORBIDDEN
+        )); // 403
+        assert!(!AzureDevOpsClient::is_retryable_status(
+            StatusCode::NOT_FOUND
+        )); // 404
+    }
+
+    /// # Fetch Pull Requests - Integration Test
+    ///
+    /// Tests actual PR fetching with mock server.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with PR response
+    /// - Call fetch_pull_requests and verify results
+    ///
+    /// ## Expected Outcome
+    /// - PRs are fetched and parsed correctly
+    #[tokio::test]
+    async fn test_fetch_pull_requests_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "value": [
+                {
+                    "pullRequestId": 123,
+                    "title": "Test PR",
+                    "createdBy": {
+                        "displayName": "Test User"
+                    },
+                    "closedDate": "2024-01-15T12:00:00Z",
+                    "lastMergeCommit": {
+                        "commitId": "abc123",
+                        "url": "https://example.com/commit/abc123"
+                    },
+                    "labels": []
+                }
+            ]
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullrequests.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pull_requests("dev", None).await;
+
+        assert!(result.is_ok());
+        let prs = result.unwrap();
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].id, 123);
+        assert_eq!(prs[0].title, "Test PR");
+    }
+
+    /// # Fetch Pull Requests with Date Filter - Integration Test
+    ///
+    /// Tests PR fetching with since date filter.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with multiple PRs with different dates
+    /// - Call fetch_pull_requests with since filter
+    ///
+    /// ## Expected Outcome
+    /// - Only PRs after the since date are returned
+    #[tokio::test]
+    async fn test_fetch_pull_requests_with_date_filter_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "value": [
+                {
+                    "pullRequestId": 1,
+                    "title": "Recent PR",
+                    "createdBy": { "displayName": "User" },
+                    "closedDate": "2024-06-15T12:00:00Z",
+                    "labels": []
+                },
+                {
+                    "pullRequestId": 2,
+                    "title": "Old PR",
+                    "createdBy": { "displayName": "User" },
+                    "closedDate": "2024-01-01T12:00:00Z",
+                    "labels": []
+                }
+            ]
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullrequests.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pull_requests("dev", Some("2024-03-01")).await;
+
+        assert!(result.is_ok());
+        let prs = result.unwrap();
+        // Should only return the recent PR (after 2024-03-01)
+        assert_eq!(prs.len(), 1);
+        assert_eq!(prs[0].id, 1);
+    }
+
+    /// # Fetch Pull Requests - API Error
+    ///
+    /// Tests handling of API errors when fetching PRs.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return 404
+    /// - Call fetch_pull_requests and expect error
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned with appropriate message
+    #[tokio::test]
+    async fn test_fetch_pull_requests_api_error_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullrequests.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(404)
+            .with_body(r#"{"error": "Not Found"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pull_requests("dev", None).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("404"));
+    }
+
+    /// # Fetch Repository Details - Integration Test
+    ///
+    /// Tests fetching repository details.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with repo details response
+    /// - Call fetch_repo_details
+    ///
+    /// ## Expected Outcome
+    /// - Repository details are fetched and parsed correctly
+    #[tokio::test]
+    async fn test_fetch_repo_details_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "id": "repo-id-123",
+            "name": "test-repo",
+            "sshUrl": "git@ssh.dev.azure.com:v3/test-org/test-project/test-repo"
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_repo_details().await;
+
+        assert!(result.is_ok());
+        let details = result.unwrap();
+        assert_eq!(
+            details.ssh_url,
+            "git@ssh.dev.azure.com:v3/test-org/test-project/test-repo"
+        );
+    }
+
+    /// # Fetch PR Commit - Integration Test
+    ///
+    /// Tests fetching PR commit details.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with PR response containing merge commit
+    /// - Call fetch_pr_commit
+    ///
+    /// ## Expected Outcome
+    /// - Merge commit details are returned
+    #[tokio::test]
+    async fn test_fetch_pr_commit_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "pullRequestId": 123,
+            "title": "Test PR",
+            "createdBy": { "displayName": "User" },
+            "lastMergeCommit": {
+                "commitId": "abc123def456",
+                "url": "https://example.com/commit/abc123def456"
+            }
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123\?.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pr_commit(123).await;
+
+        assert!(result.is_ok());
+        let commit = result.unwrap();
+        assert_eq!(commit.commit_id, "abc123def456");
+    }
+
+    /// # Fetch PR Commit - No Merge Commit
+    ///
+    /// Tests handling of PRs without merge commits.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with PR response without merge commit
+    /// - Call fetch_pr_commit
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned indicating no merge commit
+    #[tokio::test]
+    async fn test_fetch_pr_commit_no_merge_commit_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "pullRequestId": 123,
+            "title": "Test PR",
+            "createdBy": { "displayName": "User" },
+            "lastMergeCommit": null
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123\?.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pr_commit(123).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no merge commit"));
+    }
+
+    /// # Add Label to PR - Integration Test
+    ///
+    /// Tests adding labels to pull requests.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to accept label POST
+    /// - Call add_label_to_pr
+    ///
+    /// ## Expected Outcome
+    /// - Label is added successfully
+    #[tokio::test]
+    async fn test_add_label_to_pr_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/labels\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"name": "merged-v1.0"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.add_label_to_pr(123, "merged-v1.0").await;
+
+        assert!(result.is_ok());
+    }
+
+    /// # Add Label to PR - Failure
+    ///
+    /// Tests handling of label addition failures.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return error
+    /// - Call add_label_to_pr
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned with details
+    #[tokio::test]
+    async fn test_add_label_to_pr_failure_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "POST",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/labels\?.*".to_string()),
+            )
+            .with_status(400)
+            .with_body(r#"{"error": "Label already exists"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.add_label_to_pr(123, "merged-v1.0").await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("400"));
+    }
+
+    /// # Update Work Item State - Integration Test
+    ///
+    /// Tests updating work item state via PATCH request.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to accept PATCH
+    /// - Call update_work_item_state
+    ///
+    /// ## Expected Outcome
+    /// - Work item state is updated successfully
+    #[tokio::test]
+    async fn test_update_work_item_state_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "PATCH",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/456\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id": 456, "fields": {"System.State": "Done"}}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.update_work_item_state(456, "Done").await;
+
+        assert!(result.is_ok());
+    }
+
+    /// # Update Work Item State - Failure
+    ///
+    /// Tests handling of work item state update failures.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return error
+    /// - Call update_work_item_state
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned with details
+    #[tokio::test]
+    async fn test_update_work_item_state_failure_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "PATCH",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/456\?.*".to_string(),
+                ),
+            )
+            .with_status(400)
+            .with_body(r#"{"error": "Invalid state transition"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.update_work_item_state(456, "InvalidState").await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("400"));
+    }
+
+    /// # Fetch Work Item History - Integration Test
+    ///
+    /// Tests fetching work item history.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with history response
+    /// - Call fetch_work_item_history
+    ///
+    /// ## Expected Outcome
+    /// - History is returned with state changes
+    #[tokio::test]
+    async fn test_fetch_work_item_history_integration() {
+        let mut server = Server::new_async().await;
+
+        let mock_response = json!({
+            "value": [
+                {
+                    "rev": 1,
+                    "revisedDate": "2024-01-15T10:30:00Z",
+                    "fields": {
+                        "System.State": {
+                            "newValue": "New"
+                        }
+                    }
+                },
+                {
+                    "rev": 2,
+                    "revisedDate": "2024-01-16T10:30:00Z",
+                    "fields": {
+                        "System.State": {
+                            "oldValue": "New",
+                            "newValue": "Active"
+                        }
+                    }
+                }
+            ]
+        });
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/456/updates\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(mock_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_item_history(456).await;
+
+        assert!(result.is_ok());
+        let history = result.unwrap();
+        assert_eq!(history.len(), 2);
+    }
+
+    /// # Fetch Work Item History - API Error
+    ///
+    /// Tests handling of API errors when fetching history.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return 404
+    /// - Call fetch_work_item_history
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned
+    #[tokio::test]
+    async fn test_fetch_work_item_history_error_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/456/updates\?.*".to_string(),
+                ),
+            )
+            .with_status(404)
+            .with_body(r#"{"error": "Work item not found"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_item_history(456).await;
+
+        assert!(result.is_err());
+    }
+
+    /// # Fetch Work Items for PR - Integration Test
+    ///
+    /// Tests fetching work items associated with a PR.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with work item refs and batch response
+    /// - Call fetch_work_items_for_pr
+    ///
+    /// ## Expected Outcome
+    /// - Work items are fetched via batch API
+    #[tokio::test]
+    async fn test_fetch_work_items_for_pr_integration() {
+        let mut server = Server::new_async().await;
+
+        // First call returns work item refs
+        let refs_response = json!({
+            "value": [
+                {"id": "101", "url": "https://example.com/wit/101"},
+                {"id": "102", "url": "https://example.com/wit/102"}
+            ]
+        });
+
+        let _refs_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(refs_response.to_string())
+            .create_async()
+            .await;
+
+        // Batch API returns actual work items
+        let batch_response = json!({
+            "value": [
+                {
+                    "id": 101,
+                    "fields": {
+                        "System.Title": "Task 1",
+                        "System.State": "Active",
+                        "System.WorkItemType": "Task"
+                    }
+                },
+                {
+                    "id": 102,
+                    "fields": {
+                        "System.Title": "Bug 1",
+                        "System.State": "Closed",
+                        "System.WorkItemType": "Bug"
+                    }
+                }
+            ]
+        });
+
+        let _batch_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems\?ids=.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(batch_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_items_for_pr(123).await;
+
+        assert!(result.is_ok());
+        let work_items = result.unwrap();
+        assert_eq!(work_items.len(), 2);
+        assert_eq!(work_items[0].id, 101);
+        assert_eq!(work_items[1].id, 102);
+    }
+
+    /// # Fetch Work Items for PR - Empty Response
+    ///
+    /// Tests handling of PRs with no work items.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server with empty work items response
+    /// - Call fetch_work_items_for_pr
+    ///
+    /// ## Expected Outcome
+    /// - Empty vector is returned
+    #[tokio::test]
+    async fn test_fetch_work_items_for_pr_empty_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"value": []}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_items_for_pr(123).await;
+
+        assert!(result.is_ok());
+        let work_items = result.unwrap();
+        assert!(work_items.is_empty());
+    }
+
+    /// # Fetch Work Items for PR - Batch API Fallback
+    ///
+    /// Tests fallback to individual fetches when batch API fails.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server where batch API returns error
+    /// - Individual work item URLs should be called as fallback
+    ///
+    /// ## Expected Outcome
+    /// - Work items are fetched via individual calls
+    #[tokio::test]
+    async fn test_fetch_work_items_for_pr_batch_fallback_integration() {
+        let mut server = Server::new_async().await;
+
+        // First call returns work item refs
+        let refs_response = json!({
+            "value": [
+                {"id": "101", "url": format!("{}/test-org/test-project/_apis/wit/workitems/101", server.url())}
+            ]
+        });
+
+        let _refs_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(refs_response.to_string())
+            .create_async()
+            .await;
+
+        // Batch API returns error
+        let _batch_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems\?ids=.*".to_string(),
+                ),
+            )
+            .with_status(500)
+            .with_body(r#"{"error": "Server error"}"#)
+            .create_async()
+            .await;
+
+        // Individual work item fallback
+        let wi_response = json!({
+            "id": 101,
+            "fields": {
+                "System.Title": "Task 1",
+                "System.State": "Active",
+                "System.WorkItemType": "Task"
+            }
+        });
+
+        let _wi_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/101\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(wi_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_items_for_pr(123).await;
+
+        assert!(result.is_ok());
+        let work_items = result.unwrap();
+        assert_eq!(work_items.len(), 1);
+        assert_eq!(work_items[0].id, 101);
+    }
+
+    /// # Fetch Work Items with History for PR Parallel - Integration Test
+    ///
+    /// Tests parallel fetching of work items with their history.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server for work items and history endpoints
+    /// - Call fetch_work_items_with_history_for_pr_parallel
+    ///
+    /// ## Expected Outcome
+    /// - Work items are returned with history populated
+    #[tokio::test]
+    async fn test_fetch_work_items_with_history_parallel_integration() {
+        let mut server = Server::new_async().await;
+
+        // Work item refs
+        let refs_response = json!({
+            "value": [
+                {"id": "101", "url": "https://example.com/wit/101"}
+            ]
+        });
+
+        let _refs_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(refs_response.to_string())
+            .create_async()
+            .await;
+
+        // Batch work items
+        let batch_response = json!({
+            "value": [
+                {
+                    "id": 101,
+                    "fields": {
+                        "System.Title": "Task 1",
+                        "System.State": "Active"
+                    }
+                }
+            ]
+        });
+
+        let _batch_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems\?ids=.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(batch_response.to_string())
+            .create_async()
+            .await;
+
+        // History endpoint
+        let history_response = json!({
+            "value": [
+                {
+                    "rev": 1,
+                    "revisedDate": "2024-01-15T10:30:00Z",
+                    "fields": {
+                        "System.State": {"newValue": "Active"}
+                    }
+                }
+            ]
+        });
+
+        let _history_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/wit/workitems/101/updates\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(history_response.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client
+            .fetch_work_items_with_history_for_pr_parallel(123, 5)
+            .await;
+
+        assert!(result.is_ok());
+        let work_items = result.unwrap();
+        assert_eq!(work_items.len(), 1);
+        assert!(!work_items[0].history.is_empty());
+    }
+
+    /// # Fetch Work Items with History - Empty Work Items
+    ///
+    /// Tests behavior when PR has no work items.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return empty work items
+    /// - Call fetch_work_items_with_history_for_pr_parallel
+    ///
+    /// ## Expected Outcome
+    /// - Empty vector is returned without calling history endpoints
+    #[tokio::test]
+    async fn test_fetch_work_items_with_history_empty_integration() {
+        let mut server = Server::new_async().await;
+
+        let _refs_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"value": []}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client
+            .fetch_work_items_with_history_for_pr_parallel(123, 5)
+            .await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    /// # Fetch Work Items for PRs Parallel - Integration Test
+    ///
+    /// Tests parallel fetching of work items for multiple PRs.
+    ///
+    /// ## Test Scenario
+    /// - Create multiple PRs and fetch their work items in parallel
+    ///
+    /// ## Expected Outcome
+    /// - Work items are fetched for all PRs concurrently
+    #[tokio::test]
+    async fn test_fetch_work_items_for_prs_parallel_integration() {
+        let mut server = Server::new_async().await;
+
+        // Work items for PR 1
+        let _pr1_refs = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/1/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"value": []}"#)
+            .create_async()
+            .await;
+
+        // Work items for PR 2
+        let _pr2_refs = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/2/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"value": []}"#)
+            .create_async()
+            .await;
+
+        let prs = vec![
+            PullRequest {
+                id: 1,
+                title: "PR 1".to_string(),
+                closed_date: Some("2024-01-01T12:00:00Z".to_string()),
+                created_by: CreatedBy {
+                    display_name: "User".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            PullRequest {
+                id: 2,
+                title: "PR 2".to_string(),
+                closed_date: Some("2024-01-02T12:00:00Z".to_string()),
+                created_by: CreatedBy {
+                    display_name: "User".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+        ];
+
+        let client = create_mock_client_no_retry(&server.url());
+        let results = client.fetch_work_items_for_prs_parallel(&prs, 10, 5).await;
+
+        assert_eq!(results.len(), 2);
+    }
+
+    /// # Fetch Work Items with History for PR - Backward Compatibility
+    ///
+    /// Tests the non-parallel version that uses default concurrency.
+    ///
+    /// ## Test Scenario
+    /// - Call fetch_work_items_with_history_for_pr without specifying concurrency
+    ///
+    /// ## Expected Outcome
+    /// - Uses default concurrency of 10
+    #[tokio::test]
+    async fn test_fetch_work_items_with_history_backward_compat_integration() {
+        let mut server = Server::new_async().await;
+
+        let _refs_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123/workitems\?.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"value": []}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_work_items_with_history_for_pr(123).await;
+
+        assert!(result.is_ok());
+    }
+
+    /// # Retry Logic - Successful After Retry
+    ///
+    /// Tests that requests succeed after transient failures.
+    ///
+    /// ## Test Scenario
+    /// - First request returns 503, second request succeeds
+    ///
+    /// ## Expected Outcome
+    /// - Request eventually succeeds after retry
+    #[tokio::test]
+    async fn test_retry_logic_success_after_retry() {
+        let mut server = Server::new_async().await;
+
+        // First call fails with 503
+        let _fail_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo\?.*".to_string(),
+                ),
+            )
+            .with_status(503)
+            .with_body(r#"{"error": "Service unavailable"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        // Second call succeeds
+        let _success_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo\?.*".to_string(),
+                ),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id": "repo-id", "name": "test-repo", "sshUrl": "git@example.com"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client(&server.url());
+        let result = client.fetch_repo_details().await;
+
+        assert!(result.is_ok());
+    }
+
+    /// # Parse Terminal States - Single Value
+    ///
+    /// Tests parsing a single terminal state.
+    ///
+    /// ## Test Scenario
+    /// - Provide a single state without comma
+    ///
+    /// ## Expected Outcome
+    /// - Vector with single element
+    #[test]
+    fn test_parse_terminal_states_single_value() {
+        let input = "Done";
+        let result = AzureDevOpsClient::parse_terminal_states(input);
+        assert_eq!(result, vec!["Done"]);
+    }
+
+    /// # Parse Terminal States - Only Commas
+    ///
+    /// Tests parsing input with only commas.
+    ///
+    /// ## Test Scenario
+    /// - Provide string with only commas and whitespace
+    ///
+    /// ## Expected Outcome
+    /// - Empty vector (commas produce empty strings which are filtered)
+    #[test]
+    fn test_parse_terminal_states_only_commas() {
+        let input = ",,,,";
+        let result = AzureDevOpsClient::parse_terminal_states(input);
+        assert!(result.is_empty());
+    }
+
+    /// # Filter PRs Without Merged Tag - Multiple Tags
+    ///
+    /// Tests filtering PRs when they have multiple labels.
+    ///
+    /// ## Test Scenario
+    /// - Create PR with merged tag among other tags
+    ///
+    /// ## Expected Outcome
+    /// - PR with merged tag is filtered out even with other labels
+    #[test]
+    fn test_filter_prs_multiple_tags() {
+        let pr = PullRequest {
+            id: 1,
+            title: "Test PR".to_string(),
+            closed_date: Some("2024-01-01T12:00:00Z".to_string()),
+            created_by: CreatedBy {
+                display_name: "User".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![
+                Label {
+                    name: "bug".to_string(),
+                },
+                Label {
+                    name: "merged-v1.0".to_string(),
+                },
+                Label {
+                    name: "priority:high".to_string(),
+                },
+            ]),
+        };
+
+        let prs = vec![pr];
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert!(filtered.is_empty()); // PR should be filtered out
+    }
+
+    /// # Filter PRs Without Merged Tag - Empty Labels
+    ///
+    /// Tests filtering PRs with empty labels array.
+    ///
+    /// ## Test Scenario
+    /// - Create PR with empty labels array (not None)
+    ///
+    /// ## Expected Outcome
+    /// - PR is included (no merged tag)
+    #[test]
+    fn test_filter_prs_empty_labels_array() {
+        let pr = PullRequest {
+            id: 1,
+            title: "Test PR".to_string(),
+            closed_date: Some("2024-01-01T12:00:00Z".to_string()),
+            created_by: CreatedBy {
+                display_name: "User".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![]),
+        };
+
+        let prs = vec![pr];
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 1);
+    }
+
+    /// # Analyze Work Items - Mixed States
+    ///
+    /// Tests analysis with multiple work items in different states.
+    ///
+    /// ## Test Scenario
+    /// - Create PR with work items in various states
+    /// - Some terminal, some non-terminal
+    ///
+    /// ## Expected Outcome
+    /// - Correctly identifies non-terminal work items
+    #[test]
+    fn test_analyze_work_items_mixed_states() {
+        let client = create_test_client("http://localhost");
+        let terminal_states = vec![
+            "Closed".to_string(),
+            "Done".to_string(),
+            "Resolved".to_string(),
+        ];
+
+        let pr_with_work_items = crate::models::PullRequestWithWorkItems {
+            pr: PullRequest {
+                id: 1,
+                title: "Test PR".to_string(),
+                closed_date: Some("2024-01-01T12:00:00Z".to_string()),
+                created_by: CreatedBy {
+                    display_name: "User".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            work_items: vec![
+                WorkItem {
+                    id: 1,
+                    fields: WorkItemFields {
+                        title: Some("Done Item".to_string()),
+                        state: Some("Done".to_string()),
+                        work_item_type: Some("Task".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                    },
+                    history: vec![],
+                },
+                WorkItem {
+                    id: 2,
+                    fields: WorkItemFields {
+                        title: Some("Active Item".to_string()),
+                        state: Some("Active".to_string()),
+                        work_item_type: Some("Bug".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                    },
+                    history: vec![],
+                },
+                WorkItem {
+                    id: 3,
+                    fields: WorkItemFields {
+                        title: Some("Closed Item".to_string()),
+                        state: Some("Closed".to_string()),
+                        work_item_type: Some("Task".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                    },
+                    history: vec![],
+                },
+            ],
+            selected: false,
+        };
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_work_items, &terminal_states);
+
+        assert!(!all_terminal);
+        assert_eq!(non_terminal.len(), 1);
+        assert_eq!(non_terminal[0].id, 2);
+    }
+
+    /// # New Client with Base URL
+    ///
+    /// Tests creating client with custom base URL.
+    ///
+    /// ## Test Scenario
+    /// - Create client with custom base URL
+    ///
+    /// ## Expected Outcome
+    /// - Client is created with the specified base URL
+    #[test]
+    fn test_new_with_base_url() {
+        let result = AzureDevOpsClient::new_with_base_url(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+            "http://localhost:8080".to_string(),
+        );
+
+        assert!(result.is_ok());
+        let client = result.unwrap();
+        assert_eq!(client.organization(), "org");
+        assert_eq!(client.max_retries(), DEFAULT_MAX_RETRIES);
+    }
+
+    /// # New Client with Base URL No Retries
+    ///
+    /// Tests creating client with custom base URL and no retries.
+    ///
+    /// ## Test Scenario
+    /// - Create client with custom base URL and zero retries
+    ///
+    /// ## Expected Outcome
+    /// - Client is created with zero max_retries
+    #[test]
+    fn test_new_with_base_url_no_retries() {
+        let result = AzureDevOpsClient::new_with_base_url_no_retries(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+            "http://localhost:8080".to_string(),
+        );
+
+        assert!(result.is_ok());
+        let client = result.unwrap();
+        assert_eq!(client.max_retries(), 0);
+    }
+
+    /// # Fetch Pull Requests - Pagination
+    ///
+    /// Tests pagination when there are multiple pages of results.
+    ///
+    /// ## Test Scenario
+    /// - First page returns exactly 100 PRs (indicating more pages)
+    /// - Second page returns fewer PRs (indicating end)
+    ///
+    /// ## Expected Outcome
+    /// - All PRs from both pages are returned
+    #[tokio::test]
+    async fn test_fetch_pull_requests_pagination_integration() {
+        let mut server = Server::new_async().await;
+
+        // Generate 100 PRs for first page (exact match triggers second page fetch)
+        let mut first_page_prs = Vec::new();
+        for i in 1..=100 {
+            first_page_prs.push(json!({
+                "pullRequestId": i,
+                "title": format!("PR {}", i),
+                "createdBy": { "displayName": "User" },
+                "closedDate": "2024-06-15T12:00:00Z",
+                "labels": []
+            }));
+        }
+
+        let first_page = json!({ "value": first_page_prs });
+
+        // Second page with fewer PRs
+        let second_page_prs = vec![json!({
+            "pullRequestId": 101,
+            "title": "PR 101",
+            "createdBy": { "displayName": "User" },
+            "closedDate": "2024-06-14T12:00:00Z",
+            "labels": []
+        })];
+
+        let second_page = json!({ "value": second_page_prs });
+
+        // First page mock (skip=0)
+        let _first_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r".*pullrequests.*\$skip=0.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(first_page.to_string())
+            .create_async()
+            .await;
+
+        // Second page mock (skip=100)
+        let _second_mock = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r".*pullrequests.*\$skip=100.*".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(second_page.to_string())
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pull_requests("dev", None).await;
+
+        assert!(result.is_ok());
+        let prs = result.unwrap();
+        assert_eq!(prs.len(), 101); // All PRs from both pages
+    }
+
+    /// # Fetch PR Commit - API Error
+    ///
+    /// Tests handling of API errors when fetching PR commit.
+    ///
+    /// ## Test Scenario
+    /// - Set up mock server to return 500
+    /// - Call fetch_pr_commit
+    ///
+    /// ## Expected Outcome
+    /// - Error is returned
+    #[tokio::test]
+    async fn test_fetch_pr_commit_api_error_integration() {
+        let mut server = Server::new_async().await;
+
+        let _m = server
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(
+                    r"/test-org/test-project/_apis/git/repositories/test-repo/pullRequests/123\?.*"
+                        .to_string(),
+                ),
+            )
+            .with_status(500)
+            .with_body(r#"{"error": "Internal server error"}"#)
+            .create_async()
+            .await;
+
+        let client = create_mock_client_no_retry(&server.url());
+        let result = client.fetch_pr_commit(123).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("500"));
     }
 }
