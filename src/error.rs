@@ -91,7 +91,7 @@ pub enum ApiError {
 
     /// A network error occurred.
     #[error("Network error: {0}")]
-    Network(#[from] reqwest::Error),
+    Network(#[from] azure_core::Error),
 
     /// The pull request has no merge commit.
     #[error("Pull request {pr_id} has no merge commit")]

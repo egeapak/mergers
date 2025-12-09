@@ -21,11 +21,6 @@ tokio = { version = "=1.48.0", features = [
     "rt-multi-thread",
     "macros",
 ], default-features = false }
-# Keep reqwest for error type compatibility (ApiError::Network uses reqwest::Error)
-reqwest = { version = "=0.12.24", features = [
-    "json",
-    "default-tls",
-], default-features = false }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 ratatui = "=0.29.0"

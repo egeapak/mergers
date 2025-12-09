@@ -1365,7 +1365,6 @@ dependencies = [
  "mockito",
  "ratatui",
  "regex",
- "reqwest",
  "scraper",
  "secrecy",
  "serde",
