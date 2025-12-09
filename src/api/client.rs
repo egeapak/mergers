@@ -17,10 +17,6 @@ use crate::models::{
 };
 use crate::utils::parse_since_date;
 
-/// Default number of retry attempts for transient failures.
-/// Note: Retry logic is now handled by the underlying azure_core HTTP client.
-pub const DEFAULT_MAX_RETRIES: u32 = 3;
-
 /// Azure DevOps API client for pull request and work item management.
 ///
 /// This client uses the official azure_devops_rust_api crate for API interactions,
@@ -103,37 +99,6 @@ impl AzureDevOpsClient {
         })
     }
 
-    /// Creates a new client with custom pool configuration (for API compatibility).
-    ///
-    /// Note: Pool configuration is now handled by the underlying azure_core HTTP client.
-    /// This method is provided for backward compatibility.
-    pub fn new_with_secret_and_pool_config(
-        organization: String,
-        project: String,
-        repository: String,
-        pat: SecretString,
-        _pool_max_idle_per_host: usize,
-        _pool_idle_timeout_secs: u64,
-    ) -> Result<Self> {
-        Self::new_with_secret(organization, project, repository, pat)
-    }
-
-    /// Creates a new client with full configuration (for API compatibility).
-    ///
-    /// Note: Retry logic is now handled by the underlying azure_core HTTP client.
-    /// This method is provided for backward compatibility.
-    pub fn new_with_full_config(
-        organization: String,
-        project: String,
-        repository: String,
-        pat: SecretString,
-        _pool_max_idle_per_host: usize,
-        _pool_idle_timeout_secs: u64,
-        _max_retries: u32,
-    ) -> Result<Self> {
-        Self::new_with_secret(organization, project, repository, pat)
-    }
-
     /// Returns the organization name.
     pub fn organization(&self) -> &str {
         &self.organization
@@ -147,13 +112,6 @@ impl AzureDevOpsClient {
     /// Returns the repository name.
     pub fn repository(&self) -> &str {
         &self.repository
-    }
-
-    /// Returns the maximum number of retries (for API compatibility).
-    ///
-    /// Note: Retry logic is now handled by the underlying azure_core HTTP client.
-    pub fn max_retries(&self) -> u32 {
-        3 // Default value for compatibility
     }
 
     /// Fetches all pull requests for a given branch using pagination.
@@ -581,5 +539,148 @@ mod tests {
 
         assert!(is_terminal_closed);
         assert!(!is_terminal_active);
+    }
+
+    /// # Filter PRs Without Merged Tag
+    ///
+    /// Tests filtering of PRs that don't have a "merged-" tag.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with various labels including "merged-" prefixed ones
+    /// - Filters out PRs with merged tags
+    ///
+    /// ## Expected Outcome
+    /// - PRs with "merged-" tags are filtered out
+    /// - PRs without such tags are retained
+    #[test]
+    fn test_filter_prs_without_merged_tag() {
+        use crate::models::{CreatedBy, Label, PullRequest};
+
+        let pr_no_labels = PullRequest {
+            id: 1,
+            title: "PR without labels".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: None,
+        };
+
+        let pr_with_other_label = PullRequest {
+            id: 2,
+            title: "PR with other label".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![Label {
+                name: "bug".to_string(),
+            }]),
+        };
+
+        let pr_with_merged_tag = PullRequest {
+            id: 3,
+            title: "PR with merged tag".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![Label {
+                name: "merged-v1.0".to_string(),
+            }]),
+        };
+
+        let pr_with_mixed_labels = PullRequest {
+            id: 4,
+            title: "PR with mixed labels".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![
+                Label {
+                    name: "feature".to_string(),
+                },
+                Label {
+                    name: "merged-hotfix".to_string(),
+                },
+            ]),
+        };
+
+        let prs = vec![
+            pr_no_labels,
+            pr_with_other_label,
+            pr_with_merged_tag,
+            pr_with_mixed_labels,
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].id, 1);
+        assert_eq!(filtered[1].id, 2);
+    }
+
+    /// # Filter PRs Empty List
+    ///
+    /// Tests filtering with an empty list.
+    ///
+    /// ## Test Scenario
+    /// - Provides an empty PR list
+    ///
+    /// ## Expected Outcome
+    /// - Returns an empty list
+    #[test]
+    fn test_filter_prs_without_merged_tag_empty() {
+        let prs: Vec<PullRequest> = vec![];
+        let filtered = filter_prs_without_merged_tag(prs);
+        assert!(filtered.is_empty());
+    }
+
+    /// # Filter PRs All Have Merged Tag
+    ///
+    /// Tests filtering when all PRs have merged tags.
+    ///
+    /// ## Test Scenario
+    /// - All PRs have "merged-" prefixed labels
+    ///
+    /// ## Expected Outcome
+    /// - Returns an empty list
+    #[test]
+    fn test_filter_prs_all_merged() {
+        use crate::models::{CreatedBy, Label, PullRequest};
+
+        let pr1 = PullRequest {
+            id: 1,
+            title: "PR 1".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![Label {
+                name: "merged-v1".to_string(),
+            }]),
+        };
+
+        let pr2 = PullRequest {
+            id: 2,
+            title: "PR 2".to_string(),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels: Some(vec![Label {
+                name: "merged-v2".to_string(),
+            }]),
+        };
+
+        let filtered = filter_prs_without_merged_tag(vec![pr1, pr2]);
+        assert!(filtered.is_empty());
     }
 }

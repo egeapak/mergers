@@ -36,5 +36,5 @@ mod credential;
 mod mappers;
 
 // Re-export the client and its public items
-pub use client::{AzureDevOpsClient, DEFAULT_MAX_RETRIES, filter_prs_without_merged_tag};
+pub use client::{AzureDevOpsClient, filter_prs_without_merged_tag};
 pub use credential::PatCredential;
