@@ -2227,4 +2227,693 @@ mod tests {
             assert_snapshot!("mouse_double_click_toggle", harness.backend());
         });
     }
+
+    /// # PR Selection State - Quit Key
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_pr_selection_quit() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # PR Selection State - Navigate Up Key
+    ///
+    /// Tests up arrow key navigation.
+    ///
+    /// ## Test Scenario
+    /// - Processes Up key
+    ///
+    /// ## Expected Outcome
+    /// - Should move selection up
+    #[tokio::test]
+    async fn test_pr_selection_navigate_up() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(1));
+
+        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.table_state.selected(), Some(0));
+    }
+
+    /// # PR Selection State - Navigate Down Key
+    ///
+    /// Tests down arrow key navigation.
+    ///
+    /// ## Test Scenario
+    /// - Processes Down key
+    ///
+    /// ## Expected Outcome
+    /// - Should move selection down
+    #[tokio::test]
+    async fn test_pr_selection_navigate_down() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0));
+
+        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.table_state.selected(), Some(1));
+    }
+
+    /// # PR Selection State - Space Toggle Selection
+    ///
+    /// Tests space key to toggle selection.
+    ///
+    /// ## Test Scenario
+    /// - Processes Space key
+    ///
+    /// ## Expected Outcome
+    /// - Should toggle the current PR's selection
+    #[tokio::test]
+    async fn test_pr_selection_toggle_space() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0));
+
+        assert!(!harness.app.pull_requests[0].selected);
+
+        let result = state
+            .process_key(KeyCode::Char(' '), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(harness.app.pull_requests[0].selected);
+
+        // Toggle again
+        let result = state
+            .process_key(KeyCode::Char(' '), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(!harness.app.pull_requests[0].selected);
+    }
+
+    /// # PR Selection State - Enter Without Selection
+    ///
+    /// Tests Enter key when no PRs are selected.
+    ///
+    /// ## Test Scenario
+    /// - Processes Enter key with no PRs selected
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep (don't proceed)
+    #[tokio::test]
+    async fn test_pr_selection_enter_no_selection() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+
+        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # PR Selection State - Enter With Selection
+    ///
+    /// Tests Enter key when PRs are selected.
+    ///
+    /// ## Test Scenario
+    /// - Selects a PR
+    /// - Processes Enter key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to VersionInputState
+    #[tokio::test]
+    async fn test_pr_selection_enter_with_selection() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut prs = create_test_pull_requests();
+        prs[0].selected = true;
+        harness.app.pull_requests = prs;
+
+        let mut state = PullRequestSelectionState::new();
+
+        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # PR Selection State - Refresh Key
+    ///
+    /// Tests 'r' key to refresh data.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'r' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to DataLoadingState
+    #[tokio::test]
+    async fn test_pr_selection_refresh() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('r'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # PR Selection State - Enter Search Mode
+    ///
+    /// Tests '/' key to enter search mode.
+    ///
+    /// ## Test Scenario
+    /// - Processes '/' key
+    ///
+    /// ## Expected Outcome
+    /// - Should enter search mode
+    #[tokio::test]
+    async fn test_pr_selection_enter_search() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        assert!(!state.search_mode);
+
+        let result = state
+            .process_key(KeyCode::Char('/'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.search_mode);
+    }
+
+    /// # PR Selection State - Enter Multi-Select Mode
+    ///
+    /// Tests 's' key to enter multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Processes 's' key
+    ///
+    /// ## Expected Outcome
+    /// - Should enter multi-select mode
+    #[tokio::test]
+    async fn test_pr_selection_enter_multi_select() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        assert!(!state.multi_select_mode);
+
+        let result = state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(state.multi_select_mode);
+    }
+
+    /// # PR Selection State - Search Mode Input
+    ///
+    /// Tests typing in search mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters search mode
+    /// - Types characters
+    ///
+    /// ## Expected Outcome
+    /// - Should build search input
+    #[tokio::test]
+    async fn test_pr_selection_search_input() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.search_mode = true;
+
+        state
+            .process_key(KeyCode::Char('t'), &mut harness.app)
+            .await;
+        state
+            .process_key(KeyCode::Char('e'), &mut harness.app)
+            .await;
+        state
+            .process_key(KeyCode::Char('s'), &mut harness.app)
+            .await;
+        state
+            .process_key(KeyCode::Char('t'), &mut harness.app)
+            .await;
+
+        assert_eq!(state.search_input, "test");
+
+        // Test backspace
+        state
+            .process_key(KeyCode::Backspace, &mut harness.app)
+            .await;
+        assert_eq!(state.search_input, "tes");
+    }
+
+    /// # PR Selection State - Search Mode Escape
+    ///
+    /// Tests escaping from search mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters search mode
+    /// - Presses Escape
+    ///
+    /// ## Expected Outcome
+    /// - Should exit search mode
+    #[tokio::test]
+    async fn test_pr_selection_search_escape() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.search_mode = true;
+
+        let result = state.process_key(KeyCode::Esc, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(!state.search_mode);
+    }
+
+    /// # PR Selection State - Multi-Select Navigate States
+    ///
+    /// Tests navigating states in multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters multi-select mode
+    /// - Presses Up/Down
+    ///
+    /// ## Expected Outcome
+    /// - Should navigate state selection
+    #[tokio::test]
+    async fn test_pr_selection_multi_select_navigate() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.multi_select_mode = true;
+        state.available_states = crate::ui::testing::create_test_work_item_states();
+        state.state_selection_index = 0;
+
+        state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert_eq!(state.state_selection_index, 1);
+
+        state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert_eq!(state.state_selection_index, 0);
+    }
+
+    /// # PR Selection State - Multi-Select Toggle State
+    ///
+    /// Tests toggling state selection in multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters multi-select mode
+    /// - Presses Space to toggle state
+    ///
+    /// ## Expected Outcome
+    /// - Should toggle state in filter
+    #[tokio::test]
+    async fn test_pr_selection_multi_select_toggle() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.multi_select_mode = true;
+        state.available_states = crate::ui::testing::create_test_work_item_states();
+        state.state_selection_index = 0;
+
+        assert!(state.selected_filter_states.is_empty());
+
+        state
+            .process_key(KeyCode::Char(' '), &mut harness.app)
+            .await;
+        assert!(
+            state
+                .selected_filter_states
+                .contains(&state.available_states[0])
+        );
+    }
+
+    /// # PR Selection State - Multi-Select Exit
+    ///
+    /// Tests exiting multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters multi-select mode
+    /// - Presses Escape
+    ///
+    /// ## Expected Outcome
+    /// - Should exit multi-select mode
+    #[tokio::test]
+    async fn test_pr_selection_multi_select_exit() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.multi_select_mode = true;
+
+        let result = state.process_key(KeyCode::Esc, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(!state.multi_select_mode);
+    }
+
+    /// # PR Selection State - Work Item Navigation
+    ///
+    /// Tests left/right navigation for work items.
+    ///
+    /// ## Test Scenario
+    /// - Processes Left/Right keys
+    ///
+    /// ## Expected Outcome
+    /// - Should navigate through work items
+    #[tokio::test]
+    async fn test_pr_selection_work_item_navigation() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(2)); // Select PR with multiple work items
+        state.work_item_index = 0;
+
+        state.process_key(KeyCode::Right, &mut harness.app).await;
+        assert_eq!(state.work_item_index, 1);
+
+        state.process_key(KeyCode::Left, &mut harness.app).await;
+        assert_eq!(state.work_item_index, 0);
+    }
+
+    /// # PR Selection State - Open PR Key
+    ///
+    /// Tests 'p' key to open PR in browser.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'p' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_pr_selection_open_pr() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0));
+
+        let result = state
+            .process_key(KeyCode::Char('p'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # PR Selection State - Open Work Items Key
+    ///
+    /// Tests 'w' key to open work items in browser.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'w' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_pr_selection_open_work_items() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0));
+
+        let result = state
+            .process_key(KeyCode::Char('w'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # PR Selection State - Search Dialog Display
+    ///
+    /// Tests rendering of the search overlay dialog.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state in search mode
+    /// - Enters a search query
+    /// - Renders the search dialog
+    ///
+    /// ## Expected Outcome
+    /// - Should display search dialog with input field
+    /// - Should show help text for search
+    #[test]
+    fn test_pr_selection_search_dialog() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.search_mode = true;
+            state.search_input = "login".to_string();
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("search_dialog", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Search Results Status
+    ///
+    /// Tests search dialog with results found.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state in search mode
+    /// - Sets search results
+    /// - Renders the search dialog
+    ///
+    /// ## Expected Outcome
+    /// - Should show results count in status
+    #[test]
+    fn test_pr_selection_search_with_results() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.search_mode = true;
+            state.search_input = "login".to_string();
+            state.search_results = vec![0, 1];
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("search_with_results", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Search Error Display
+    ///
+    /// Tests search dialog with error message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state in search mode
+    /// - Sets an error message
+    /// - Renders the search dialog
+    ///
+    /// ## Expected Outcome
+    /// - Should show error message in red
+    #[test]
+    fn test_pr_selection_search_error() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.pull_requests = create_test_pull_requests();
+
+            let mut state = PullRequestSelectionState::new();
+            state.search_mode = true;
+            state.search_input = "!abc".to_string();
+            state.search_error_message = Some("Invalid PR ID format".to_string());
+
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("search_error", harness.backend());
+        });
+    }
+
+    /// # PullRequestSelectionState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates PullRequestSelectionState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should match PullRequestSelectionState::new()
+    #[test]
+    fn test_pr_selection_default() {
+        let state = PullRequestSelectionState::default();
+        assert!(!state.search_mode);
+        assert!(!state.multi_select_mode);
+        assert!(!state.search_iteration_mode);
+        assert!(state.search_input.is_empty());
+    }
+
+    /// # PR Selection - Search Iteration Mode Navigation
+    ///
+    /// Tests navigation in search iteration mode (after search is complete).
+    ///
+    /// ## Test Scenario
+    /// - Sets up search iteration mode with results
+    /// - Tests 'n' for next and 'N' for previous
+    ///
+    /// ## Expected Outcome
+    /// - Should navigate through search results
+    #[tokio::test]
+    async fn test_pr_selection_search_iteration_navigation() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.search_iteration_mode = true;
+        state.search_results = vec![0, 1, 2];
+        state.current_search_index = 0;
+
+        // Navigate next
+        state
+            .process_key(KeyCode::Char('n'), &mut harness.app)
+            .await;
+        assert_eq!(state.current_search_index, 1);
+
+        // Navigate previous
+        state
+            .process_key(KeyCode::Char('N'), &mut harness.app)
+            .await;
+        assert_eq!(state.current_search_index, 0);
+    }
+
+    /// # PR Selection - Search Iteration Escape
+    ///
+    /// Tests exiting search iteration mode with Escape.
+    ///
+    /// ## Test Scenario
+    /// - Sets up search iteration mode
+    /// - Presses Escape
+    ///
+    /// ## Expected Outcome
+    /// - Should exit search iteration mode
+    #[tokio::test]
+    async fn test_pr_selection_search_iteration_escape() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.search_iteration_mode = true;
+        state.search_results = vec![0];
+
+        state.process_key(KeyCode::Esc, &mut harness.app).await;
+        assert!(!state.search_iteration_mode);
+    }
+
+    /// # PR Selection - Multi-Select Select All States
+    ///
+    /// Tests 'a' key to select all states in multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters multi-select mode
+    /// - Presses 'a' to select all
+    ///
+    /// ## Expected Outcome
+    /// - All states should be selected
+    #[tokio::test]
+    async fn test_pr_selection_multi_select_all() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.pull_requests = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.multi_select_mode = true;
+        state.available_states = crate::ui::testing::create_test_work_item_states();
+
+        state
+            .process_key(KeyCode::Char('a'), &mut harness.app)
+            .await;
+        assert_eq!(
+            state.selected_filter_states.len(),
+            state.available_states.len()
+        );
+    }
+
+    /// # PR Selection - Multi-Select Clear
+    ///
+    /// Tests 'c' key to clear all selections in multi-select mode.
+    ///
+    /// ## Test Scenario
+    /// - Enters multi-select mode with selections
+    /// - Presses 'c' to clear
+    ///
+    /// ## Expected Outcome
+    /// - Should clear selections and exit multi-select mode
+    #[tokio::test]
+    async fn test_pr_selection_multi_select_clear() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut prs = create_test_pull_requests();
+        prs[0].selected = true;
+        harness.app.pull_requests = prs;
+
+        let mut state = PullRequestSelectionState::new();
+        state.multi_select_mode = true;
+
+        state
+            .process_key(KeyCode::Char('c'), &mut harness.app)
+            .await;
+        assert!(!state.multi_select_mode);
+        assert!(!harness.app.pull_requests[0].selected);
+    }
 }

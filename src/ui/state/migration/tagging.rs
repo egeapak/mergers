@@ -560,4 +560,145 @@ mod tests {
             assert_snapshot!("success_with_errors", harness.backend());
         });
     }
+
+    /// # Migration Tagging State - Quit Key
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_migration_tagging_quit() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Migration Tagging State - Quit Key When Complete
+    ///
+    /// Tests 'q' key to exit when tagging is complete.
+    ///
+    /// ## Test Scenario
+    /// - Sets is_complete to true
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_migration_tagging_quit_when_complete() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.is_complete = true;
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Migration Tagging State - Any Key When Complete
+    ///
+    /// Tests any key when tagging is complete returns to results.
+    ///
+    /// ## Test Scenario
+    /// - Sets is_complete to true
+    /// - Processes any key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to MigrationResultsState
+    #[tokio::test]
+    async fn test_migration_tagging_any_key_when_complete() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.is_complete = true;
+
+        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Migration Tagging State - Other Keys During Tagging
+    ///
+    /// Tests other keys are ignored during tagging.
+    ///
+    /// ## Test Scenario
+    /// - Tagging not complete
+    /// - Processes various keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_migration_tagging_other_keys() {
+        let config = create_test_config_migration();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+
+        for key in [KeyCode::Enter, KeyCode::Up, KeyCode::Down] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # Migration Tagging State - Zero Progress
+    ///
+    /// Tests tagging at zero progress (just started).
+    ///
+    /// ## Test Scenario
+    /// - Sets up state at 0% progress
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display 0% progress bar
+    #[test]
+    fn test_migration_tagging_zero_progress() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 10;
+            state.tagged_prs = 0;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("zero_progress", harness.backend());
+        });
+    }
+
+    /// # Migration Tagging State - Half Progress
+    ///
+    /// Tests tagging at 50% progress.
+    ///
+    /// ## Test Scenario
+    /// - Sets up state at 50% progress
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display 50% progress bar
+    #[test]
+    fn test_migration_tagging_half_progress() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_migration();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+            state.total_prs = 10;
+            state.tagged_prs = 5;
+            harness.render_state(Box::new(state));
+
+            assert_snapshot!("half_progress", harness.backend());
+        });
+    }
 }

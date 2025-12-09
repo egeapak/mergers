@@ -580,4 +580,66 @@ mod tests {
             assert_snapshot!("all_failed", harness.backend());
         });
     }
+
+    /// # Post Completion State - Quit Key
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Sets completed to true
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_post_completion_quit() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = PostCompletionState::new();
+        state.completed = true;
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Post Completion State - Other Keys
+    ///
+    /// Tests other keys are ignored.
+    ///
+    /// ## Test Scenario
+    /// - Processes various unrecognized keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_post_completion_other_keys() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = PostCompletionState::new();
+
+        for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # PostCompletionState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates PostCompletionState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should match PostCompletionState::new()
+    #[test]
+    fn test_post_completion_default() {
+        let state = PostCompletionState::default();
+        assert!(!state.completed);
+        assert!(state.tasks.is_empty());
+    }
 }

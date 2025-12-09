@@ -370,7 +370,7 @@ mod tests {
         models::{CherryPickItem, CherryPickStatus},
         ui::{
             snapshot_testing::with_settings_and_module_path,
-            testing::{TuiTestHarness, create_test_config_default},
+            testing::{TuiTestHarness, create_test_cherry_pick_items, create_test_config_default},
         },
     };
     use insta::assert_snapshot;
@@ -662,5 +662,54 @@ mod tests {
 
         // Index should be at second commit
         assert_eq!(harness.app.current_cherry_pick_index, 1);
+    }
+
+    /// # ConflictResolutionState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates ConflictResolutionState using new() with empty files
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with empty conflicted files
+    #[test]
+    fn test_conflict_resolution_default_new() {
+        let state = ConflictResolutionState::new(vec![]);
+        assert!(state.conflicted_files.is_empty());
+    }
+
+    /// # Conflict Resolution - Multiple Files Display
+    ///
+    /// Tests display with many conflicted files.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with multiple conflicted files
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display all conflicted files
+    #[test]
+    fn test_conflict_resolution_multiple_files() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.cherry_pick_items = create_test_cherry_pick_items();
+            harness.app.cherry_pick_items[0].status = CherryPickStatus::Conflict;
+            harness.app.current_cherry_pick_index = 0;
+
+            let conflicted_files = vec![
+                "src/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+                "Cargo.toml".to_string(),
+                "README.md".to_string(),
+            ];
+            let state = Box::new(ConflictResolutionState::new(conflicted_files));
+            harness.render_state(state);
+
+            assert_snapshot!("multiple_files", harness.backend());
+        });
     }
 }

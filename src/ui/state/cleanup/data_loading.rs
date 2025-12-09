@@ -388,4 +388,120 @@ mod tests {
             assert_snapshot!("complete", harness.backend());
         });
     }
+
+    /// # Cleanup Data Loading Default Test
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates CleanupDataLoadingState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should initialize with expected defaults
+    #[test]
+    fn test_data_loading_default() {
+        let state = CleanupDataLoadingState::default();
+        assert!(!state.loaded);
+        assert!(state.error.is_none());
+        assert!(state.loading_task.is_none());
+    }
+
+    /// # Cleanup Data Loading Quit Test
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_data_loading_quit() {
+        let config = create_test_config_cleanup();
+        let mut harness = TuiTestHarness::with_config(config.clone());
+        let mut state = CleanupDataLoadingState::new(config);
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Cleanup Data Loading Other Keys Ignored
+    ///
+    /// Tests that other keys are ignored.
+    ///
+    /// ## Test Scenario
+    /// - Processes various unrecognized keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_data_loading_other_keys() {
+        let config = create_test_config_cleanup();
+        let mut harness = TuiTestHarness::with_config(config.clone());
+        let mut state = CleanupDataLoadingState::new(config);
+
+        for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # Cleanup Data Loading No Branches Found
+    ///
+    /// Tests display when no branches found.
+    ///
+    /// ## Test Scenario
+    /// - Simulates empty branch result
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should show "No patch branches found" error
+    #[test]
+    fn test_data_loading_no_branches() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate no branches found
+            state.status = "No patch branches found.".to_string();
+            state.error =
+                Some("No patch branches matching 'patch/*' pattern were found.".to_string());
+            state.loaded = true;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("no_branches", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading Half Progress
+    ///
+    /// Tests progress display at 50%.
+    ///
+    /// ## Test Scenario
+    /// - Simulates loading at 50%
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should show progress bar at 50%
+    #[test]
+    fn test_data_loading_half_progress() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            state.status = "Analyzing branch merge status...".to_string();
+            state.progress = 0.5;
+
+            harness.render_state(Box::new(state));
+            assert_snapshot!("half_progress", harness.backend());
+        });
+    }
 }

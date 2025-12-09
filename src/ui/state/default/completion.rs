@@ -414,4 +414,299 @@ mod tests {
             assert_snapshot!("with_conflicts", harness.backend());
         });
     }
+
+    /// # Completion State - Navigate Down
+    ///
+    /// Tests down arrow navigation.
+    ///
+    /// ## Test Scenario
+    /// - Creates completion state with multiple items
+    /// - Processes down arrow key
+    ///
+    /// ## Expected Outcome
+    /// - Selection should move to next item
+    #[tokio::test]
+    async fn test_completion_navigate_down() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+        assert_eq!(state.list_state.selected(), Some(0));
+
+        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert_eq!(state.list_state.selected(), Some(1));
+    }
+
+    /// # Completion State - Navigate Up
+    ///
+    /// Tests up arrow navigation.
+    ///
+    /// ## Test Scenario
+    /// - Creates completion state
+    /// - Processes up arrow key (should wrap to end)
+    ///
+    /// ## Expected Outcome
+    /// - Selection should wrap to last item
+    #[tokio::test]
+    async fn test_completion_navigate_up() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+        assert_eq!(state.list_state.selected(), Some(0));
+
+        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+        // Should wrap to last item
+        assert_eq!(
+            state.list_state.selected(),
+            Some(harness.app.cherry_pick_items.len() - 1)
+        );
+    }
+
+    /// # Completion State - Quit Key
+    ///
+    /// Tests 'q' key to exit.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'q' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Exit
+    #[tokio::test]
+    async fn test_completion_quit() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('q'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Exit));
+    }
+
+    /// # Completion State - Tag PRs Key
+    ///
+    /// Tests 't' key to proceed to tagging.
+    ///
+    /// ## Test Scenario
+    /// - Processes 't' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to PostCompletionState
+    #[tokio::test]
+    async fn test_completion_tag_prs() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('t'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Completion State - Open PR Key
+    ///
+    /// Tests 'p' key to open PR in browser.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'p' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_completion_open_pr() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('p'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Completion State - Open Work Items Key
+    ///
+    /// Tests 'w' key to open work items in browser.
+    ///
+    /// ## Test Scenario
+    /// - Processes 'w' key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_completion_open_work_items() {
+        use crate::ui::testing::create_test_pull_requests;
+
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.pull_requests = create_test_pull_requests();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        let result = state
+            .process_key(KeyCode::Char('w'), &mut harness.app)
+            .await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Completion State - Other Keys Ignored
+    ///
+    /// Tests that other keys are ignored.
+    ///
+    /// ## Test Scenario
+    /// - Processes various unrecognized keys
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Keep
+    #[tokio::test]
+    async fn test_completion_other_keys() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
+            let result = state.process_key(key, &mut harness.app).await;
+            assert!(matches!(result, StateChange::Keep));
+        }
+    }
+
+    /// # CompletionState Default Implementation
+    ///
+    /// Tests the Default trait implementation.
+    ///
+    /// ## Test Scenario
+    /// - Creates CompletionState using Default::default()
+    ///
+    /// ## Expected Outcome
+    /// - Should have first item selected
+    #[test]
+    fn test_completion_default() {
+        let state = CompletionState::default();
+        assert_eq!(state.list_state.selected(), Some(0));
+    }
+
+    /// # Completion State - Empty Items Navigation
+    ///
+    /// Tests navigation with empty cherry-pick items.
+    ///
+    /// ## Test Scenario
+    /// - Creates completion state with no items
+    /// - Tries to navigate
+    ///
+    /// ## Expected Outcome
+    /// - Should handle empty list gracefully
+    #[tokio::test]
+    async fn test_completion_empty_items_navigation() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Leave cherry_pick_items empty
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+
+        // Should not panic
+        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+
+        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Completion State - With Skipped Items
+    ///
+    /// Tests the completion screen with skipped items.
+    ///
+    /// ## Test Scenario
+    /// - Creates a completion state
+    /// - Sets some items to skipped status
+    /// - Renders the completion summary
+    ///
+    /// ## Expected Outcome
+    /// - Should show skipped items with appropriate indicator
+    #[test]
+    fn test_completion_with_skipped() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut items = create_test_cherry_pick_items();
+            items[0].status = CherryPickStatus::Success;
+            items[1].status = CherryPickStatus::Skipped;
+            items[2].status = CherryPickStatus::Success;
+            items[3].status = CherryPickStatus::Skipped;
+            harness.app.cherry_pick_items = items;
+            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+
+            let state = Box::new(CompletionState::new());
+            harness.render_state(state);
+
+            assert_snapshot!("with_skipped", harness.backend());
+        });
+    }
+
+    /// # Completion State - Navigation Wrapping
+    ///
+    /// Tests that navigation wraps correctly at boundaries.
+    ///
+    /// ## Test Scenario
+    /// - Creates completion state
+    /// - Navigates past the end
+    /// - Navigates before the beginning
+    ///
+    /// ## Expected Outcome
+    /// - Should wrap around correctly
+    #[tokio::test]
+    async fn test_completion_navigation_wrapping() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        harness.app.cherry_pick_items = create_test_cherry_pick_items();
+        harness.app.version = Some("v1.0.0".to_string());
+
+        let mut state = CompletionState::new();
+        let item_count = harness.app.cherry_pick_items.len();
+
+        // Navigate to end
+        for _ in 0..item_count {
+            state.process_key(KeyCode::Down, &mut harness.app).await;
+        }
+        // Should wrap to 0
+        assert_eq!(state.list_state.selected(), Some(0));
+
+        // Navigate up from 0
+        state.process_key(KeyCode::Up, &mut harness.app).await;
+        // Should wrap to last item
+        assert_eq!(state.list_state.selected(), Some(item_count - 1));
+    }
 }
