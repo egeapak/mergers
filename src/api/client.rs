@@ -447,20 +447,150 @@ pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{CreatedBy, Label, WorkItem, WorkItemFields};
 
-    /// # Parse Terminal States
+    // ==================== Constants ====================
+
+    /// # Default Max Retries Constant
     ///
-    /// Tests parsing of comma-separated terminal states string.
-    ///
-    /// ## Test Scenario
-    /// - Provides various terminal state strings
-    /// - Parses them into vectors of states
-    ///
-    /// ## Expected Outcome
-    /// - States are correctly split and trimmed
-    /// - Empty strings are filtered out
+    /// Tests that the DEFAULT_MAX_RETRIES constant has expected value.
     #[test]
-    fn test_parse_terminal_states() {
+    fn test_default_max_retries_constant() {
+        assert_eq!(DEFAULT_MAX_RETRIES, 3);
+    }
+
+    // ==================== Client Creation ====================
+
+    /// # Client Creation with String PAT
+    ///
+    /// Tests client creation with a plain string PAT.
+    #[test]
+    fn test_client_creation_with_string_pat() {
+        let client = AzureDevOpsClient::new(
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "test-pat".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "test-org");
+        assert_eq!(client.project(), "test-project");
+        assert_eq!(client.repository(), "test-repo");
+    }
+
+    /// # Client Creation with SecretString PAT
+    ///
+    /// Tests client creation with a SecretString PAT.
+    #[test]
+    fn test_client_creation_with_secret_string() {
+        use secrecy::SecretString;
+
+        let pat = SecretString::from("test-pat".to_string());
+        let client = AzureDevOpsClient::new_with_secret(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            pat,
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "org");
+        assert_eq!(client.project(), "proj");
+        assert_eq!(client.repository(), "repo");
+    }
+
+    /// # Client Creation with Pool Config
+    ///
+    /// Tests backward-compatible constructor with pool configuration.
+    #[test]
+    fn test_client_creation_with_pool_config() {
+        use secrecy::SecretString;
+
+        let pat = SecretString::from("test-pat".to_string());
+        let client = AzureDevOpsClient::new_with_secret_and_pool_config(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            pat,
+            10, // pool_max_idle_per_host
+            30, // pool_idle_timeout_secs
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "org");
+        assert_eq!(client.project(), "proj");
+        assert_eq!(client.repository(), "repo");
+    }
+
+    /// # Client Creation with Full Config
+    ///
+    /// Tests backward-compatible constructor with full configuration.
+    #[test]
+    fn test_client_creation_with_full_config() {
+        use secrecy::SecretString;
+
+        let pat = SecretString::from("test-pat".to_string());
+        let client = AzureDevOpsClient::new_with_full_config(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            pat,
+            10, // pool_max_idle_per_host
+            30, // pool_idle_timeout_secs
+            5,  // max_retries
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "org");
+        assert_eq!(client.project(), "proj");
+        assert_eq!(client.repository(), "repo");
+    }
+
+    // ==================== Accessor Methods ====================
+
+    /// # Max Retries Accessor
+    ///
+    /// Tests backward-compatible max_retries accessor.
+    #[test]
+    fn test_max_retries_accessor() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(client.max_retries(), 3);
+    }
+
+    /// # All Accessor Methods
+    ///
+    /// Tests all accessor methods return correct values.
+    #[test]
+    fn test_all_accessor_methods() {
+        let client = AzureDevOpsClient::new(
+            "my-organization".to_string(),
+            "my-project".to_string(),
+            "my-repository".to_string(),
+            "my-pat".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(client.organization(), "my-organization");
+        assert_eq!(client.project(), "my-project");
+        assert_eq!(client.repository(), "my-repository");
+        assert_eq!(client.max_retries(), 3);
+    }
+
+    // ==================== Parse Terminal States ====================
+
+    /// # Parse Terminal States - Basic
+    ///
+    /// Tests basic parsing of comma-separated terminal states.
+    #[test]
+    fn test_parse_terminal_states_basic() {
         assert_eq!(
             AzureDevOpsClient::parse_terminal_states("Closed,Done"),
             vec!["Closed", "Done"]
@@ -469,32 +599,92 @@ mod tests {
             AzureDevOpsClient::parse_terminal_states("Closed, Done, Merged"),
             vec!["Closed", "Done", "Merged"]
         );
+    }
+
+    /// # Parse Terminal States - Empty
+    ///
+    /// Tests parsing of empty string.
+    #[test]
+    fn test_parse_terminal_states_empty() {
         assert_eq!(
             AzureDevOpsClient::parse_terminal_states(""),
             Vec::<String>::new()
         );
     }
 
-    /// # Work Item Terminal State Check
+    /// # Parse Terminal States - Whitespace
     ///
-    /// Tests the terminal state checking logic.
-    ///
-    /// ## Test Scenario
-    /// - Creates work items with various states
-    /// - Checks if they are in terminal states
-    ///
-    /// ## Expected Outcome
-    /// - Returns true for terminal states
-    /// - Returns false for non-terminal states
+    /// Tests parsing with extra whitespace.
     #[test]
-    fn test_is_work_item_in_terminal_state() {
-        use crate::models::{WorkItem, WorkItemFields};
+    fn test_parse_terminal_states_whitespace() {
+        assert_eq!(
+            AzureDevOpsClient::parse_terminal_states("  Closed  ,  Done  "),
+            vec!["Closed", "Done"]
+        );
+    }
 
-        // Create a mock client - we just need any instance for the method call
-        // For this test, we can't easily create a client, so let's test the logic directly
-        let terminal_states = ["Closed".to_string(), "Done".to_string()];
+    /// # Parse Terminal States - Single State
+    ///
+    /// Tests parsing of single state.
+    #[test]
+    fn test_parse_terminal_states_single() {
+        assert_eq!(
+            AzureDevOpsClient::parse_terminal_states("Closed"),
+            vec!["Closed"]
+        );
+    }
 
-        let work_item_closed = WorkItem {
+    /// # Parse Terminal States - Trailing Comma
+    ///
+    /// Tests parsing with trailing comma.
+    #[test]
+    fn test_parse_terminal_states_trailing_comma() {
+        assert_eq!(
+            AzureDevOpsClient::parse_terminal_states("Closed,Done,"),
+            vec!["Closed", "Done"]
+        );
+    }
+
+    /// # Parse Terminal States - Multiple Commas
+    ///
+    /// Tests parsing with multiple consecutive commas.
+    #[test]
+    fn test_parse_terminal_states_multiple_commas() {
+        assert_eq!(
+            AzureDevOpsClient::parse_terminal_states("Closed,,Done"),
+            vec!["Closed", "Done"]
+        );
+    }
+
+    /// # Parse Terminal States - Only Whitespace
+    ///
+    /// Tests parsing with only whitespace entries.
+    #[test]
+    fn test_parse_terminal_states_only_whitespace() {
+        assert_eq!(
+            AzureDevOpsClient::parse_terminal_states("  ,  ,  "),
+            Vec::<String>::new()
+        );
+    }
+
+    // ==================== Is Work Item In Terminal State ====================
+
+    /// # Is Work Item Terminal - Closed State
+    ///
+    /// Tests terminal state check for closed work item.
+    #[test]
+    fn test_is_work_item_in_terminal_state_closed() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let work_item = WorkItem {
             id: 1,
             fields: WorkItemFields {
                 title: Some("Test".to_string()),
@@ -508,8 +698,58 @@ mod tests {
             history: vec![],
         };
 
-        let work_item_active = WorkItem {
-            id: 2,
+        assert!(client.is_work_item_in_terminal_state(&work_item, &terminal_states));
+    }
+
+    /// # Is Work Item Terminal - Done State
+    ///
+    /// Tests terminal state check for done work item.
+    #[test]
+    fn test_is_work_item_in_terminal_state_done() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let work_item = WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: Some("Test".to_string()),
+                state: Some("Done".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+            },
+            history: vec![],
+        };
+
+        assert!(client.is_work_item_in_terminal_state(&work_item, &terminal_states));
+    }
+
+    /// # Is Work Item Terminal - Active State
+    ///
+    /// Tests terminal state check for non-terminal work item.
+    #[test]
+    fn test_is_work_item_in_terminal_state_active() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let work_item = WorkItem {
+            id: 1,
             fields: WorkItemFields {
                 title: Some("Test".to_string()),
                 state: Some("Active".to_string()),
@@ -522,23 +762,469 @@ mod tests {
             history: vec![],
         };
 
-        // Direct state check without client
-        let is_terminal_closed = work_item_closed
-            .fields
-            .state
-            .as_ref()
-            .map(|s| terminal_states.contains(s))
-            .unwrap_or(false);
+        assert!(!client.is_work_item_in_terminal_state(&work_item, &terminal_states));
+    }
 
-        let is_terminal_active = work_item_active
-            .fields
-            .state
-            .as_ref()
-            .map(|s| terminal_states.contains(s))
-            .unwrap_or(false);
+    /// # Is Work Item Terminal - No State
+    ///
+    /// Tests terminal state check when work item has no state.
+    #[test]
+    fn test_is_work_item_in_terminal_state_no_state() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
 
-        assert!(is_terminal_closed);
-        assert!(!is_terminal_active);
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let work_item = WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: Some("Test".to_string()),
+                state: None,
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+            },
+            history: vec![],
+        };
+
+        assert!(!client.is_work_item_in_terminal_state(&work_item, &terminal_states));
+    }
+
+    /// # Is Work Item Terminal - Empty Terminal States
+    ///
+    /// Tests terminal state check with empty terminal states list.
+    #[test]
+    fn test_is_work_item_in_terminal_state_empty_list() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let terminal_states: Vec<String> = vec![];
+
+        let work_item = WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: Some("Test".to_string()),
+                state: Some("Closed".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+            },
+            history: vec![],
+        };
+
+        assert!(!client.is_work_item_in_terminal_state(&work_item, &terminal_states));
+    }
+
+    // ==================== Analyze Work Items For PR ====================
+
+    fn create_test_pr_with_work_items(work_items: Vec<WorkItem>) -> PullRequestWithWorkItems {
+        PullRequestWithWorkItems {
+            pr: PullRequest {
+                id: 100,
+                title: "Test PR".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            work_items,
+            selected: false,
+        }
+    }
+
+    fn create_work_item(id: i32, state: Option<&str>) -> WorkItem {
+        WorkItem {
+            id,
+            fields: WorkItemFields {
+                title: Some(format!("Work Item {}", id)),
+                state: state.map(String::from),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+            },
+            history: vec![],
+        }
+    }
+
+    /// # Analyze Work Items - All Terminal
+    ///
+    /// Tests analyze_work_items_for_pr when all work items are terminal.
+    #[test]
+    fn test_analyze_work_items_all_terminal() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let work_items = vec![
+            create_work_item(1, Some("Closed")),
+            create_work_item(2, Some("Done")),
+        ];
+
+        let pr_with_items = create_test_pr_with_work_items(work_items);
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(all_terminal);
+        assert!(non_terminal.is_empty());
+    }
+
+    /// # Analyze Work Items - Mixed States
+    ///
+    /// Tests analyze_work_items_for_pr with mixed terminal/non-terminal states.
+    #[test]
+    fn test_analyze_work_items_mixed() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let work_items = vec![
+            create_work_item(1, Some("Closed")),
+            create_work_item(2, Some("Active")),
+            create_work_item(3, Some("Done")),
+        ];
+
+        let pr_with_items = create_test_pr_with_work_items(work_items);
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(!all_terminal);
+        assert_eq!(non_terminal.len(), 1);
+        assert_eq!(non_terminal[0].id, 2);
+    }
+
+    /// # Analyze Work Items - None Terminal
+    ///
+    /// Tests analyze_work_items_for_pr when no work items are terminal.
+    #[test]
+    fn test_analyze_work_items_none_terminal() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let work_items = vec![
+            create_work_item(1, Some("Active")),
+            create_work_item(2, Some("In Progress")),
+        ];
+
+        let pr_with_items = create_test_pr_with_work_items(work_items);
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(!all_terminal);
+        assert_eq!(non_terminal.len(), 2);
+    }
+
+    /// # Analyze Work Items - Empty Work Items
+    ///
+    /// Tests analyze_work_items_for_pr with no work items.
+    #[test]
+    fn test_analyze_work_items_empty() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let pr_with_items = create_test_pr_with_work_items(vec![]);
+        let terminal_states = vec!["Closed".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(!all_terminal); // Empty is not "all terminal"
+        assert!(non_terminal.is_empty());
+    }
+
+    /// # Analyze Work Items - With None States
+    ///
+    /// Tests analyze_work_items_for_pr when some work items have no state.
+    #[test]
+    fn test_analyze_work_items_with_none_states() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let work_items = vec![
+            create_work_item(1, Some("Closed")),
+            create_work_item(2, None),
+        ];
+
+        let pr_with_items = create_test_pr_with_work_items(work_items);
+        let terminal_states = vec!["Closed".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(!all_terminal);
+        assert_eq!(non_terminal.len(), 1);
+        assert_eq!(non_terminal[0].id, 2);
+    }
+
+    /// # Analyze Work Items - Single Terminal
+    ///
+    /// Tests analyze_work_items_for_pr with single terminal work item.
+    #[test]
+    fn test_analyze_work_items_single_terminal() {
+        let client = AzureDevOpsClient::new(
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "pat".to_string(),
+        )
+        .unwrap();
+
+        let work_items = vec![create_work_item(1, Some("Closed"))];
+
+        let pr_with_items = create_test_pr_with_work_items(work_items);
+        let terminal_states = vec!["Closed".to_string()];
+
+        let (all_terminal, non_terminal) =
+            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
+
+        assert!(all_terminal);
+        assert!(non_terminal.is_empty());
+    }
+
+    // ==================== Filter PRs Without Merged Tag ====================
+
+    fn create_test_pr(id: i32, labels: Option<Vec<Label>>) -> PullRequest {
+        PullRequest {
+            id,
+            title: format!("PR {}", id),
+            closed_date: None,
+            created_by: CreatedBy {
+                display_name: "Test".to_string(),
+            },
+            last_merge_commit: None,
+            labels,
+        }
+    }
+
+    /// # Filter PRs - No Labels
+    ///
+    /// Tests filtering PRs without any labels.
+    #[test]
+    fn test_filter_prs_no_labels() {
+        let prs = vec![create_test_pr(1, None), create_test_pr(2, None)];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// # Filter PRs - Empty Labels
+    ///
+    /// Tests filtering PRs with empty label vectors.
+    #[test]
+    fn test_filter_prs_empty_labels() {
+        let prs = vec![
+            create_test_pr(1, Some(vec![])),
+            create_test_pr(2, Some(vec![])),
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// # Filter PRs - Non-Merged Labels
+    ///
+    /// Tests filtering PRs with labels that don't start with "merged-".
+    #[test]
+    fn test_filter_prs_non_merged_labels() {
+        let prs = vec![
+            create_test_pr(
+                1,
+                Some(vec![Label {
+                    name: "bug".to_string(),
+                }]),
+            ),
+            create_test_pr(
+                2,
+                Some(vec![Label {
+                    name: "feature".to_string(),
+                }]),
+            ),
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// # Filter PRs - With Merged Tags
+    ///
+    /// Tests filtering PRs with "merged-" prefixed labels.
+    #[test]
+    fn test_filter_prs_with_merged_tags() {
+        let prs = vec![
+            create_test_pr(
+                1,
+                Some(vec![Label {
+                    name: "merged-v1.0".to_string(),
+                }]),
+            ),
+            create_test_pr(
+                2,
+                Some(vec![Label {
+                    name: "merged-hotfix".to_string(),
+                }]),
+            ),
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert!(filtered.is_empty());
+    }
+
+    /// # Filter PRs - Mixed Labels
+    ///
+    /// Tests filtering with mix of merged and non-merged labels.
+    #[test]
+    fn test_filter_prs_mixed_labels() {
+        let prs = vec![
+            create_test_pr(1, None),
+            create_test_pr(
+                2,
+                Some(vec![Label {
+                    name: "bug".to_string(),
+                }]),
+            ),
+            create_test_pr(
+                3,
+                Some(vec![Label {
+                    name: "merged-v1.0".to_string(),
+                }]),
+            ),
+            create_test_pr(
+                4,
+                Some(vec![
+                    Label {
+                        name: "feature".to_string(),
+                    },
+                    Label {
+                        name: "merged-hotfix".to_string(),
+                    },
+                ]),
+            ),
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].id, 1);
+        assert_eq!(filtered[1].id, 2);
+    }
+
+    /// # Filter PRs - Empty List
+    ///
+    /// Tests filtering an empty list.
+    #[test]
+    fn test_filter_prs_empty_list() {
+        let prs: Vec<PullRequest> = vec![];
+        let filtered = filter_prs_without_merged_tag(prs);
+        assert!(filtered.is_empty());
+    }
+
+    /// # Filter PRs - Merged Prefix Only
+    ///
+    /// Tests that "merged" without hyphen is not filtered.
+    #[test]
+    fn test_filter_prs_merged_without_hyphen() {
+        let prs = vec![create_test_pr(
+            1,
+            Some(vec![Label {
+                name: "merged".to_string(),
+            }]),
+        )];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 1);
+    }
+
+    /// # Filter PRs - Merged At End
+    ///
+    /// Tests that labels ending with "merged-" are not filtered incorrectly.
+    #[test]
+    fn test_filter_prs_merged_at_end() {
+        let prs = vec![create_test_pr(
+            1,
+            Some(vec![Label {
+                name: "not-merged-".to_string(),
+            }]),
+        )];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 1);
+    }
+
+    /// # Filter PRs - Multiple Labels With One Merged
+    ///
+    /// Tests PR with multiple labels where one is merged.
+    #[test]
+    fn test_filter_prs_multiple_labels_one_merged() {
+        let prs = vec![create_test_pr(
+            1,
+            Some(vec![
+                Label {
+                    name: "bug".to_string(),
+                },
+                Label {
+                    name: "priority-high".to_string(),
+                },
+                Label {
+                    name: "merged-v2.0".to_string(),
+                },
+            ]),
+        )];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert!(filtered.is_empty());
     }
 
     /// # Filter PRs Without Merged Tag
