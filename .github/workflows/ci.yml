@@ -1,121 +1,121 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
+    push:
+        branches: [main, master]
+    pull_request:
+        branches: [main, master]
 
 env:
-  CARGO_TERM_COLOR: always
+    CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test with Coverage
-    runs-on: ubuntu-latest
+    test:
+        name: Test with Coverage
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: llvm-tools-preview
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
+              with:
+                  cache-on-failure: true
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+            - name: Install cargo-llvm-cov
+              uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+            - name: Install cargo-nextest
+              uses: taiki-e/install-action@nextest
 
-      - name: Run tests with coverage
-        run: cargo llvm-cov nextest --all-features --lcov --output-path lcov.info --profile ci
+            - name: Run tests with coverage
+              run: cargo llvm-cov nextest --all-features --lcov --output-path lcov.info --profile ci
 
-      - name: Upload coverage reports to GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-reports
-          path: |
-            lcov.info
-            target/llvm-cov-target/debug/coverage/
+            - name: Upload coverage reports to GitHub
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-reports
+                  path: |
+                      lcov.info
+                      target/llvm-cov-target/debug/coverage/
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
+            - name: Upload coverage to Codecov
+              uses: codecov/codecov-action@v4
+              with:
+                  files: lcov.info
+                  fail_ci_if_error: true
+                  token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+            - name: Upload test results to Codecov
+              if: ${{ !cancelled() }}
+              uses: codecov/test-results-action@v1
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
 
-  lint:
-    name: Lint and Format Check
-    runs-on: ubuntu-latest
+    lint:
+        name: Lint and Format Check
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  components: rustfmt, clippy
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+            - name: Check formatting
+              run: cargo fmt --all -- --check
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+            - name: Run clippy
+              run: cargo clippy --all-targets --all-features -- -D warnings
 
-  build:
-    name: Build and Test (Matrix)
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
+    build:
+        name: Build and Test (Matrix)
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                os: [ubuntu-latest, windows-latest, macos-latest]
+                rust: [stable]
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: ${{ matrix.rust }}
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.os }}-${{ matrix.rust }}
+            - name: Cache Rust dependencies
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: ${{ matrix.os }}-${{ matrix.rust }}
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+            - name: Install cargo-nextest
+              uses: taiki-e/install-action@nextest
 
-      - name: Build
-        run: cargo build --verbose --all-features
+            - name: Build
+              run: cargo build --verbose --all-features
 
-      - name: Run tests with nextest
-        run: cargo nextest run --all-features --profile ci
+            - name: Run tests with nextest
+              run: cargo nextest run --all-features --profile ci
 
-      - name: Run doctests
-        run: cargo test --doc --all-features
+            - name: Run doctests
+              run: cargo test --doc --all-features
 
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+            - name: Upload test results to Codecov
+              if: ${{ !cancelled() }}
+              uses: codecov/test-results-action@v1
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}

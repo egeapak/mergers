@@ -43,6 +43,9 @@ commit_preprocessors = [
     # Extract PR title from GitHub merge commits and add marker
     # The [MERGE] marker helps us filter to only merge commits
     { pattern = 'Merge pull request #([0-9]+) from [^\n]+\n\n(.+)', replace = "[MERGE] ${2}" },
+    # Extract PR title from squash-merged commits and add marker
+    # Match the subject line and discard the body
+    { pattern = '^(feat|fix|docs?|perf|refactor|style|test|chore|ci|build|revert)(\([^)]+\))?: (.+) \(#\d+\)([\s\S]*)', replace = "[MERGE] ${1}${2}: ${3}" },
     { pattern = '\((\w+\s)?#([0-9]+)\)', replace = "(#${2})" },
 ]
 commit_parsers = [

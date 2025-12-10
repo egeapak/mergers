@@ -1,123 +1,123 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - '*'
+    push:
+        tags:
+            - "*"
 
 permissions:
-  contents: write
-  pull-requests: read  # Required for git-cliff to fetch PR information
+    contents: write
+    pull-requests: read # Required for git-cliff to fetch PR information
 
 jobs:
-  build:
-    name: Build ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - platform: x86_64-pc-windows-msvc
-            os: windows-latest
-            binary-suffix: .exe
-            artifact-name: mergers-x86_64-windows.exe
+    build:
+        name: Build ${{ matrix.platform }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                include:
+                    - platform: x86_64-pc-windows-msvc
+                      os: windows-latest
+                      binary-suffix: .exe
+                      artifact-name: mergers-x86_64-windows.exe
 
-          - platform: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            binary-suffix: ''
-            artifact-name: mergers-x86_64-linux
+                    - platform: x86_64-unknown-linux-gnu
+                      os: ubuntu-latest
+                      binary-suffix: ""
+                      artifact-name: mergers-x86_64-linux
 
-          - platform: x86_64-apple-darwin
-            os: macos-13
-            binary-suffix: ''
-            artifact-name: mergers-x86_64-macos
+                    - platform: x86_64-apple-darwin
+                      os: macos-15-intel
+                      binary-suffix: ""
+                      artifact-name: mergers-x86_64-macos
 
-          - platform: aarch64-apple-darwin
-            os: macos-latest
-            binary-suffix: ''
-            artifact-name: mergers-aarch64-macos
+                    - platform: aarch64-apple-darwin
+                      os: macos-latest
+                      binary-suffix: ""
+                      artifact-name: mergers-aarch64-macos
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform }}
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.platform }}
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.platform }}
+            - name: Build release binary
+              run: cargo build --release --target ${{ matrix.platform }}
 
-      - name: Copy binary to artifact name
-        shell: bash
-        run: |
-          cp target/${{ matrix.platform }}/release/mergers${{ matrix.binary-suffix }} ${{ matrix.artifact-name }}
+            - name: Copy binary to artifact name
+              shell: bash
+              run: |
+                  cp target/${{ matrix.platform }}/release/mergers${{ matrix.binary-suffix }} ${{ matrix.artifact-name }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: ${{ matrix.artifact-name }}
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.artifact-name }}
+                  path: ${{ matrix.artifact-name }}
 
-  changelog:
-    name: Generate Release Notes
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    outputs:
-      release_body: ${{ steps.git-cliff.outputs.content }}
+    changelog:
+        name: Generate Release Notes
+        runs-on: ubuntu-latest
+        if: startsWith(github.ref, 'refs/tags/')
+        outputs:
+            release_body: ${{ steps.git-cliff.outputs.content }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
 
-      - name: Generate release notes
-        uses: orhun/git-cliff-action@v4
-        id: git-cliff
-        with:
-          config: cliff.toml
-          args: --latest --strip header
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Generate release notes
+              uses: orhun/git-cliff-action@v4
+              id: git-cliff
+              with:
+                  config: cliff.toml
+                  args: --latest --strip header
+              env:
+                  GITHUB_REPO: ${{ github.repository }}
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  release:
-    name: Create Release
-    needs: [build, changelog]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    release:
+        name: Create Release
+        needs: [build, changelog]
+        runs-on: ubuntu-latest
+        if: startsWith(github.ref, 'refs/tags/')
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+            - name: Download all artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: artifacts
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            artifacts/mergers-x86_64-windows.exe/mergers-x86_64-windows.exe
-            artifacts/mergers-x86_64-linux/mergers-x86_64-linux
-            artifacts/mergers-x86_64-macos/mergers-x86_64-macos
-            artifacts/mergers-aarch64-macos/mergers-aarch64-macos
-          body: ${{ needs.changelog.outputs.release_body }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Create release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: |
+                      artifacts/mergers-x86_64-windows.exe/mergers-x86_64-windows.exe
+                      artifacts/mergers-x86_64-linux/mergers-x86_64-linux
+                      artifacts/mergers-x86_64-macos/mergers-x86_64-macos
+                      artifacts/mergers-aarch64-macos/mergers-aarch64-macos
+                  body: ${{ needs.changelog.outputs.release_body }}
+                  draft: false
+                  prerelease: false
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
