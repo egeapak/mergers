@@ -34,7 +34,13 @@
 mod client;
 mod credential;
 mod mappers;
+pub mod traits;
 
 // Re-export the client and its public items
-pub use client::{AzureDevOpsClient, filter_prs_without_merged_tag};
+pub use client::{AzureDevOpsClient, DEFAULT_MAX_RETRIES, filter_prs_without_merged_tag};
 pub use credential::PatCredential;
+pub use traits::{
+    GitOperations, PullRequestOperations, PullRequestWorkItemsOperations, RealGitOperations,
+    RealWitOperations, RepositoryOperations, WitOperations, WorkItemOperations,
+    WorkItemUpdatesOperations,
+};

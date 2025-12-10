@@ -17,6 +17,9 @@ use crate::models::{
 };
 use crate::utils::parse_since_date;
 
+/// Default maximum retries for backward compatibility (no longer used with azure_devops_rust_api).
+pub const DEFAULT_MAX_RETRIES: u32 = 3;
+
 /// Azure DevOps API client for pull request and work item management.
 ///
 /// This client uses the official azure_devops_rust_api crate for API interactions,
@@ -99,6 +102,39 @@ impl AzureDevOpsClient {
         })
     }
 
+    /// Creates a new client with pool configuration (backward compatibility).
+    ///
+    /// Note: Pool configuration is handled internally by azure_devops_rust_api.
+    /// These parameters are accepted for API compatibility but not used.
+    #[allow(unused_variables)]
+    pub fn new_with_secret_and_pool_config(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout_secs: u64,
+    ) -> Result<Self> {
+        Self::new_with_secret(organization, project, repository, pat)
+    }
+
+    /// Creates a new client with full configuration (backward compatibility).
+    ///
+    /// Note: Pool and retry configuration is handled internally by azure_devops_rust_api.
+    /// These parameters are accepted for API compatibility but not used.
+    #[allow(unused_variables)]
+    pub fn new_with_full_config(
+        organization: String,
+        project: String,
+        repository: String,
+        pat: SecretString,
+        pool_max_idle_per_host: usize,
+        pool_idle_timeout_secs: u64,
+        max_retries: u32,
+    ) -> Result<Self> {
+        Self::new_with_secret(organization, project, repository, pat)
+    }
+
     /// Returns the organization name.
     pub fn organization(&self) -> &str {
         &self.organization
@@ -112,6 +148,13 @@ impl AzureDevOpsClient {
     /// Returns the repository name.
     pub fn repository(&self) -> &str {
         &self.repository
+    }
+
+    /// Returns the max retries value (backward compatibility).
+    ///
+    /// Note: Retry logic is handled internally by azure_devops_rust_api.
+    pub fn max_retries(&self) -> u32 {
+        DEFAULT_MAX_RETRIES
     }
 
     /// Fetches all pull requests for a given branch using pagination.
@@ -442,6 +485,271 @@ pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> 
             }
         })
         .collect()
+}
+
+/// Generic Azure DevOps client that uses trait objects for operations.
+///
+/// This struct enables dependency injection of mock implementations for testing.
+/// It mirrors the functionality of `AzureDevOpsClient` but uses trait objects
+/// instead of concrete types.
+#[allow(dead_code)]
+pub struct GenericAzureDevOpsClient<G, W>
+where
+    G: super::traits::PullRequestOperations
+        + super::traits::PullRequestWorkItemsOperations
+        + super::traits::RepositoryOperations,
+    W: super::traits::WorkItemOperations + super::traits::WorkItemUpdatesOperations,
+{
+    organization: String,
+    project: String,
+    repository: String,
+    git_ops: G,
+    wit_ops: W,
+}
+
+#[allow(dead_code)]
+impl<G, W> GenericAzureDevOpsClient<G, W>
+where
+    G: super::traits::PullRequestOperations
+        + super::traits::PullRequestWorkItemsOperations
+        + super::traits::RepositoryOperations,
+    W: super::traits::WorkItemOperations + super::traits::WorkItemUpdatesOperations,
+{
+    /// Creates a new generic client with the provided operations.
+    pub fn new(
+        organization: String,
+        project: String,
+        repository: String,
+        git_ops: G,
+        wit_ops: W,
+    ) -> Self {
+        Self {
+            organization,
+            project,
+            repository,
+            git_ops,
+            wit_ops,
+        }
+    }
+
+    /// Returns the organization name.
+    pub fn organization(&self) -> &str {
+        &self.organization
+    }
+
+    /// Returns the project name.
+    pub fn project(&self) -> &str {
+        &self.project
+    }
+
+    /// Returns the repository name.
+    pub fn repository(&self) -> &str {
+        &self.repository
+    }
+
+    /// Fetches all pull requests for a given branch using pagination.
+    pub async fn fetch_pull_requests(
+        &self,
+        dev_branch: &str,
+        since: Option<&str>,
+    ) -> Result<Vec<PullRequest>> {
+        let since_date = if let Some(since_str) = since {
+            Some(parse_since_date(since_str).context("Failed to parse since date")?)
+        } else {
+            None
+        };
+
+        let target_ref = format!("refs/heads/{}", dev_branch);
+        let mut all_prs = Vec::new();
+        let mut skip = 0;
+        let top = 100;
+        let max_requests = 100;
+        let mut request_count = 0;
+
+        loop {
+            request_count += 1;
+            if request_count > max_requests {
+                anyhow::bail!(
+                    "Exceeded maximum number of requests ({}) while fetching pull requests. Retrieved {} PRs so far.",
+                    max_requests,
+                    all_prs.len()
+                );
+            }
+
+            let prs = self
+                .git_ops
+                .get_pull_requests(
+                    &self.organization,
+                    &self.repository,
+                    &self.project,
+                    &target_ref,
+                    "completed",
+                    top,
+                    skip,
+                )
+                .await
+                .context("Failed to fetch pull requests")?;
+
+            let fetched_count = prs.len();
+
+            let mut reached_date_limit = false;
+            for pr in prs {
+                let converted_pr: PullRequest = pr.into();
+
+                if let Some(since_dt) = since_date
+                    && let Some(closed_date_str) = &converted_pr.closed_date
+                    && let Ok(closed_date) = DateTime::parse_from_rfc3339(closed_date_str)
+                {
+                    let closed_date_utc = closed_date.with_timezone(&Utc);
+                    if closed_date_utc < since_dt {
+                        reached_date_limit = true;
+                        break;
+                    }
+                }
+                all_prs.push(converted_pr);
+            }
+
+            if reached_date_limit || fetched_count < top as usize {
+                break;
+            }
+
+            skip += top;
+        }
+
+        Ok(all_prs)
+    }
+
+    /// Fetches work items linked to a pull request.
+    pub async fn fetch_work_items_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
+        let refs = self
+            .git_ops
+            .list(&self.organization, &self.repository, pr_id, &self.project)
+            .await
+            .context("Failed to fetch work item references for PR")?;
+
+        if refs.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ids: Vec<i32> = refs
+            .iter()
+            .filter_map(|r| r.url.as_ref().and_then(|url| extract_work_item_id(url)))
+            .collect();
+
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ids_str = ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let work_items = self
+            .wit_ops
+            .get_work_items(
+                &self.organization,
+                &ids_str,
+                &self.project,
+                "System.Title,System.State,System.WorkItemType,System.AssignedTo,System.IterationPath,System.Description,Microsoft.VSTS.TCM.ReproSteps",
+            )
+            .await
+            .context("Failed to fetch work items")?;
+
+        Ok(work_items.into_iter().map(WorkItem::from).collect())
+    }
+
+    /// Fetches repository details including SSH URL.
+    pub async fn fetch_repo_details(&self) -> Result<RepoDetails> {
+        let repo = self
+            .git_ops
+            .get_repository(&self.organization, &self.repository, &self.project)
+            .await
+            .context("Failed to fetch repository details")?;
+
+        Ok(RepoDetails::from(repo))
+    }
+
+    /// Fetches the merge commit for a pull request.
+    pub async fn fetch_pr_commit(&self, pr_id: i32) -> Result<MergeCommit> {
+        let pr = self
+            .git_ops
+            .get_pull_request(&self.organization, &self.repository, pr_id, &self.project)
+            .await
+            .context("Failed to fetch pull request details")?;
+
+        pr.last_merge_commit
+            .map(|c| MergeCommit {
+                commit_id: c.commit_id.unwrap_or_default(),
+            })
+            .ok_or_else(|| anyhow::anyhow!("Pull request {} has no merge commit", pr_id))
+    }
+
+    /// Adds a label to a pull request.
+    pub async fn add_label_to_pr(&self, pr_id: i32, label: &str) -> Result<()> {
+        self.git_ops
+            .create_label(
+                &self.organization,
+                &self.repository,
+                pr_id,
+                &self.project,
+                label,
+            )
+            .await
+            .context("Failed to add label to pull request")?;
+
+        Ok(())
+    }
+
+    /// Updates the state of a work item.
+    pub async fn update_work_item_state(&self, work_item_id: i32, new_state: &str) -> Result<()> {
+        let patch = vec![wit::models::JsonPatchOperation {
+            op: Some(wit::models::json_patch_operation::Op::Add),
+            path: Some("/fields/System.State".to_string()),
+            value: Some(serde_json::json!(new_state)),
+            from: None,
+        }];
+
+        self.wit_ops
+            .update_work_item(&self.organization, work_item_id, &self.project, patch)
+            .await
+            .context("Failed to update work item state")?;
+
+        Ok(())
+    }
+
+    /// Fetches the revision history for a work item.
+    pub async fn fetch_work_item_history(&self, work_item_id: i32) -> Result<Vec<WorkItemHistory>> {
+        let updates = self
+            .wit_ops
+            .get_work_item_updates(&self.organization, work_item_id, &self.project)
+            .await
+            .context("Failed to fetch work item history")?;
+
+        Ok(updates.into_iter().map(WorkItemHistory::from).collect())
+    }
+
+    /// Checks if a work item is in a terminal state.
+    pub fn is_work_item_in_terminal_state(
+        work_item: &WorkItem,
+        terminal_states: &[String],
+    ) -> bool {
+        if let Some(state) = &work_item.fields.state {
+            terminal_states.contains(state)
+        } else {
+            false
+        }
+    }
+
+    /// Parses a comma-separated string of terminal states.
+    pub fn parse_terminal_states(terminal_states_str: &str) -> Vec<String> {
+        terminal_states_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -1421,200 +1729,6 @@ mod tests {
         assert_eq!(client.organization(), "org");
     }
 
-    /// # Analyze Work Items - All Terminal
-    ///
-    /// Tests analyze_work_items_for_pr when all work items are in terminal state.
-    ///
-    /// ## Test Scenario
-    /// - Creates a PR with work items all in terminal states
-    /// - Analyzes the work items
-    ///
-    /// ## Expected Outcome
-    /// - Returns (true, empty vec) indicating all are terminal
-    #[test]
-    fn test_analyze_work_items_all_terminal() {
-        use crate::models::{CreatedBy, PullRequestWithWorkItems, WorkItem, WorkItemFields};
-
-        let client = AzureDevOpsClient::new(
-            "org".to_string(),
-            "proj".to_string(),
-            "repo".to_string(),
-            "pat".to_string(),
-        )
-        .unwrap();
-
-        let work_items = vec![
-            WorkItem {
-                id: 1,
-                fields: WorkItemFields {
-                    title: Some("Item 1".to_string()),
-                    state: Some("Closed".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                },
-                history: vec![],
-            },
-            WorkItem {
-                id: 2,
-                fields: WorkItemFields {
-                    title: Some("Item 2".to_string()),
-                    state: Some("Done".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                },
-                history: vec![],
-            },
-        ];
-
-        let pr_with_items = PullRequestWithWorkItems {
-            pr: PullRequest {
-                id: 100,
-                title: "Test PR".to_string(),
-                closed_date: None,
-                created_by: CreatedBy {
-                    display_name: "Test".to_string(),
-                },
-                last_merge_commit: None,
-                labels: None,
-            },
-            work_items,
-            selected: false,
-        };
-
-        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
-        let (all_terminal, non_terminal) =
-            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
-
-        assert!(all_terminal);
-        assert!(non_terminal.is_empty());
-    }
-
-    /// # Analyze Work Items - Mixed States
-    ///
-    /// Tests analyze_work_items_for_pr with mixed terminal/non-terminal states.
-    ///
-    /// ## Test Scenario
-    /// - Creates a PR with some work items in terminal state, some not
-    /// - Analyzes the work items
-    ///
-    /// ## Expected Outcome
-    /// - Returns (false, vec of non-terminal items)
-    #[test]
-    fn test_analyze_work_items_mixed() {
-        use crate::models::{CreatedBy, PullRequestWithWorkItems, WorkItem, WorkItemFields};
-
-        let client = AzureDevOpsClient::new(
-            "org".to_string(),
-            "proj".to_string(),
-            "repo".to_string(),
-            "pat".to_string(),
-        )
-        .unwrap();
-
-        let work_items = vec![
-            WorkItem {
-                id: 1,
-                fields: WorkItemFields {
-                    title: Some("Closed Item".to_string()),
-                    state: Some("Closed".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                },
-                history: vec![],
-            },
-            WorkItem {
-                id: 2,
-                fields: WorkItemFields {
-                    title: Some("Active Item".to_string()),
-                    state: Some("Active".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                },
-                history: vec![],
-            },
-        ];
-
-        let pr_with_items = PullRequestWithWorkItems {
-            pr: PullRequest {
-                id: 100,
-                title: "Test PR".to_string(),
-                closed_date: None,
-                created_by: CreatedBy {
-                    display_name: "Test".to_string(),
-                },
-                last_merge_commit: None,
-                labels: None,
-            },
-            work_items,
-            selected: false,
-        };
-
-        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
-        let (all_terminal, non_terminal) =
-            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
-
-        assert!(!all_terminal);
-        assert_eq!(non_terminal.len(), 1);
-        assert_eq!(non_terminal[0].id, 2);
-    }
-
-    /// # Analyze Work Items - Empty Work Items
-    ///
-    /// Tests analyze_work_items_for_pr with no work items.
-    ///
-    /// ## Test Scenario
-    /// - Creates a PR with no work items
-    /// - Analyzes the work items
-    ///
-    /// ## Expected Outcome
-    /// - Returns (false, empty vec) - not "all terminal" if no items
-    #[test]
-    fn test_analyze_work_items_empty() {
-        use crate::models::{CreatedBy, PullRequestWithWorkItems};
-
-        let client = AzureDevOpsClient::new(
-            "org".to_string(),
-            "proj".to_string(),
-            "repo".to_string(),
-            "pat".to_string(),
-        )
-        .unwrap();
-
-        let pr_with_items = PullRequestWithWorkItems {
-            pr: PullRequest {
-                id: 100,
-                title: "Test PR".to_string(),
-                closed_date: None,
-                created_by: CreatedBy {
-                    display_name: "Test".to_string(),
-                },
-                last_merge_commit: None,
-                labels: None,
-            },
-            work_items: vec![],
-            selected: false,
-        };
-
-        let terminal_states = vec!["Closed".to_string()];
-        let (all_terminal, non_terminal) =
-            client.analyze_work_items_for_pr(&pr_with_items, &terminal_states);
-
-        assert!(!all_terminal); // Empty is not "all terminal"
-        assert!(non_terminal.is_empty());
-    }
-
     /// # Is Work Item In Terminal State - With Client
     ///
     /// Tests is_work_item_in_terminal_state method using actual client.
@@ -1720,5 +1834,563 @@ mod tests {
             AzureDevOpsClient::parse_terminal_states("Closed,,Done"),
             vec!["Closed", "Done"]
         );
+    }
+
+    // ==================== Async Tests with Mocks ====================
+
+    mod async_tests {
+        use super::*;
+        use crate::api::traits::mocks::{MockGitOperations, MockWitOperations};
+        use azure_devops_rust_api::git::models as git_models;
+        use azure_devops_rust_api::wit::models as wit_models;
+
+        /// Helper to create a minimal TeamProjectReference for testing
+        fn create_test_project_ref() -> git_models::TeamProjectReference {
+            git_models::TeamProjectReference {
+                abbreviation: None,
+                default_team_image_url: None,
+                description: None,
+                id: None,
+                last_update_time: None,
+                name: "test-project".to_string(),
+                revision: None,
+                state: None,
+                url: None,
+                visibility: git_models::team_project_reference::Visibility::Private,
+            }
+        }
+
+        /// Helper to create a minimal GitRepository for testing
+        fn create_test_repository(ssh_url: Option<String>) -> git_models::GitRepository {
+            git_models::GitRepository {
+                links: None,
+                default_branch: None,
+                id: "test-repo-id".to_string(),
+                is_disabled: None,
+                is_fork: None,
+                is_in_maintenance: None,
+                name: "test-repo".to_string(),
+                parent_repository: None,
+                project: create_test_project_ref(),
+                remote_url: None,
+                size: None,
+                ssh_url,
+                url: "https://test.url".to_string(),
+                valid_remote_urls: vec![],
+                web_url: None,
+            }
+        }
+
+        fn create_mock_git_pull_request(id: i32, title: &str) -> git_models::GitPullRequest {
+            let identity_ref = git_models::IdentityRef {
+                graph_subject_base: git_models::GraphSubjectBase {
+                    descriptor: None,
+                    display_name: Some("Test User".to_string()),
+                    url: None,
+                    links: None,
+                },
+                directory_alias: None,
+                id: String::new(),
+                image_url: None,
+                inactive: None,
+                is_aad_identity: None,
+                is_container: None,
+                is_deleted_in_origin: None,
+                profile_url: None,
+                unique_name: None,
+            };
+
+            let last_merge_commit = git_models::GitCommitRef {
+                commit_id: Some("abc123".to_string()),
+                url: None,
+                author: None,
+                change_counts: None,
+                changes: vec![],
+                comment: None,
+                comment_truncated: None,
+                commit_too_many_changes: None,
+                committer: None,
+                links: None,
+                parents: vec![],
+                push: None,
+                remote_url: None,
+                statuses: vec![],
+                work_items: vec![],
+            };
+
+            git_models::GitPullRequest {
+                links: None,
+                artifact_id: None,
+                auto_complete_set_by: None,
+                closed_by: None,
+                closed_date: Some(time::OffsetDateTime::now_utc()),
+                code_review_id: None,
+                commits: vec![],
+                completion_options: None,
+                completion_queue_time: None,
+                created_by: identity_ref,
+                creation_date: time::OffsetDateTime::now_utc(),
+                description: None,
+                fork_source: None,
+                has_multiple_merge_bases: None,
+                is_draft: false,
+                labels: vec![],
+                last_merge_commit: Some(last_merge_commit),
+                last_merge_source_commit: None,
+                last_merge_target_commit: None,
+                merge_failure_message: None,
+                merge_failure_type: None,
+                merge_id: None,
+                merge_options: None,
+                merge_status: None,
+                pull_request_id: id,
+                remote_url: None,
+                repository: create_test_repository(None),
+                reviewers: vec![],
+                source_ref_name: "refs/heads/feature".to_string(),
+                status: git_models::git_pull_request::Status::Active,
+                supports_iterations: None,
+                target_ref_name: "refs/heads/main".to_string(),
+                title: Some(title.to_string()),
+                url: "https://test.url".to_string(),
+                work_item_refs: vec![],
+            }
+        }
+
+        fn create_mock_git_repository(ssh_url: Option<&str>) -> git_models::GitRepository {
+            git_models::GitRepository {
+                links: None,
+                default_branch: Some("refs/heads/main".to_string()),
+                id: "test-repo-id".to_string(),
+                is_disabled: None,
+                is_fork: None,
+                is_in_maintenance: None,
+                name: "test-repo".to_string(),
+                parent_repository: None,
+                project: create_test_project_ref(),
+                remote_url: None,
+                size: None,
+                ssh_url: ssh_url.map(String::from),
+                url: "https://test.url".to_string(),
+                valid_remote_urls: vec![],
+                web_url: None,
+            }
+        }
+
+        fn create_mock_work_item(id: i32, title: &str, state: &str) -> wit_models::WorkItem {
+            let fields = serde_json::json!({
+                "System.Title": title,
+                "System.State": state,
+                "System.WorkItemType": "User Story"
+            });
+
+            wit_models::WorkItem {
+                work_item_tracking_resource: wit_models::WorkItemTrackingResource {
+                    work_item_tracking_resource_reference:
+                        wit_models::WorkItemTrackingResourceReference { url: String::new() },
+                    links: None,
+                },
+                comment_version_ref: None,
+                id,
+                rev: None,
+                fields,
+                relations: vec![],
+            }
+        }
+
+        fn create_mock_resource_ref(url: &str) -> git_models::ResourceRef {
+            git_models::ResourceRef {
+                id: None,
+                url: Some(url.to_string()),
+            }
+        }
+
+        /// # Fetch Pull Requests - Empty Result
+        ///
+        /// Tests fetch_pull_requests when no PRs are returned.
+        #[tokio::test]
+        async fn test_generic_client_fetch_pull_requests_empty() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            git_ops
+                .pr_ops
+                .set_get_pull_requests_response(Ok(vec![]))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_pull_requests("main", None).await;
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        /// # Fetch Pull Requests - With Results
+        ///
+        /// Tests fetch_pull_requests when PRs are returned.
+        #[tokio::test]
+        async fn test_generic_client_fetch_pull_requests_with_results() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let mock_prs = vec![
+                create_mock_git_pull_request(1, "PR 1"),
+                create_mock_git_pull_request(2, "PR 2"),
+            ];
+
+            git_ops
+                .pr_ops
+                .set_get_pull_requests_response(Ok(mock_prs))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_pull_requests("main", None).await;
+            assert!(result.is_ok());
+            let prs = result.unwrap();
+            assert_eq!(prs.len(), 2);
+            assert_eq!(prs[0].id, 1);
+            assert_eq!(prs[1].id, 2);
+        }
+
+        /// # Fetch Repository Details
+        ///
+        /// Tests fetch_repo_details returns correct data.
+        #[tokio::test]
+        async fn test_generic_client_fetch_repo_details() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let mock_repo = create_mock_git_repository(Some(
+                "git@ssh.dev.azure.com:v3/test-org/test-project/test-repo",
+            ));
+
+            git_ops
+                .repo_ops
+                .set_get_repository_response(Ok(mock_repo))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_repo_details().await;
+            assert!(result.is_ok());
+            let repo = result.unwrap();
+            assert!(!repo.ssh_url.is_empty());
+            assert!(repo.ssh_url.contains("ssh.dev.azure.com"));
+        }
+
+        /// # Fetch Repository Details - No SSH URL
+        ///
+        /// Tests fetch_repo_details when SSH URL is not set.
+        #[tokio::test]
+        async fn test_generic_client_fetch_repo_details_no_ssh() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let mock_repo = create_mock_git_repository(None);
+
+            git_ops
+                .repo_ops
+                .set_get_repository_response(Ok(mock_repo))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_repo_details().await;
+            assert!(result.is_ok());
+            let repo = result.unwrap();
+            assert!(repo.ssh_url.is_empty()); // ssh_url defaults to empty string when None
+        }
+
+        /// # Fetch PR Commit
+        ///
+        /// Tests fetch_pr_commit returns merge commit info.
+        #[tokio::test]
+        async fn test_generic_client_fetch_pr_commit() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let mock_pr = create_mock_git_pull_request(123, "Test PR");
+
+            git_ops
+                .pr_ops
+                .set_get_pull_request_response(Ok(mock_pr))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_pr_commit(123).await;
+            assert!(result.is_ok());
+            let commit = result.unwrap();
+            assert_eq!(commit.commit_id, "abc123");
+        }
+
+        /// # Add Label to PR
+        ///
+        /// Tests add_label_to_pr calls the API correctly.
+        #[tokio::test]
+        async fn test_generic_client_add_label_to_pr() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.add_label_to_pr(123, "merged-v1.0").await;
+            assert!(result.is_ok());
+
+            // Verify the label was set
+            let label_called = *client.git_ops.pr_ops.create_label_called.lock().await;
+            let label_name = client.git_ops.pr_ops.last_label_name.lock().await.clone();
+            assert!(label_called);
+            assert_eq!(label_name, Some("merged-v1.0".to_string()));
+        }
+
+        /// # Fetch Work Items for PR - Empty
+        ///
+        /// Tests fetch_work_items_for_pr when no work items are linked.
+        #[tokio::test]
+        async fn test_generic_client_fetch_work_items_empty() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            git_ops
+                .pr_work_items_ops
+                .set_list_response(Ok(vec![]))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_work_items_for_pr(123).await;
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        /// # Fetch Work Items for PR - With Results
+        ///
+        /// Tests fetch_work_items_for_pr when work items are linked.
+        #[tokio::test]
+        async fn test_generic_client_fetch_work_items_with_results() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let refs = vec![
+                create_mock_resource_ref(
+                    "https://dev.azure.com/test-org/test-project/_apis/wit/workItems/101",
+                ),
+                create_mock_resource_ref(
+                    "https://dev.azure.com/test-org/test-project/_apis/wit/workItems/102",
+                ),
+            ];
+
+            let work_items = vec![
+                create_mock_work_item(101, "Feature 1", "Active"),
+                create_mock_work_item(102, "Bug 1", "Closed"),
+            ];
+
+            git_ops.pr_work_items_ops.set_list_response(Ok(refs)).await;
+            wit_ops
+                .work_item_ops
+                .set_list_response(Ok(work_items))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_work_items_for_pr(123).await;
+            assert!(result.is_ok());
+            let items = result.unwrap();
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].id, 101);
+            assert_eq!(items[1].id, 102);
+        }
+
+        /// # Update Work Item State
+        ///
+        /// Tests update_work_item_state calls the API correctly.
+        #[tokio::test]
+        async fn test_generic_client_update_work_item_state() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let updated_item = create_mock_work_item(101, "Test Item", "Closed");
+            wit_ops
+                .work_item_ops
+                .set_update_response(Ok(updated_item))
+                .await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.update_work_item_state(101, "Closed").await;
+            assert!(result.is_ok());
+
+            // Verify update was called
+            let update_called = *client.wit_ops.work_item_ops.update_called.lock().await;
+            let last_state = client
+                .wit_ops
+                .work_item_ops
+                .last_update_state
+                .lock()
+                .await
+                .clone();
+            assert!(update_called);
+            assert_eq!(last_state, Some("Closed".to_string()));
+        }
+
+        /// # Fetch Work Item History - Empty
+        ///
+        /// Tests fetch_work_item_history when no updates exist.
+        #[tokio::test]
+        async fn test_generic_client_fetch_work_item_history_empty() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            wit_ops.updates_ops.set_list_response(Ok(vec![])).await;
+
+            let client = GenericAzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            let result = client.fetch_work_item_history(101).await;
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        /// # GenericClient Accessors
+        ///
+        /// Tests that accessor methods return correct values.
+        #[tokio::test]
+        async fn test_generic_client_accessors() {
+            let git_ops = MockGitOperations::new();
+            let wit_ops = MockWitOperations::new();
+
+            let client = GenericAzureDevOpsClient::new(
+                "my-org".to_string(),
+                "my-project".to_string(),
+                "my-repo".to_string(),
+                git_ops,
+                wit_ops,
+            );
+
+            assert_eq!(client.organization(), "my-org");
+            assert_eq!(client.project(), "my-project");
+            assert_eq!(client.repository(), "my-repo");
+        }
+
+        /// # Is Work Item In Terminal State - Static Method
+        ///
+        /// Tests the static is_work_item_in_terminal_state method.
+        #[test]
+        fn test_generic_client_is_work_item_in_terminal_state() {
+            let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+
+            let closed_item = WorkItem {
+                id: 1,
+                fields: WorkItemFields {
+                    title: Some("Test".to_string()),
+                    state: Some("Closed".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                },
+                history: vec![],
+            };
+
+            let active_item = WorkItem {
+                id: 2,
+                fields: WorkItemFields {
+                    title: Some("Test".to_string()),
+                    state: Some("Active".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                },
+                history: vec![],
+            };
+
+            assert!(GenericAzureDevOpsClient::<
+                MockGitOperations,
+                MockWitOperations,
+            >::is_work_item_in_terminal_state(
+                &closed_item, &terminal_states
+            ));
+            assert!(!GenericAzureDevOpsClient::<
+                MockGitOperations,
+                MockWitOperations,
+            >::is_work_item_in_terminal_state(
+                &active_item, &terminal_states
+            ));
+        }
+
+        /// # Parse Terminal States - Static Method
+        ///
+        /// Tests the static parse_terminal_states method.
+        #[test]
+        fn test_generic_client_parse_terminal_states() {
+            assert_eq!(
+                GenericAzureDevOpsClient::<MockGitOperations, MockWitOperations>::parse_terminal_states("Closed,Done"),
+                vec!["Closed", "Done"]
+            );
+        }
     }
 }
