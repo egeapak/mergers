@@ -7,10 +7,30 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - add scrollbar to PR list view ([#18](https://github.com/egeapak/mergers/pull/18))
+- improve code architecture with security, error handling, and performance optimizations ([#23](https://github.com/egeapak/mergers/pull/23))
+- allow empty commits in cherry-pick and add skip/abort options ([#25](https://github.com/egeapak/mergers/pull/25))
+- add EventSource abstraction for testable run_app loop ([#29](https://github.com/egeapak/mergers/pull/29))
+
+### Bug Fixes
+
+- prevent git from prompting for commit message after conflict resolution ([#20](https://github.com/egeapak/mergers/pull/20))
+- handle merge commits in cherry-pick with -m flag ([#22](https://github.com/egeapak/mergers/pull/22))
+- improve selection color contrast in PR list ([#24](https://github.com/egeapak/mergers/pull/24))
+
+### Refactor
+
+- improve test isolation and add Serde support ([#21](https://github.com/egeapak/mergers/pull/21))
+- improve code quality with static regex, error display, and reduced duplication ([#26](https://github.com/egeapak/mergers/pull/26))
+- replace hand-rolled API client with azure_devops_rust_api crate ([#30](https://github.com/egeapak/mergers/pull/30))
 
 ### Testing
 
 - add comprehensive coverage for migration data_loading module ([#19](https://github.com/egeapak/mergers/pull/19))
+- increase API module test coverage from 70% to 97% ([#28](https://github.com/egeapak/mergers/pull/28))
+
+### Miscellaneous Tasks
+
+- upgrade all dependencies to latest versions ([#27](https://github.com/egeapak/mergers/pull/27))
 
 ## [0.2.0] - 2025-11-21
 
