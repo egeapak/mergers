@@ -1226,9 +1226,9 @@ impl AppState for PullRequestSelectionState {
                     && self.search_results.get(self.current_search_index) == Some(&pr_index);
 
                 // Apply background highlighting for selected items and search results
-                // Selected items use dark green for contrast with DarkGray cursor highlight
+                // Selected items use lighter green for better visibility
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::Rgb(0, 60, 0))
+                    Style::default().bg(Color::Rgb(0, 120, 0))
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
@@ -1298,7 +1298,7 @@ impl AppState for PullRequestSelectionState {
                 .borders(Borders::ALL)
                 .title("Pull Requests"),
         )
-        .row_highlight_style(Style::default().bg(Color::DarkGray))
+        .row_highlight_style(Style::default().bg(Color::Rgb(0, 80, 0)))
         .highlight_symbol("→ ");
 
         // Store the table area for mouse hit-testing
