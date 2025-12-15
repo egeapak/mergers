@@ -24,6 +24,7 @@ pub struct App {
 
     // Migration state
     pub migration_analysis: Option<MigrationAnalysis>,
+    pub migration_worktree_id: Option<String>, // Tracks migration worktree for cleanup on exit
 
     // Cleanup state
     pub cleanup_branches: Vec<CleanupBranch>,
@@ -50,8 +51,20 @@ impl App {
             current_cherry_pick_index: 0,
             error_message: None,
             migration_analysis: None,
+            migration_worktree_id: None,
             cleanup_branches: Vec::new(),
             initial_state: None,
+        }
+    }
+
+    /// Cleans up the migration worktree if one was created.
+    /// This should be called when exiting migration mode to remove temporary worktrees.
+    pub fn cleanup_migration_worktree(&mut self) {
+        if let (Some(base_repo), Some(worktree_id)) =
+            (&self.base_repo_path, self.migration_worktree_id.take())
+        {
+            // Use force_remove_worktree to clean up the migration worktree
+            let _ = crate::git::force_remove_worktree(base_repo, &worktree_id);
         }
     }
 
@@ -247,6 +260,13 @@ impl App {
                 self.migration_analysis = Some(analysis);
             }
         }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // Clean up migration worktree when App is dropped (on exit)
+        self.cleanup_migration_worktree();
     }
 }
 
@@ -1111,5 +1131,179 @@ mod tests {
 
         // When config is dropped at end of scope, reference count goes to 0
         // and memory is cleaned up (this is verified by the test not crashing)
+    }
+
+    /// # Migration Worktree Cleanup Method
+    ///
+    /// Tests that cleanup_migration_worktree properly clears the migration tracking.
+    ///
+    /// ## Test Scenario
+    /// - Creates an App with migration_worktree_id set
+    /// - Calls cleanup_migration_worktree
+    /// - Verifies the field is cleared
+    ///
+    /// ## Expected Outcome
+    /// - migration_worktree_id is None after cleanup
+    /// - Method completes without error
+    #[test]
+    fn test_cleanup_migration_worktree_clears_tracking() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let shared_config = SharedConfig {
+            organization: ParsedProperty::Default("test_org".to_string()),
+            project: ParsedProperty::Default("test_project".to_string()),
+            repository: ParsedProperty::Default("test_repo".to_string()),
+            pat: ParsedProperty::Default("test_pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
+            local_repo: None,
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
+            since: None,
+            skip_confirmation: false,
+        };
+
+        let config = Arc::new(AppConfig::Default {
+            shared: shared_config,
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Test State".to_string()),
+            },
+        });
+
+        let mut app = App::new(Vec::new(), config, client);
+
+        // Set up migration worktree tracking
+        app.migration_worktree_id = Some("migration-123456".to_string());
+        // Note: We don't set base_repo_path because we don't have a real repo
+        // This tests that cleanup handles the case gracefully
+
+        // Call cleanup
+        app.cleanup_migration_worktree();
+
+        // Verify the tracking was cleared (take() returns None now)
+        assert!(app.migration_worktree_id.is_none());
+    }
+
+    /// # Migration Worktree Cleanup Without Tracking
+    ///
+    /// Tests that cleanup_migration_worktree works when no worktree is tracked.
+    ///
+    /// ## Test Scenario
+    /// - Creates an App without migration_worktree_id set
+    /// - Calls cleanup_migration_worktree
+    /// - Verifies no errors occur
+    ///
+    /// ## Expected Outcome
+    /// - Method completes without error
+    /// - No panics when there's nothing to clean up
+    #[test]
+    fn test_cleanup_migration_worktree_without_tracking() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let shared_config = SharedConfig {
+            organization: ParsedProperty::Default("test_org".to_string()),
+            project: ParsedProperty::Default("test_project".to_string()),
+            repository: ParsedProperty::Default("test_repo".to_string()),
+            pat: ParsedProperty::Default("test_pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
+            local_repo: None,
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
+            since: None,
+            skip_confirmation: false,
+        };
+
+        let config = Arc::new(AppConfig::Default {
+            shared: shared_config,
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Test State".to_string()),
+            },
+        });
+
+        let mut app = App::new(Vec::new(), config, client);
+
+        // Verify no tracking is set initially
+        assert!(app.migration_worktree_id.is_none());
+
+        // Call cleanup - should not panic or error
+        app.cleanup_migration_worktree();
+
+        // Still None after cleanup
+        assert!(app.migration_worktree_id.is_none());
+    }
+
+    /// # App Drop Trait Implementation
+    ///
+    /// Tests that the Drop trait properly calls cleanup.
+    ///
+    /// ## Test Scenario
+    /// - Creates an App with migration tracking set
+    /// - Drops the App (goes out of scope)
+    /// - Verifies Drop is called (test doesn't panic)
+    ///
+    /// ## Expected Outcome
+    /// - App can be dropped without panic
+    /// - Drop trait runs cleanup (verified by not panicking)
+    #[test]
+    fn test_app_drop_calls_cleanup() {
+        let client = AzureDevOpsClient::new(
+            "test_org".to_string(),
+            "test_project".to_string(),
+            "test_repo".to_string(),
+            "test_pat".to_string(),
+        )
+        .unwrap();
+
+        let shared_config = SharedConfig {
+            organization: ParsedProperty::Default("test_org".to_string()),
+            project: ParsedProperty::Default("test_project".to_string()),
+            repository: ParsedProperty::Default("test_repo".to_string()),
+            pat: ParsedProperty::Default("test_pat".to_string()),
+            dev_branch: ParsedProperty::Default("dev".to_string()),
+            target_branch: ParsedProperty::Default("main".to_string()),
+            local_repo: None,
+            parallel_limit: ParsedProperty::Default(300),
+            max_concurrent_network: ParsedProperty::Default(100),
+            max_concurrent_processing: ParsedProperty::Default(10),
+            tag_prefix: ParsedProperty::Default("merged-".to_string()),
+            since: None,
+            skip_confirmation: false,
+        };
+
+        let config = Arc::new(AppConfig::Default {
+            shared: shared_config,
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Test State".to_string()),
+            },
+        });
+
+        {
+            let mut app = App::new(Vec::new(), config, client);
+
+            // Set up migration tracking
+            app.migration_worktree_id = Some("migration-789".to_string());
+            // Note: base_repo_path is None, so cleanup won't try to remove anything
+
+            // App goes out of scope here, Drop is called
+        }
+
+        // If we get here without panicking, Drop worked correctly
     }
 }

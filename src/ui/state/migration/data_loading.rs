@@ -32,6 +32,7 @@ type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
 pub struct RepoSetupResult {
     pub repo_path: std::path::PathBuf,
     pub branches: Vec<String>,
+    pub base_repo_path: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +84,7 @@ pub struct MigrationDataLoadingState {
     prs: Vec<PullRequest>,
     prs_with_work_items: Vec<PullRequestWithWorkItems>,
     repo_path: Option<std::path::PathBuf>,
+    base_repo_path: Option<std::path::PathBuf>,
     terminal_states: Option<Vec<String>>,
     commit_history: Option<crate::git::CommitHistory>,
 }
@@ -117,6 +119,7 @@ impl MigrationDataLoadingState {
             prs: Vec::new(),
             prs_with_work_items: Vec::new(),
             repo_path: None,
+            base_repo_path: None,
             terminal_states: None,
             commit_history: None,
         }
@@ -222,9 +225,16 @@ impl MigrationDataLoadingState {
         )
         .context("Failed to setup repository")?;
 
-        let repo_path = match &repo_setup {
-            crate::git::RepositorySetup::Local(path) => path.to_path_buf(),
-            crate::git::RepositorySetup::Clone(path, _) => path.to_path_buf(),
+        let (repo_path, base_repo_path) = match &repo_setup {
+            crate::git::RepositorySetup::Local(path) => (
+                path.to_path_buf(),
+                config
+                    .shared()
+                    .local_repo
+                    .as_ref()
+                    .map(|p| std::path::PathBuf::from(p.value())),
+            ),
+            crate::git::RepositorySetup::Clone(path, _) => (path.to_path_buf(), None),
         };
 
         // Parse terminal states
@@ -236,6 +246,7 @@ impl MigrationDataLoadingState {
         Ok(RepoSetupResult {
             repo_path,
             branches: terminal_states,
+            base_repo_path,
         })
     }
 
@@ -247,6 +258,7 @@ impl MigrationDataLoadingState {
             match task.await {
                 Ok(Ok(result)) => {
                     self.repo_path = Some(result.repo_path.clone());
+                    self.base_repo_path = result.base_repo_path;
                     self.terminal_states = Some(result.branches);
 
                     // Start git history fetch in parallel now that repo is ready
@@ -503,6 +515,8 @@ impl MigrationDataLoadingState {
                         self.status = "Analysis complete!".to_string();
                         self.progress = 1.0;
                         app.migration_analysis = Some(analysis);
+                        // Clear worktree tracking since it was cleaned up in perform_migration_analysis
+                        app.migration_worktree_id = None;
                         return Ok(true);
                     }
                     Ok(Err(e)) => {
@@ -703,7 +717,12 @@ impl AppState for MigrationDataLoadingState {
                 LoadingStage::SettingUpRepository => {
                     match self.check_repository_setup_progress().await {
                         Ok(true) => {
-                            // Repository setup complete, start fetching work items
+                            // Repository setup complete, track worktree for cleanup on exit
+                            if self.base_repo_path.is_some() {
+                                app.base_repo_path = self.base_repo_path.clone();
+                                app.migration_worktree_id = Some(self.migration_id.clone());
+                            }
+                            // Start fetching work items
                             self.start_work_items_fetching(app);
                         }
                         Ok(false) => {
@@ -768,6 +787,9 @@ impl AppState for MigrationDataLoadingState {
         match code {
             KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Char('r') if self.error.is_some() => {
+                // Clean up any existing worktree before retry
+                app.cleanup_migration_worktree();
+
                 // Reset for retry
                 self.error = None;
                 self.progress = 0.0;
@@ -784,6 +806,7 @@ impl AppState for MigrationDataLoadingState {
                 self.prs.clear();
                 self.prs_with_work_items.clear();
                 self.repo_path = None;
+                self.base_repo_path = None;
                 self.terminal_states = None;
                 StateChange::Keep
             }
