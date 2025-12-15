@@ -522,9 +522,9 @@ pub struct WorkItemFields {
     pub description: Option<String>,
     #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
     pub repro_steps: Option<String>,
-    /// State color as hex string (e.g., "007acc"), populated from Azure DevOps API
+    /// State color as RGB tuple (r, g, b), populated from Azure DevOps API
     #[serde(skip_deserializing, default)]
-    pub state_color: Option<String>,
+    pub state_color: Option<(u8, u8, u8)>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

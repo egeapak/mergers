@@ -299,9 +299,9 @@ impl MigrationState {
                             spans.push(Span::styled(", ", Style::default().fg(Color::Gray)));
                         }
                         let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                        let state_color = get_state_color_with_api(
+                        let state_color = get_state_color_with_rgb(
                             state,
-                            wi.fields.state_color.as_deref(),
+                            wi.fields.state_color,
                             &analysis.terminal_states,
                         );
                         spans.push(Span::styled(
@@ -397,9 +397,9 @@ impl MigrationState {
                 )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let color = get_state_color_with_api(
+                    let color = get_state_color_with_rgb(
                         state,
-                        work_item.fields.state_color.as_deref(),
+                        work_item.fields.state_color,
                         &analysis.terminal_states,
                     );
                     details.push(Line::from(vec![
@@ -577,35 +577,17 @@ impl AppState for MigrationState {
     }
 }
 
-/// Converts a hex color string (e.g., "007acc") to a ratatui Color.
-fn hex_to_color(hex: &str) -> Option<Color> {
-    // Remove leading '#' if present
-    let hex = hex.trim_start_matches('#');
-
-    if hex.len() != 6 {
-        return None;
-    }
-
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-
-    Some(Color::Rgb(r, g, b))
-}
-
 /// Gets a color for a work item state in migration mode.
 ///
-/// Prefers API color, then falls back to terminal state logic (green if terminal, red if not).
-fn get_state_color_with_api(
+/// Prefers API color (RGB tuple), then falls back to terminal state logic (green if terminal, red if not).
+fn get_state_color_with_rgb(
     state: &str,
-    api_color: Option<&str>,
+    api_color: Option<(u8, u8, u8)>,
     terminal_states: &[String],
 ) -> Color {
-    // If we have an API color, use it
-    if let Some(hex) = api_color
-        && let Some(color) = hex_to_color(hex)
-    {
-        return color;
+    // If we have an API color (already converted to RGB), use it
+    if let Some((r, g, b)) = api_color {
+        return Color::Rgb(r, g, b);
     }
 
     // Fall back to terminal state logic

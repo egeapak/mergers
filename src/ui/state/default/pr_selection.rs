@@ -512,8 +512,7 @@ impl PullRequestSelectionState {
                         _ => Color::White,
                     };
 
-                    let state_color =
-                        get_state_color_with_api(state, work_item.fields.state_color.as_deref());
+                    let state_color = get_state_color_with_rgb(state, work_item.fields.state_color);
 
                     // Create header content with spans for different colors and proper alignment
                     use ratatui::text::{Line, Span};
@@ -1598,7 +1597,7 @@ fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
         if let Some(state) = &wi.fields.state {
             match state.as_str() {
                 "Next Merged" | "Next Closed" => {
-                    return get_state_color_with_api(state, wi.fields.state_color.as_deref());
+                    return get_state_color_with_rgb(state, wi.fields.state_color);
                 }
                 _ => {}
             }
@@ -1611,34 +1610,16 @@ fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
             wi.fields
                 .state
                 .as_deref()
-                .map(|state| get_state_color_with_api(state, wi.fields.state_color.as_deref()))
+                .map(|state| get_state_color_with_rgb(state, wi.fields.state_color))
         })
         .unwrap_or(Color::White)
 }
 
-/// Converts a hex color string (e.g., "007acc") to a ratatui Color.
-fn hex_to_color(hex: &str) -> Option<Color> {
-    // Remove leading '#' if present
-    let hex = hex.trim_start_matches('#');
-
-    if hex.len() != 6 {
-        return None;
-    }
-
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-
-    Some(Color::Rgb(r, g, b))
-}
-
 /// Gets a color for a work item state, preferring API color over fallback.
-fn get_state_color_with_api(state: &str, api_color: Option<&str>) -> Color {
-    // If we have an API color, use it
-    if let Some(hex) = api_color
-        && let Some(color) = hex_to_color(hex)
-    {
-        return color;
+fn get_state_color_with_rgb(state: &str, api_color: Option<(u8, u8, u8)>) -> Color {
+    // If we have an API color (already converted to RGB), use it
+    if let Some((r, g, b)) = api_color {
+        return Color::Rgb(r, g, b);
     }
 
     // Fall back to hardcoded colors

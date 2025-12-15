@@ -416,7 +416,7 @@ impl AzureDevOpsClient {
     /// Enriches work items with their state colors from the API.
     ///
     /// This fetches state colors for all work item types and populates
-    /// the `state_color` field on each work item.
+    /// the `state_color` field on each work item as RGB tuples.
     pub async fn enrich_work_items_with_colors(&self, work_items: &mut [WorkItem]) {
         let color_map = self.fetch_state_colors_for_work_items(work_items).await;
 
@@ -424,9 +424,10 @@ impl AzureDevOpsClient {
             if let (Some(wit_type), Some(state)) =
                 (&work_item.fields.work_item_type, &work_item.fields.state)
                 && let Some(type_colors) = color_map.get(wit_type)
-                && let Some(color) = type_colors.get(state)
+                && let Some(hex_color) = type_colors.get(state)
+                && let Some(rgb) = hex_to_rgb(hex_color)
             {
-                work_item.fields.state_color = Some(color.clone());
+                work_item.fields.state_color = Some(rgb);
             }
         }
     }
@@ -511,15 +512,16 @@ impl AzureDevOpsClient {
             .fetch_state_colors_for_work_items(&all_work_items)
             .await;
 
-        // Apply colors to work items in each PR
+        // Apply colors to work items in each PR (converting hex to RGB)
         for pr_with_wi in &mut results {
             for work_item in &mut pr_with_wi.work_items {
                 if let (Some(wit_type), Some(state)) =
                     (&work_item.fields.work_item_type, &work_item.fields.state)
                     && let Some(type_colors) = color_map.get(wit_type)
-                    && let Some(color) = type_colors.get(state)
+                    && let Some(hex_color) = type_colors.get(state)
+                    && let Some(rgb) = hex_to_rgb(hex_color)
                 {
-                    work_item.fields.state_color = Some(color.clone());
+                    work_item.fields.state_color = Some(rgb);
                 }
             }
         }
@@ -567,6 +569,20 @@ impl AzureDevOpsClient {
             .filter(|s| !s.is_empty())
             .collect()
     }
+}
+
+/// Converts a hex color string (e.g., "007acc" or "#007acc") to an RGB tuple.
+///
+/// Returns None if the hex string is invalid.
+fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some((r, g, b))
 }
 
 /// Filters out pull requests that already have a "merged-" tag.
