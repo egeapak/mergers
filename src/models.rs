@@ -522,6 +522,9 @@ pub struct WorkItemFields {
     pub description: Option<String>,
     #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
     pub repro_steps: Option<String>,
+    /// State color as hex string (e.g., "007acc"), populated from Azure DevOps API
+    #[serde(skip_deserializing, default)]
+    pub state_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -708,6 +711,7 @@ mod tests {
                 iteration_path: Some("Project\\Sprint 1".to_string()),
                 description: Some("Test description".to_string()),
                 repro_steps: Some("Steps to reproduce".to_string()),
+                state_color: None,
             },
             history: vec![],
         }

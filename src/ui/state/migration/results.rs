@@ -286,6 +286,35 @@ impl MigrationState {
                     }
                 };
 
+                // Build work items summary with status
+                let work_items_summary = if pr.work_items.is_empty() {
+                    vec![Span::styled(
+                        "No work items",
+                        Style::default().fg(Color::Gray),
+                    )]
+                } else {
+                    let mut spans = vec![Span::styled("WI: ", Style::default().fg(Color::Gray))];
+                    for (i, wi) in pr.work_items.iter().enumerate() {
+                        if i > 0 {
+                            spans.push(Span::styled(", ", Style::default().fg(Color::Gray)));
+                        }
+                        let state = wi.fields.state.as_deref().unwrap_or("Unknown");
+                        let state_color = get_state_color_with_api(
+                            state,
+                            wi.fields.state_color.as_deref(),
+                            &analysis.terminal_states,
+                        );
+                        spans.push(Span::styled(
+                            format!("#{}", wi.id),
+                            Style::default().fg(Color::Cyan),
+                        ));
+                        spans.push(Span::styled("(", Style::default().fg(Color::Gray)));
+                        spans.push(Span::styled(state, Style::default().fg(state_color)));
+                        spans.push(Span::styled(")", Style::default().fg(Color::Gray)));
+                    }
+                    spans
+                };
+
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(
@@ -310,11 +339,12 @@ impl MigrationState {
                             Style::default().fg(Color::Gray),
                         ),
                         Span::raw(" | "),
-                        Span::styled(
-                            format!("Work Items: {}", pr.work_items.len()),
-                            Style::default().fg(Color::Gray),
-                        ),
                     ]),
+                    Line::from({
+                        let mut line_spans = vec![Span::raw("  ")];
+                        line_spans.extend(work_items_summary);
+                        line_spans
+                    }),
                 ])
             })
             .collect();
@@ -367,11 +397,11 @@ impl MigrationState {
                 )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let color = if analysis.terminal_states.contains(&state.to_string()) {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    };
+                    let color = get_state_color_with_api(
+                        state,
+                        work_item.fields.state_color.as_deref(),
+                        &analysis.terminal_states,
+                    );
                     details.push(Line::from(vec![
                         Span::raw("  "),
                         Span::styled(
@@ -544,6 +574,45 @@ impl AppState for MigrationState {
             }
             _ => StateChange::Keep,
         }
+    }
+}
+
+/// Converts a hex color string (e.g., "007acc") to a ratatui Color.
+fn hex_to_color(hex: &str) -> Option<Color> {
+    // Remove leading '#' if present
+    let hex = hex.trim_start_matches('#');
+
+    if hex.len() != 6 {
+        return None;
+    }
+
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+
+    Some(Color::Rgb(r, g, b))
+}
+
+/// Gets a color for a work item state in migration mode.
+///
+/// Prefers API color, then falls back to terminal state logic (green if terminal, red if not).
+fn get_state_color_with_api(
+    state: &str,
+    api_color: Option<&str>,
+    terminal_states: &[String],
+) -> Color {
+    // If we have an API color, use it
+    if let Some(hex) = api_color
+        && let Some(color) = hex_to_color(hex)
+    {
+        return color;
+    }
+
+    // Fall back to terminal state logic
+    if terminal_states.contains(&state.to_string()) {
+        Color::Green
+    } else {
+        Color::Red
     }
 }
 

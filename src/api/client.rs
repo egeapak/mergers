@@ -362,6 +362,75 @@ impl AzureDevOpsClient {
             .collect())
     }
 
+    /// Fetches state colors for a specific work item type.
+    ///
+    /// Returns a map of state name to hex color string (e.g., "007acc").
+    pub async fn fetch_work_item_type_state_colors(
+        &self,
+        work_item_type: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let states = self
+            .wit_client
+            .work_item_type_states_client()
+            .list(&self.organization, &self.project, work_item_type)
+            .await
+            .context("Failed to fetch work item type state colors")?;
+
+        let mut color_map = std::collections::HashMap::new();
+        for state in states.value {
+            if let (Some(name), Some(color)) = (state.name, state.color) {
+                color_map.insert(name, color);
+            }
+        }
+
+        Ok(color_map)
+    }
+
+    /// Fetches state colors for all work item types used by the given work items.
+    ///
+    /// Returns a nested map: work_item_type -> state_name -> hex_color
+    pub async fn fetch_state_colors_for_work_items(
+        &self,
+        work_items: &[WorkItem],
+    ) -> std::collections::HashMap<String, std::collections::HashMap<String, String>> {
+        use std::collections::{HashMap, HashSet};
+
+        // Collect unique work item types
+        let work_item_types: HashSet<String> = work_items
+            .iter()
+            .filter_map(|wi| wi.fields.work_item_type.clone())
+            .collect();
+
+        let mut all_colors: HashMap<String, HashMap<String, String>> = HashMap::new();
+
+        // Fetch colors for each work item type
+        for wit_type in work_item_types {
+            if let Ok(colors) = self.fetch_work_item_type_state_colors(&wit_type).await {
+                all_colors.insert(wit_type, colors);
+            }
+        }
+
+        all_colors
+    }
+
+    /// Enriches work items with their state colors from the API.
+    ///
+    /// This fetches state colors for all work item types and populates
+    /// the `state_color` field on each work item.
+    pub async fn enrich_work_items_with_colors(&self, work_items: &mut [WorkItem]) {
+        let color_map = self.fetch_state_colors_for_work_items(work_items).await;
+
+        for work_item in work_items {
+            if let (Some(wit_type), Some(state)) =
+                (&work_item.fields.work_item_type, &work_item.fields.state)
+                && let Some(type_colors) = color_map.get(wit_type)
+                && let Some(color) = type_colors.get(state)
+            {
+                work_item.fields.state_color = Some(color.clone());
+            }
+        }
+    }
+
     /// Fetches work items with their history for a PR, using parallel fetching.
     pub async fn fetch_work_items_with_history_for_pr_parallel(
         &self,
@@ -400,13 +469,16 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches work items with history for multiple PRs in parallel.
+    ///
+    /// This method also enriches work items with state colors from the API.
     pub async fn fetch_work_items_for_prs_parallel(
         &self,
         prs: &[PullRequest],
         max_concurrent_prs: usize,
         max_concurrent_history: usize,
     ) -> Vec<PullRequestWithWorkItems> {
-        stream::iter(prs.iter().cloned())
+        // First, fetch all work items with history
+        let mut results: Vec<PullRequestWithWorkItems> = stream::iter(prs.iter().cloned())
             .map(|pr| {
                 let client = self.clone();
                 async move {
@@ -426,7 +498,33 @@ impl AzureDevOpsClient {
             })
             .buffer_unordered(max_concurrent_prs)
             .collect()
-            .await
+            .await;
+
+        // Collect all work items to fetch their colors
+        let all_work_items: Vec<WorkItem> = results
+            .iter()
+            .flat_map(|pr| pr.work_items.clone())
+            .collect();
+
+        // Fetch state colors for all work item types
+        let color_map = self
+            .fetch_state_colors_for_work_items(&all_work_items)
+            .await;
+
+        // Apply colors to work items in each PR
+        for pr_with_wi in &mut results {
+            for work_item in &mut pr_with_wi.work_items {
+                if let (Some(wit_type), Some(state)) =
+                    (&work_item.fields.work_item_type, &work_item.fields.state)
+                    && let Some(type_colors) = color_map.get(wit_type)
+                    && let Some(color) = type_colors.get(state)
+                {
+                    work_item.fields.state_color = Some(color.clone());
+                }
+            }
+        }
+
+        results
     }
 
     /// Checks if a work item is in a terminal state.
@@ -1002,6 +1100,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1034,6 +1133,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1066,6 +1166,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1098,6 +1199,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1130,6 +1232,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1167,6 +1270,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         }
@@ -1763,6 +1867,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1777,6 +1882,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -1791,6 +1897,7 @@ mod tests {
                 iteration_path: None,
                 description: None,
                 repro_steps: None,
+                state_color: None,
             },
             history: vec![],
         };
@@ -2350,6 +2457,7 @@ mod tests {
                     iteration_path: None,
                     description: None,
                     repro_steps: None,
+                    state_color: None,
                 },
                 history: vec![],
             };
@@ -2364,6 +2472,7 @@ mod tests {
                     iteration_path: None,
                     description: None,
                     repro_steps: None,
+                    state_color: None,
                 },
                 history: vec![],
             };
