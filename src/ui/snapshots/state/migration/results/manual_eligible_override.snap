@@ -6,10 +6,10 @@ expression: harness.backend()
 "                                                                                "
 "                                                                                "
 "┌Eligible PRs - Ready for tagging──────────────────────────────────────────────┐"
-"│  PR #       Date         Title            Author          Work Items         │"
-"│→ 100        2024-01-10   Fix login bug    Alice Johnson   #1001 (Closed)     │"
-"│  101        2024-01-12   Update user prof Bob Wilson      #1002 (Active)     │"
-"│  102    ✅  2024-01-14   Add analytics tr Carol Martinez  #1003 (Resolved), #│" Hidden by multi-width symbols: [(11, " ")]
+"│      PR #     Date         Title           Author          Work Items        │"
+"│→     100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)    │"
+"│      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)    │"
+"│  ✅  102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved), │" Hidden by multi-width symbols: [(4, " ")]
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

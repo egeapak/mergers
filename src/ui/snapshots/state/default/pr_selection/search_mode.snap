@@ -1,6 +1,5 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 1658
 expression: harness.backend()
 ---
 "                                                                                "
@@ -30,6 +29,6 @@ expression: harness.backend()
 " │1. Navigate to login page                                                   │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
-" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous │ "
+" │↑/↓: Navigate PRs | ←/→: Work Items | n/N: Next/Prev result | Esc: Exit sear│ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

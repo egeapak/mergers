@@ -274,8 +274,8 @@ impl MigrationState {
         // Sort PRs by closed_date (completion date)
         let sorted_prs = Self::sort_prs_by_date(prs);
 
-        // Create table headers (same as merge mode)
-        let header_cells = ["PR #", "Date", "Title", "Author", "Work Items"]
+        // Create table headers (same as merge mode, with override indicator column)
+        let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
             .iter()
             .map(|h| {
                 Cell::from(*h).style(
@@ -316,11 +316,11 @@ impl MigrationState {
                     String::new()
                 };
 
-                // Check for manual override indicator
+                // Check for manual override indicator (leftmost column)
                 let override_indicator = match app.has_manual_override(pr_with_wi.pr.id) {
-                    Some(true) => " ✅",
-                    Some(false) => " ❌",
-                    None => "",
+                    Some(true) => "✅",
+                    Some(false) => "❌",
+                    None => " ",
                 };
 
                 // Get work items color based on terminal states
@@ -328,7 +328,8 @@ impl MigrationState {
                     Self::get_work_items_color(&pr_with_wi.work_items, &analysis.terminal_states);
 
                 let cells = vec![
-                    Cell::from(format!("{:<6}{}", pr_with_wi.pr.id, override_indicator))
+                    Cell::from(override_indicator).style(Style::default().fg(Color::Magenta)),
+                    Cell::from(format!("{:<6}", pr_with_wi.pr.id))
                         .style(Style::default().fg(Color::Cyan)),
                     Cell::from(date).style(Style::default()),
                     Cell::from(pr_with_wi.pr.title.clone()).style(Style::default()),
@@ -344,7 +345,8 @@ impl MigrationState {
         let table = Table::new(
             rows,
             vec![
-                Constraint::Length(10),     // PR # (with override indicator)
+                Constraint::Length(3),      // Override indicator
+                Constraint::Length(8),      // PR #
                 Constraint::Length(12),     // Date
                 Constraint::Percentage(30), // Title
                 Constraint::Percentage(20), // Author
@@ -522,41 +524,46 @@ impl AppState for MigrationState {
             return;
         }
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Tabs
-                Constraint::Min(10),   // Main content
-                Constraint::Length(9), // Help
-            ])
-            .split(f.area());
+        // Layout with details panel at bottom (like merge mode)
+        let chunks = if self.show_details {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),      // Tabs
+                    Constraint::Percentage(50), // PR table
+                    Constraint::Percentage(35), // Details panel (from bottom)
+                    Constraint::Length(9),      // Help
+                ])
+                .split(f.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Tabs
+                    Constraint::Min(10),   // PR table (full height)
+                    Constraint::Length(9), // Help
+                ])
+                .split(f.area())
+        };
 
         // Render tabs
         self.render_tabs(f, app, chunks[0]);
 
-        // Split main content area
-        let main_chunks = if self.show_details {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                .split(chunks[1])
-        } else {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(100)])
-                .split(chunks[1])
-        };
-
         // Render PR list
-        self.render_pr_list(f, app, main_chunks[0]);
+        self.render_pr_list(f, app, chunks[1]);
 
-        // Render details if enabled
-        if self.show_details && main_chunks.len() > 1 {
-            self.render_details(f, app, main_chunks[1]);
+        // Render details if enabled (from bottom)
+        if self.show_details {
+            self.render_details(f, app, chunks[2]);
         }
 
-        // Render help
-        self.render_help(f, chunks[2]);
+        // Render help (last chunk)
+        let help_chunk = if self.show_details {
+            chunks[3]
+        } else {
+            chunks[2]
+        };
+        self.render_help(f, help_chunk);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {

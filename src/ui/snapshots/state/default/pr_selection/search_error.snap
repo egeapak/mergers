@@ -29,6 +29,6 @@ expression: harness.backend()
 " │2. Click login button                                                       │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
-" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | E│ "
+" │↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Con│ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "
