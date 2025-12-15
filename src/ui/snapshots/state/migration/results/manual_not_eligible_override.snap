@@ -6,10 +6,10 @@ expression: harness.backend()
 "                                                                                "
 "                                                                                "
 "┌Not Merged PRs - Not ready for migration──────────────────────────────────────┐"
-"│#102 Add analytics tracking → Eligible                                        │"
-"│  By: Carol Martinez | Work Items: 2                                          │"
-"│#100 Fix login bug ❌ [Manual Override] → Eligible                            │" Hidden by multi-width symbols: [(21, " ")]
-"│  By: Alice Johnson | Work Items: 1                                           │"
+"│  PR #       Date         Title            Author          Work Items         │"
+"│→ 100    ❌  2024-01-10   Fix login bug    Alice Johnson   #1001 (Closed)     │" Hidden by multi-width symbols: [(11, " ")]
+"│  102        2024-01-14   Add analytics tr Carol Martinez  #1003 (Resolved), #│"
+"│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
