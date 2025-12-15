@@ -1279,4 +1279,96 @@ mod tests {
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
     }
+
+    // ==================== State Color Tests ====================
+
+    /// # Get State Color With RGB - Uses API Color
+    ///
+    /// Tests that API-provided RGB color takes precedence in migration mode.
+    ///
+    /// ## Test Scenario
+    /// - Provides both state name and API RGB color
+    ///
+    /// ## Expected Outcome
+    /// - Returns the API-provided RGB color regardless of terminal state
+    #[test]
+    fn test_migration_get_state_color_with_rgb_uses_api_color() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)), &terminal_states);
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+
+        // Even for terminal states, API color takes precedence
+        let color = get_state_color_with_rgb("Closed", Some((255, 100, 50)), &terminal_states);
+        assert_eq!(color, Color::Rgb(255, 100, 50));
+    }
+
+    /// # Get State Color With RGB - Terminal State Fallback
+    ///
+    /// Tests that terminal states get green color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Green color for terminal states
+    #[test]
+    fn test_migration_get_state_color_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Green
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Done", None, &terminal_states),
+            Color::Green
+        );
+    }
+
+    /// # Get State Color With RGB - Non-Terminal State Fallback
+    ///
+    /// Tests that non-terminal states get red color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides non-terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Red color for non-terminal states
+    #[test]
+    fn test_migration_get_state_color_non_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("In Progress", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("New", None, &terminal_states),
+            Color::Red
+        );
+    }
+
+    /// # Get State Color With RGB - Empty Terminal States
+    ///
+    /// Tests behavior when terminal states list is empty.
+    ///
+    /// ## Test Scenario
+    /// - Provides empty terminal states list
+    ///
+    /// ## Expected Outcome
+    /// - All states should be red (none are terminal)
+    #[test]
+    fn test_migration_get_state_color_empty_terminal_states() {
+        let terminal_states: Vec<String> = vec![];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
+    }
 }

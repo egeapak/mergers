@@ -881,6 +881,94 @@ mod tests {
         assert_eq!(DEFAULT_MAX_RETRIES, 3);
     }
 
+    // ==================== Hex to RGB Conversion ====================
+
+    /// # Hex to RGB - Valid 6-character Hex
+    ///
+    /// Tests conversion of a valid 6-character hex string to RGB tuple.
+    ///
+    /// ## Test Scenario
+    /// - Provides a standard 6-character hex color
+    /// - Converts to RGB tuple
+    ///
+    /// ## Expected Outcome
+    /// - Returns correct RGB values for the hex color
+    #[test]
+    fn test_hex_to_rgb_valid() {
+        assert_eq!(super::hex_to_rgb("007acc"), Some((0, 122, 204)));
+        assert_eq!(super::hex_to_rgb("ff0000"), Some((255, 0, 0)));
+        assert_eq!(super::hex_to_rgb("00ff00"), Some((0, 255, 0)));
+        assert_eq!(super::hex_to_rgb("0000ff"), Some((0, 0, 255)));
+        assert_eq!(super::hex_to_rgb("ffffff"), Some((255, 255, 255)));
+        assert_eq!(super::hex_to_rgb("000000"), Some((0, 0, 0)));
+    }
+
+    /// # Hex to RGB - With Hash Prefix
+    ///
+    /// Tests that hex strings with leading '#' are handled correctly.
+    ///
+    /// ## Test Scenario
+    /// - Provides hex strings with '#' prefix
+    /// - Converts to RGB tuple
+    ///
+    /// ## Expected Outcome
+    /// - Hash is stripped and RGB values are correctly extracted
+    #[test]
+    fn test_hex_to_rgb_with_hash() {
+        assert_eq!(super::hex_to_rgb("#007acc"), Some((0, 122, 204)));
+        assert_eq!(super::hex_to_rgb("#FF5733"), Some((255, 87, 51)));
+    }
+
+    /// # Hex to RGB - Case Insensitive
+    ///
+    /// Tests that hex conversion is case-insensitive.
+    ///
+    /// ## Test Scenario
+    /// - Provides hex strings with mixed case
+    ///
+    /// ## Expected Outcome
+    /// - Both upper and lower case produce same RGB values
+    #[test]
+    fn test_hex_to_rgb_case_insensitive() {
+        assert_eq!(super::hex_to_rgb("AABBCC"), Some((170, 187, 204)));
+        assert_eq!(super::hex_to_rgb("aabbcc"), Some((170, 187, 204)));
+        assert_eq!(super::hex_to_rgb("AaBbCc"), Some((170, 187, 204)));
+    }
+
+    /// # Hex to RGB - Invalid Length
+    ///
+    /// Tests that hex strings with invalid length return None.
+    ///
+    /// ## Test Scenario
+    /// - Provides hex strings that are too short or too long
+    ///
+    /// ## Expected Outcome
+    /// - Returns None for invalid lengths
+    #[test]
+    fn test_hex_to_rgb_invalid_length() {
+        assert_eq!(super::hex_to_rgb(""), None);
+        assert_eq!(super::hex_to_rgb("fff"), None);
+        assert_eq!(super::hex_to_rgb("ffff"), None);
+        assert_eq!(super::hex_to_rgb("fffff"), None);
+        assert_eq!(super::hex_to_rgb("fffffff"), None);
+    }
+
+    /// # Hex to RGB - Invalid Characters
+    ///
+    /// Tests that hex strings with invalid characters return None.
+    ///
+    /// ## Test Scenario
+    /// - Provides hex strings with non-hex characters
+    ///
+    /// ## Expected Outcome
+    /// - Returns None for invalid hex characters
+    #[test]
+    fn test_hex_to_rgb_invalid_characters() {
+        assert_eq!(super::hex_to_rgb("gggggg"), None);
+        assert_eq!(super::hex_to_rgb("00gg00"), None);
+        assert_eq!(super::hex_to_rgb("zzzzzz"), None);
+    }
+
     // ==================== Client Creation ====================
 
     /// # Client Creation with String PAT
