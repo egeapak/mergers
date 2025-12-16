@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/migration/results.rs
+assertion_line: 833
 expression: harness.backend()
 ---
 " ✅ Eligible (1) │ ❓ Unsure (1) │ ❌ Not Merged (1)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
@@ -7,8 +8,8 @@ expression: harness.backend()
 "                                                                                "
 "┌Unsure PRs - Require manual review────────────────────────────────────────────┐"
 "│#101 Update user profile page design → Eligible                               │"
-"│  By: Bob Wilson | Work Items: 1                                              │"
-"│                                                                              │"
+"│  By: Bob Wilson |                                                            │"
+"│  WI: #1002(Active)                                                           │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
