@@ -572,7 +572,7 @@ impl PullRequestSelectionState {
                     f.render_widget(header_widget, chunks[0]);
 
                     // Render history section
-                    self.render_work_item_history_linear(f, chunks[1], work_item);
+                    self.render_work_item_history_linear(f, chunks[1], work_item, app);
 
                     // Render description - use repro steps for bugs, description for others
                     let (description_content, description_title) = match work_item_type
@@ -653,6 +653,7 @@ impl PullRequestSelectionState {
         f: &mut Frame,
         area: ratatui::layout::Rect,
         work_item: &crate::models::WorkItem,
+        app: &App,
     ) {
         use ratatui::text::{Line, Span};
 
@@ -794,8 +795,12 @@ impl PullRequestSelectionState {
                             }
                         };
 
-                        // Get color for the state
-                        let state_color = get_state_color(new_state);
+                        // Get color for the state - prefer cached API color, fallback to hardcoded
+                        let state_color = app
+                            .client
+                            .get_cached_state_color(new_state)
+                            .map(|(r, g, b)| Color::Rgb(r, g, b))
+                            .unwrap_or_else(|| get_state_color(new_state));
 
                         history_spans.push(Span::styled(
                             "●",

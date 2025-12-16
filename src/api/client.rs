@@ -20,6 +20,10 @@ use crate::utils::parse_since_date;
 /// Default maximum retries for backward compatibility (no longer used with azure_devops_rust_api).
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
+/// Type alias for state color cache: state_name -> (r, g, b)
+type StateColorCache =
+    std::sync::Arc<std::sync::RwLock<std::collections::HashMap<String, (u8, u8, u8)>>>;
+
 /// Azure DevOps API client for pull request and work item management.
 ///
 /// This client uses the official azure_devops_rust_api crate for API interactions,
@@ -52,6 +56,8 @@ pub struct AzureDevOpsClient {
     repository: String,
     git_client: git::Client,
     wit_client: wit::Client,
+    /// Cache of work item state colors: state_name -> (r, g, b)
+    state_color_cache: StateColorCache,
 }
 
 impl AzureDevOpsClient {
@@ -99,6 +105,9 @@ impl AzureDevOpsClient {
             repository,
             git_client,
             wit_client,
+            state_color_cache: std::sync::Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
         })
     }
 
@@ -512,6 +521,23 @@ impl AzureDevOpsClient {
             .fetch_state_colors_for_work_items(&all_work_items)
             .await;
 
+        // Convert hex color map to RGB and store in flattened cache (state -> RGB)
+        // States have the same colors across work item types
+        let mut rgb_color_map: std::collections::HashMap<String, (u8, u8, u8)> =
+            std::collections::HashMap::new();
+        for state_colors in color_map.values() {
+            for (state, hex_color) in state_colors {
+                if let Some(rgb) = hex_to_rgb(hex_color) {
+                    rgb_color_map.insert(state.clone(), rgb);
+                }
+            }
+        }
+
+        // Update the cache
+        if let Ok(mut cache) = self.state_color_cache.write() {
+            cache.extend(rgb_color_map);
+        }
+
         // Apply colors to work items in each PR (converting hex to RGB)
         for pr_with_wi in &mut results {
             for work_item in &mut pr_with_wi.work_items {
@@ -527,6 +553,17 @@ impl AzureDevOpsClient {
         }
 
         results
+    }
+
+    /// Gets the cached color for a work item state.
+    ///
+    /// Returns the RGB color tuple if available in cache, None otherwise.
+    /// State colors are consistent across work item types.
+    pub fn get_cached_state_color(&self, state: &str) -> Option<(u8, u8, u8)> {
+        self.state_color_cache
+            .read()
+            .ok()
+            .and_then(|cache| cache.get(state).copied())
     }
 
     /// Checks if a work item is in a terminal state.
