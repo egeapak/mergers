@@ -3,9 +3,9 @@ use crate::{
     models::{
         AppConfig, CherryPickItem, CleanupBranch, MigrationAnalysis, PullRequestWithWorkItems,
     },
-    ui::state::AppState,
+    ui::{browser::BrowserOpener, state::AppState},
 };
-use std::{process::Command, sync::Arc};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 pub struct App {
@@ -30,6 +30,9 @@ pub struct App {
 
     // Initial state for state machine
     pub initial_state: Option<Box<dyn AppState>>,
+
+    // Browser opener (trait object for testability)
+    browser_opener: Box<dyn BrowserOpener>,
 }
 
 impl App {
@@ -37,6 +40,20 @@ impl App {
         pull_requests: Vec<PullRequestWithWorkItems>,
         config: Arc<AppConfig>,
         client: AzureDevOpsClient,
+    ) -> Self {
+        Self::new_with_browser(
+            pull_requests,
+            config,
+            client,
+            Box::new(crate::ui::browser::SystemBrowserOpener),
+        )
+    }
+
+    pub fn new_with_browser(
+        pull_requests: Vec<PullRequestWithWorkItems>,
+        config: Arc<AppConfig>,
+        client: AzureDevOpsClient,
+        browser_opener: Box<dyn BrowserOpener>,
     ) -> Self {
         Self {
             config,
@@ -52,6 +69,7 @@ impl App {
             migration_analysis: None,
             cleanup_branches: Vec::new(),
             initial_state: None,
+            browser_opener,
         }
     }
 
@@ -130,15 +148,7 @@ impl App {
             self.repository(),
             pr_id
         );
-
-        #[cfg(target_os = "macos")]
-        let _ = Command::new("open").arg(&url).spawn();
-
-        #[cfg(target_os = "linux")]
-        let _ = Command::new("xdg-open").arg(&url).spawn();
-
-        #[cfg(target_os = "windows")]
-        let _ = Command::new("cmd").args(&["/C", "start", &url]).spawn();
+        self.browser_opener.open_url(&url);
     }
 
     pub fn open_work_items_in_browser(&self, work_items: &[crate::models::WorkItem]) {
@@ -149,15 +159,7 @@ impl App {
                 self.project(),
                 wi.id
             );
-
-            #[cfg(target_os = "macos")]
-            let _ = Command::new("open").arg(&url).spawn();
-
-            #[cfg(target_os = "linux")]
-            let _ = Command::new("xdg-open").arg(&url).spawn();
-
-            #[cfg(target_os = "windows")]
-            let _ = Command::new("cmd").args(&["/C", "start", &url]).spawn();
+            self.browser_opener.open_url(&url);
         }
     }
 
