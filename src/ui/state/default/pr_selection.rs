@@ -1161,8 +1161,8 @@ impl AppState for PullRequestSelectionState {
                     .margin(1)
                     .constraints([
                         Constraint::Length(3),      // Search status line
-                        Constraint::Percentage(47), // PR table (slightly smaller)
-                        Constraint::Percentage(37), // Work item details (slightly smaller)
+                        Constraint::Min(10),        // PR table (fills remaining space)
+                        Constraint::Percentage(40), // Work item details
                         Constraint::Length(3),      // Help section
                     ])
                     .split(f.area())
@@ -1182,8 +1182,8 @@ impl AppState for PullRequestSelectionState {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Percentage(50), // Top half for PR table
-                    Constraint::Percentage(40), // Bottom half for work item details
+                    Constraint::Min(10),        // PR table (fills remaining space)
+                    Constraint::Percentage(40), // Work item details
                     Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
