@@ -661,17 +661,12 @@ pub fn check_pr_merged_in_history(pr_id: i32, pr_title: &str, history: &CommitHi
         return true;
     }
 
-    // Strategy 2: Check for GitHub merge patterns
-    if check_github_merge_patterns_in_history(pr_id, pr_title, history) {
-        return true;
-    }
-
-    // Strategy 3: Search for PR title in commit messages (broader search)
+    // Strategy 2: Search for PR title in commit messages (broader search)
     if search_pr_title_in_history(pr_title, history) {
         return true;
     }
 
-    // Strategy 4: Search for PR ID references in commit messages
+    // Strategy 3: Search for PR ID references in commit messages
     if search_pr_id_in_history(pr_id, history) {
         return true;
     }
@@ -697,57 +692,6 @@ fn check_azure_devops_merge_pattern_in_history(
             let normalized_pr_title = normalize_title(pr_title);
 
             if normalized_commit_title == normalized_pr_title {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
-fn check_github_merge_patterns_in_history(
-    pr_id: i32,
-    pr_title: &str,
-    history: &CommitHistory,
-) -> bool {
-    let normalized_pr_title = normalize_title(pr_title);
-    let merge_pattern = format!("merge pull request #{}", pr_id);
-
-    for commit_message in &history.commit_messages {
-        let lowercase_commit = commit_message.to_lowercase();
-
-        // Pattern 1: "Merge pull request #123 from branch/name" - validate exact PR ID match
-        if let Some(pos) = lowercase_commit.find(&merge_pattern) {
-            let end_pos = pos + merge_pattern.len();
-            // PR ID must be followed by a non-digit (typically space before "from")
-            if is_pr_id_complete(&lowercase_commit, end_pos) {
-                return true;
-            }
-        }
-
-        // Pattern 2: "#123: Title" at the beginning - starts_with is exact enough
-        // since format includes ": " after the ID
-        if lowercase_commit.starts_with(&format!("#{}: ", pr_id)) {
-            let title_part = &lowercase_commit[format!("#{}: ", pr_id).len()..];
-            if normalize_title(title_part) == normalized_pr_title {
-                return true;
-            }
-        }
-
-        // Pattern 3: "Title (#123)" at the end - ends_with with closing paren is exact
-        if lowercase_commit.ends_with(&format!(" (#{})", pr_id)) {
-            let title_part =
-                &lowercase_commit[..lowercase_commit.len() - format!(" (#{})", pr_id).len()];
-            if normalize_title(title_part) == normalized_pr_title {
-                return true;
-            }
-        }
-
-        // Pattern 4: "[#123] Title" at the beginning - starts_with is exact enough
-        // since format includes "] " after the ID
-        if lowercase_commit.starts_with(&format!("[#{}] ", pr_id)) {
-            let title_part = &lowercase_commit[format!("[#{}] ", pr_id).len()..];
-            if normalize_title(title_part) == normalized_pr_title {
                 return true;
             }
         }
@@ -1550,48 +1494,6 @@ mod tests {
         ));
     }
 
-    /// # Check PR Merged in History (GitHub Patterns)
-    ///
-    /// Tests detection of GitHub PR merge patterns in commit history.
-    ///
-    /// ## Test Scenario
-    /// - Creates commits with GitHub merge commit patterns
-    /// - Tests PR merge detection using GitHub conventions
-    ///
-    /// ## Expected Outcome
-    /// - GitHub merge patterns are correctly identified
-    /// - Different GitHub merge styles are properly handled
-    #[test]
-    fn test_check_pr_merged_in_history_github_patterns() {
-        let (_temp_dir, repo_path) = setup_test_repo();
-
-        // Create commits with GitHub merge patterns
-        create_commit_with_message(&repo_path, "Merge pull request #456 from feature/auth");
-        create_commit_with_message(&repo_path, "#789: Fix authentication issue");
-        create_commit_with_message(&repo_path, "Authentication fix (#321)");
-        create_commit_with_message(&repo_path, "[#654] Update login system");
-
-        let history = get_target_branch_history(&repo_path, "main").unwrap();
-
-        // Test GitHub pattern matches - these should match based on PR ID presence
-        assert!(check_pr_merged_in_history(456, "Some title", &history));
-        assert!(check_pr_merged_in_history(
-            789,
-            "Fix authentication issue",
-            &history
-        ));
-        assert!(check_pr_merged_in_history(
-            321,
-            "Authentication fix",
-            &history
-        ));
-        assert!(check_pr_merged_in_history(
-            654,
-            "Update login system",
-            &history
-        ));
-    }
-
     /// # Check PR Merged in History (Title Search)
     ///
     /// Tests detection of PR merges by searching for PR titles in commit messages.
@@ -1683,7 +1585,7 @@ mod tests {
 
         // Create test commits with known patterns
         create_commit_with_message(&repo_path, "Merged PR 123: Fix authentication bug");
-        create_commit_with_message(&repo_path, "Merge pull request #456 from feature/auth");
+        create_commit_with_message(&repo_path, "Merged PR 456: Add new feature");
         create_commit_with_message(&repo_path, "Regular commit without PR pattern");
         create_commit_with_message(&repo_path, "Fix issue reported in PR789");
 
@@ -1692,7 +1594,7 @@ mod tests {
         // Test cases that should work
         let test_cases = vec![
             (123, "Fix authentication bug", true), // Should match Azure DevOps pattern
-            (456, "Some feature", true),           // Should match GitHub pattern
+            (456, "Add new feature", true),        // Should match Azure DevOps pattern
             (789, "Any title", true),              // Should match PR ID reference
             (999, "Non-existent PR", false),       // Should not match
         ];
@@ -1726,7 +1628,7 @@ mod tests {
 
         // Create commits with specific PR IDs (using 4-5 digit IDs to test prefix matching)
         create_commit_with_message(&repo_path, "Merged PR 12345: Feature implementation");
-        create_commit_with_message(&repo_path, "Merge pull request #56789 from feature/branch");
+        create_commit_with_message(&repo_path, "Merged PR 56789: Another feature");
         create_commit_with_message(&repo_path, "Fix issue reported in PR99999");
         create_commit_with_message(&repo_path, "Related to #111111 discussion");
 
@@ -1765,11 +1667,11 @@ mod tests {
         // These SHOULD match (exact PR IDs)
         assert!(
             check_pr_merged_in_history(12345, "Feature implementation", &history),
-            "PR 12345 should match its exact commit"
+            "PR 12345 should match its exact Azure DevOps merge commit"
         );
         assert!(
-            check_pr_merged_in_history(56789, "Some feature", &history),
-            "PR 56789 should match its exact GitHub merge commit"
+            check_pr_merged_in_history(56789, "Another feature", &history),
+            "PR 56789 should match its exact Azure DevOps merge commit"
         );
         assert!(
             check_pr_merged_in_history(99999, "Any title", &history),
