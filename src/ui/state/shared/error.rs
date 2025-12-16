@@ -43,7 +43,7 @@ impl AppState for ErrorState {
             .alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
-        let error_msg = app.error_message.as_deref().unwrap_or("Unknown error");
+        let error_msg = app.error_message().unwrap_or("Unknown error");
         let error = Paragraph::new(error_msg)
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL))
@@ -90,8 +90,9 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.error_message =
-                Some("Connection failed: Unable to reach Azure DevOps API".to_string());
+            harness.app.set_error_message(Some(
+                "Connection failed: Unable to reach Azure DevOps API".to_string(),
+            ));
             let state = Box::new(ErrorState::new());
 
             harness.render_state(state);
@@ -119,12 +120,12 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.error_message = Some(
+            harness.app.set_error_message(Some(
                 "Authentication failed: The Personal Access Token (PAT) provided is invalid or has expired. \
                 Please verify that your PAT has the required permissions (Code: Read, Work Items: Read) and \
                 has not been revoked. You can generate a new PAT from Azure DevOps user settings."
                     .to_string(),
-            );
+            ));
             let state = Box::new(ErrorState::new());
 
             harness.render_state(state);
@@ -152,7 +153,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.error_message = None;
+            harness.app.set_error_message(None);
             let state = Box::new(ErrorState::new());
 
             harness.render_state(state);
@@ -180,7 +181,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.error_message = Some(
+            harness.app.set_error_message(Some(
                 "Git operation failed:\n\
                 Command: git cherry-pick abc123\n\
                 Exit code: 1\n\
@@ -188,7 +189,7 @@ mod tests {
                 Error: CONFLICT (content): Merge conflict in src/main.rs\n\
                 Please resolve conflicts and continue."
                     .to_string(),
-            );
+            ));
             let state = Box::new(ErrorState::new());
 
             harness.render_state(state);
@@ -216,10 +217,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.error_message = Some(
+            harness.app.set_error_message(Some(
                 r#"Parse error: Unexpected character '"' at position 42. Expected one of: ['{', '[', 'true', 'false', 'null']. The JSON response from the API appears malformed. 🔧 Check API version compatibility."#
                     .to_string(),
-            );
+            ));
             let state = Box::new(ErrorState::new());
 
             harness.render_state(state);

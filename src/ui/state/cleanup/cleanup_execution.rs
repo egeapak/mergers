@@ -44,12 +44,14 @@ impl CleanupExecutionState {
 
         self.start_time = Some(Instant::now());
 
-        // Get repo path
-        let repo_path = match &app.repo_path {
-            Some(path) => path.clone(),
+        // Get repo path (clone it to avoid borrow issues)
+        let repo_path_opt = app.repo_path().map(|p| p.to_path_buf());
+
+        let repo_path = match repo_path_opt {
+            Some(path) => path,
             None => {
                 // This shouldn't happen, but handle it gracefully
-                for branch in &mut app.cleanup_branches {
+                for branch in app.cleanup_branches_mut() {
                     if branch.selected {
                         branch.status =
                             CleanupStatus::Failed("No repository path available".to_string());
@@ -62,7 +64,7 @@ impl CleanupExecutionState {
 
         // Spawn deletion tasks for selected branches
         let mut tasks = Vec::new();
-        for (idx, branch) in app.cleanup_branches.iter_mut().enumerate() {
+        for (idx, branch) in app.cleanup_branches_mut().iter_mut().enumerate() {
             if branch.selected {
                 branch.status = CleanupStatus::InProgress;
                 let branch_name = branch.name.clone();
@@ -93,9 +95,9 @@ impl CleanupExecutionState {
 
                 // Process completed task
                 if let Ok((idx, result)) = task.await
-                    && idx < app.cleanup_branches.len()
+                    && idx < app.cleanup_branches().len()
                 {
-                    app.cleanup_branches[idx].status = match result {
+                    app.cleanup_branches_mut()[idx].status = match result {
                         Ok(_) => CleanupStatus::Success,
                         Err(e) => CleanupStatus::Failed(e),
                     };
@@ -112,9 +114,9 @@ impl CleanupExecutionState {
     }
 
     fn get_progress(&self, app: &App) -> (usize, usize) {
-        let total = app.cleanup_branches.iter().filter(|b| b.selected).count();
+        let total = app.cleanup_branches().iter().filter(|b| b.selected).count();
         let completed = app
-            .cleanup_branches
+            .cleanup_branches()
             .iter()
             .filter(|b| {
                 b.selected && matches!(b.status, CleanupStatus::Success | CleanupStatus::Failed(_))
@@ -169,7 +171,7 @@ impl AppState for CleanupExecutionState {
 
         // Branch status list
         let items: Vec<ListItem> = app
-            .cleanup_branches
+            .cleanup_branches()
             .iter()
             .filter(|b| b.selected)
             .map(|branch| {
@@ -264,7 +266,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches for cleanup
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -312,7 +314,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with mixed statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -370,7 +372,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with final statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),

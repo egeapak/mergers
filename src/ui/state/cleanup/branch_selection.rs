@@ -34,7 +34,7 @@ impl CleanupBranchSelectionState {
     fn next(&mut self, app: &App) {
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= app.cleanup_branches.len() - 1 {
+                if i >= app.cleanup_branches().len() - 1 {
                     0
                 } else {
                     i + 1
@@ -49,7 +49,7 @@ impl CleanupBranchSelectionState {
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    app.cleanup_branches.len() - 1
+                    app.cleanup_branches().len() - 1
                 } else {
                     i - 1
                 }
@@ -61,14 +61,14 @@ impl CleanupBranchSelectionState {
 
     fn toggle_selection(&mut self, app: &mut App) {
         if let Some(i) = self.table_state.selected()
-            && i < app.cleanup_branches.len()
+            && i < app.cleanup_branches().len()
         {
-            app.cleanup_branches[i].selected = !app.cleanup_branches[i].selected;
+            app.cleanup_branches_mut()[i].selected = !app.cleanup_branches()[i].selected;
         }
     }
 
     fn select_all_merged(&mut self, app: &mut App) {
-        for branch in &mut app.cleanup_branches {
+        for branch in app.cleanup_branches_mut() {
             if branch.is_merged {
                 branch.selected = true;
             }
@@ -76,13 +76,13 @@ impl CleanupBranchSelectionState {
     }
 
     fn deselect_all(&mut self, app: &mut App) {
-        for branch in &mut app.cleanup_branches {
+        for branch in app.cleanup_branches_mut() {
             branch.selected = false;
         }
     }
 
     fn get_selected_count(&self, app: &App) -> usize {
-        app.cleanup_branches.iter().filter(|b| b.selected).count()
+        app.cleanup_branches().iter().filter(|b| b.selected).count()
     }
 }
 
@@ -126,7 +126,7 @@ impl AppState for CleanupBranchSelectionState {
             });
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-        let rows = app.cleanup_branches.iter().map(|branch| {
+        let rows = app.cleanup_branches().iter().map(|branch| {
             let checkbox = if branch.selected { "☑" } else { "☐" };
             let status = if branch.is_merged {
                 Span::styled("Merged", Style::default().fg(Color::Green))
@@ -286,7 +286,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add sample branches
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -341,7 +341,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add sample branches with some selected
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),

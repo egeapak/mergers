@@ -79,7 +79,7 @@ impl CleanupDataLoadingState {
 
         let repo_path = local_repo.unwrap().to_string();
         let target_branch =
-            if let crate::models::AppConfig::Cleanup { cleanup, .. } = app.config.as_ref() {
+            if let crate::models::AppConfig::Cleanup { cleanup, .. } = app.config().as_ref() {
                 cleanup.target.value().to_string()
             } else {
                 app.target_branch().to_string()
@@ -238,11 +238,11 @@ impl AppState for CleanupDataLoadingState {
                             && let Ok(Ok(branches)) = task.await
                         {
                             // Update app state with loaded branches
-                            app.cleanup_branches = branches;
+                            *app.cleanup_branches_mut() = branches;
 
                             // Check if we have a local_repo path set
                             if let Some(local_repo) = app.local_repo() {
-                                app.repo_path = Some(std::path::PathBuf::from(local_repo));
+                                app.set_repo_path(Some(std::path::PathBuf::from(local_repo)));
                             }
 
                             // Transition to branch selection

@@ -49,8 +49,6 @@ pub struct PullRequestSelectionState {
     last_click_time: Option<Instant>,
     last_click_row: Option<usize>,
     table_area: Option<Rect>,
-    // Details panel toggle
-    pub show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -81,8 +79,6 @@ impl PullRequestSelectionState {
             last_click_time: None,
             last_click_row: None,
             table_area: None,
-            // Details panel toggle - default to shown
-            show_details: true,
         }
     }
 
@@ -156,7 +152,7 @@ impl PullRequestSelectionState {
 
         match query {
             SearchQuery::PullRequestId(pr_id) => {
-                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                for (idx, pr_with_wi) in app.pull_requests().iter().enumerate() {
                     if pr_with_wi.pr.id == pr_id {
                         self.search_results.push(idx);
                         break; // Only one PR with this ID should exist
@@ -164,7 +160,7 @@ impl PullRequestSelectionState {
                 }
             }
             SearchQuery::WorkItemId(wi_id) => {
-                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                for (idx, pr_with_wi) in app.pull_requests().iter().enumerate() {
                     if pr_with_wi.work_items.iter().any(|wi| wi.id == wi_id) {
                         self.search_results.push(idx);
                     }
@@ -172,7 +168,7 @@ impl PullRequestSelectionState {
             }
             SearchQuery::PullRequestTitle(search_term) => {
                 let search_term_lower = search_term.to_lowercase();
-                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                for (idx, pr_with_wi) in app.pull_requests().iter().enumerate() {
                     if pr_with_wi
                         .pr
                         .title
@@ -185,7 +181,7 @@ impl PullRequestSelectionState {
             }
             SearchQuery::WorkItemTitle(search_term) => {
                 let search_term_lower = search_term.to_lowercase();
-                for (idx, pr_with_wi) in app.pull_requests.iter().enumerate() {
+                for (idx, pr_with_wi) in app.pull_requests().iter().enumerate() {
                     let has_matching_work_item = pr_with_wi.work_items.iter().any(|wi| {
                         wi.fields
                             .title
@@ -293,32 +289,19 @@ impl PullRequestSelectionState {
     }
 
     fn initialize_selection(&mut self, app: &App) {
-        if !app.pull_requests.is_empty() && self.table_state.selected().is_none() {
+        if !app.pull_requests().is_empty() && self.table_state.selected().is_none() {
             self.table_state.select(Some(0));
         }
-        self.update_scrollbar_state(app.pull_requests.len());
-    }
-
-    /// Sort PRs by closed_date (completion date), newest first
-    fn sort_prs_by_date(
-        prs: &[crate::models::PullRequestWithWorkItems],
-    ) -> Vec<&crate::models::PullRequestWithWorkItems> {
-        let mut sorted: Vec<&crate::models::PullRequestWithWorkItems> = prs.iter().collect();
-        sorted.sort_by(|a, b| {
-            let date_a = a.pr.closed_date.as_deref().unwrap_or("");
-            let date_b = b.pr.closed_date.as_deref().unwrap_or("");
-            date_b.cmp(date_a) // Newest first
-        });
-        sorted
+        self.update_scrollbar_state(app.pull_requests().len());
     }
 
     fn next(&mut self, app: &App) {
-        if app.pull_requests.is_empty() {
+        if app.pull_requests().is_empty() {
             return;
         }
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= app.pull_requests.len() - 1 {
+                if i >= app.pull_requests().len() - 1 {
                     0
                 } else {
                     i + 1
@@ -328,17 +311,17 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
-        self.update_scrollbar_state(app.pull_requests.len());
+        self.update_scrollbar_state(app.pull_requests().len());
     }
 
     fn previous(&mut self, app: &App) {
-        if app.pull_requests.is_empty() {
+        if app.pull_requests().is_empty() {
             return;
         }
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    app.pull_requests.len() - 1
+                    app.pull_requests().len() - 1
                 } else {
                     i - 1
                 }
@@ -347,12 +330,12 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
-        self.update_scrollbar_state(app.pull_requests.len());
+        self.update_scrollbar_state(app.pull_requests().len());
     }
 
     fn toggle_selection(&mut self, app: &mut App) {
         if let Some(i) = self.table_state.selected()
-            && let Some(pr) = app.pull_requests.get_mut(i)
+            && let Some(pr) = app.pull_requests_mut().get_mut(i)
         {
             pr.selected = !pr.selected;
         }
@@ -360,7 +343,7 @@ impl PullRequestSelectionState {
 
     fn next_work_item(&mut self, app: &App) {
         if let Some(pr_index) = self.table_state.selected()
-            && let Some(pr) = app.pull_requests.get(pr_index)
+            && let Some(pr) = app.pull_requests().get(pr_index)
             && !pr.work_items.is_empty()
         {
             self.work_item_index = (self.work_item_index + 1) % pr.work_items.len();
@@ -369,7 +352,7 @@ impl PullRequestSelectionState {
 
     fn previous_work_item(&mut self, app: &App) {
         if let Some(pr_index) = self.table_state.selected()
-            && let Some(pr) = app.pull_requests.get(pr_index)
+            && let Some(pr) = app.pull_requests().get(pr_index)
             && !pr.work_items.is_empty()
         {
             if self.work_item_index == 0 {
@@ -383,7 +366,7 @@ impl PullRequestSelectionState {
     fn collect_distinct_work_item_states(&self, app: &App) -> Vec<String> {
         let mut states = HashSet::new();
 
-        for pr in &app.pull_requests {
+        for pr in app.pull_requests() {
             for work_item in &pr.work_items {
                 if let Some(state) = &work_item.fields.state {
                     states.insert(state.clone());
@@ -401,7 +384,7 @@ impl PullRequestSelectionState {
             return;
         }
 
-        for pr in &mut app.pull_requests {
+        for pr in app.pull_requests_mut() {
             if pr.work_items.is_empty() {
                 continue;
             }
@@ -419,7 +402,7 @@ impl PullRequestSelectionState {
     }
 
     fn clear_all_selections(&self, app: &mut App) {
-        for pr in &mut app.pull_requests {
+        for pr in app.pull_requests_mut() {
             pr.selected = false;
         }
     }
@@ -467,7 +450,7 @@ impl PullRequestSelectionState {
 
     fn render_work_item_details(&self, f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         if let Some(pr_index) = self.table_state.selected() {
-            if let Some(pr) = app.pull_requests.get(pr_index) {
+            if let Some(pr) = app.pull_requests().get(pr_index) {
                 if pr.work_items.is_empty() {
                     let no_items =
                         Paragraph::new("No work items associated with this pull request.")
@@ -529,7 +512,7 @@ impl PullRequestSelectionState {
                         _ => Color::White,
                     };
 
-                    let state_color = get_state_color_with_rgb(state, work_item.fields.state_color);
+                    let state_color = get_state_color(state);
 
                     // Create header content with spans for different colors and proper alignment
                     use ratatui::text::{Line, Span};
@@ -585,7 +568,7 @@ impl PullRequestSelectionState {
                     f.render_widget(header_widget, chunks[0]);
 
                     // Render history section
-                    self.render_work_item_history_linear(f, chunks[1], work_item, app);
+                    self.render_work_item_history_linear(f, chunks[1], work_item);
 
                     // Render description - use repro steps for bugs, description for others
                     let (description_content, description_title) = match work_item_type
@@ -666,7 +649,6 @@ impl PullRequestSelectionState {
         f: &mut Frame,
         area: ratatui::layout::Rect,
         work_item: &crate::models::WorkItem,
-        app: &App,
     ) {
         use ratatui::text::{Line, Span};
 
@@ -808,12 +790,8 @@ impl PullRequestSelectionState {
                             }
                         };
 
-                        // Get color for the state - prefer cached API color, fallback to hardcoded
-                        let state_color = app
-                            .client
-                            .get_cached_state_color(new_state)
-                            .map(|(r, g, b)| Color::Rgb(r, g, b))
-                            .unwrap_or_else(|| get_state_color(new_state));
+                        // Get color for the state
+                        let state_color = get_state_color(new_state);
 
                         history_spans.push(Span::styled(
                             "●",
@@ -1149,10 +1127,10 @@ impl AppState for PullRequestSelectionState {
         self.initialize_selection(app);
 
         // Always sync scrollbar state with current selection
-        self.update_scrollbar_state(app.pull_requests.len());
+        self.update_scrollbar_state(app.pull_requests().len());
 
         // Handle empty PR list
-        if app.pull_requests.is_empty() {
+        if app.pull_requests().is_empty() {
             let empty_message =
                 Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
                     .style(Style::default().fg(Color::Yellow))
@@ -1166,37 +1144,15 @@ impl AppState for PullRequestSelectionState {
             return;
         }
 
-        // Layout depends on search mode and details panel visibility
+        // Add search status line if in search iteration mode
         let chunks = if self.search_iteration_mode {
-            if self.show_details {
-                Layout::default()
-                    .direction(Direction::Vertical)
-                    .margin(1)
-                    .constraints([
-                        Constraint::Length(3),      // Search status line
-                        Constraint::Min(10),        // PR table (fills remaining space)
-                        Constraint::Percentage(40), // Work item details
-                        Constraint::Length(3),      // Help section
-                    ])
-                    .split(f.area())
-            } else {
-                Layout::default()
-                    .direction(Direction::Vertical)
-                    .margin(1)
-                    .constraints([
-                        Constraint::Length(3), // Search status line
-                        Constraint::Min(10),   // PR table (full height)
-                        Constraint::Length(3), // Help section
-                    ])
-                    .split(f.area())
-            }
-        } else if self.show_details {
             Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Min(10),        // PR table (fills remaining space)
-                    Constraint::Percentage(40), // Work item details
+                    Constraint::Length(3),      // Search status line
+                    Constraint::Percentage(47), // PR table (slightly smaller)
+                    Constraint::Percentage(37), // Work item details (slightly smaller)
                     Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
@@ -1205,8 +1161,9 @@ impl AppState for PullRequestSelectionState {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Min(10),   // PR table (full height)
-                    Constraint::Length(3), // Help section
+                    Constraint::Percentage(50), // Top half for PR table
+                    Constraint::Percentage(40), // Bottom half for work item details
+                    Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
         };
@@ -1230,19 +1187,12 @@ impl AppState for PullRequestSelectionState {
             });
         let header = Row::new(header_cells).height(1);
 
-        // Sort PRs by closed_date (newest first)
-        let sorted_prs = Self::sort_prs_by_date(&app.pull_requests);
-
         // Create table rows
-        let rows: Vec<Row> = sorted_prs
+        let rows: Vec<Row> = app
+            .pull_requests()
             .iter()
-            .map(|pr_with_wi| {
-                // Find the original index in app.pull_requests for this PR
-                let pr_index = app
-                    .pull_requests
-                    .iter()
-                    .position(|p| p.pr.id == pr_with_wi.pr.id)
-                    .unwrap_or(0);
+            .enumerate()
+            .map(|(pr_index, pr_with_wi)| {
                 let selected = if pr_with_wi.selected { "✓" } else { " " };
 
                 let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
@@ -1255,29 +1205,19 @@ impl AppState for PullRequestSelectionState {
                     "Active".to_string()
                 };
 
-                // Build work items as colored spans instead of a plain string
-                let work_items_spans: Vec<ratatui::text::Span> =
-                    if !pr_with_wi.work_items.is_empty() {
-                        let mut spans = Vec::new();
-                        for (idx, wi) in pr_with_wi.work_items.iter().enumerate() {
-                            if idx > 0 {
-                                spans.push(ratatui::text::Span::raw(", "));
-                            }
+                let work_items = if !pr_with_wi.work_items.is_empty() {
+                    pr_with_wi
+                        .work_items
+                        .iter()
+                        .map(|wi| {
                             let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                            let color = get_state_color_with_rgb(state, wi.fields.state_color);
-                            spans.push(ratatui::text::Span::styled(
-                                format!("#{} ({})", wi.id, state),
-                                Style::default().fg(if pr_with_wi.selected {
-                                    Color::White
-                                } else {
-                                    color
-                                }),
-                            ));
-                        }
-                        spans
-                    } else {
-                        vec![ratatui::text::Span::raw("")]
-                    };
+                            format!("#{} ({})", wi.id, state)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else {
+                    String::new()
+                };
 
                 // Check if this row is a search result
                 let is_search_result = self.search_results.contains(&pr_index);
@@ -1286,9 +1226,9 @@ impl AppState for PullRequestSelectionState {
                     && self.search_results.get(self.current_search_index) == Some(&pr_index);
 
                 // Apply background highlighting for selected items and search results
-                // Selected items use lighter green for better visibility
+                // Selected items use dark green for contrast with DarkGray cursor highlight
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::Rgb(0, 120, 0))
+                    Style::default().bg(Color::Rgb(0, 60, 0))
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
@@ -1330,7 +1270,11 @@ impl AppState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Cell::from(ratatui::text::Line::from(work_items_spans)),
+                    Cell::from(work_items).style(if pr_with_wi.selected {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
+                    }),
                 ];
 
                 Row::new(cells).height(1).style(row_style)
@@ -1349,12 +1293,12 @@ impl AppState for PullRequestSelectionState {
             ],
         )
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            "Pull Requests ({}/{})",
-            app.pull_requests.iter().filter(|pr| pr.selected).count(),
-            app.pull_requests.len()
-        )))
-        .row_highlight_style(Style::default().bg(Color::Rgb(0, 80, 0)))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Pull Requests"),
+        )
+        .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
         // Store the table area for mouse hit-testing
@@ -1378,16 +1322,14 @@ impl AppState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details if enabled
-        if self.show_details {
-            self.render_work_item_details(f, app, chunks[chunk_idx]);
-            chunk_idx += 1;
-        }
+        // Render work item details
+        self.render_work_item_details(f, app, chunks[chunk_idx]);
+        chunk_idx += 1;
 
         let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Work Items | n/N: Next/Prev result | Esc: Exit search | Space: Toggle | d: Toggle details | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Confirm | p: PR | w: Work Items | s: Multi-select | d: Toggle details | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"
         };
 
         let help = List::new(vec![ListItem::new(help_text)])
@@ -1553,7 +1495,7 @@ impl AppState for PullRequestSelectionState {
                 }
                 KeyCode::Char('p') => {
                     if let Some(i) = self.table_state.selected()
-                        && let Some(pr) = app.pull_requests.get(i)
+                        && let Some(pr) = app.pull_requests().get(i)
                     {
                         app.open_pr_in_browser(pr.pr.id);
                     }
@@ -1561,7 +1503,7 @@ impl AppState for PullRequestSelectionState {
                 }
                 KeyCode::Char('w') => {
                     if let Some(pr_index) = self.table_state.selected()
-                        && let Some(pr) = app.pull_requests.get(pr_index)
+                        && let Some(pr) = app.pull_requests().get(pr_index)
                         && !pr.work_items.is_empty()
                     {
                         // Ensure work_item_index is within bounds
@@ -1589,11 +1531,6 @@ impl AppState for PullRequestSelectionState {
                     // Refresh: go back to data loading state to re-fetch PRs
                     StateChange::Change(Box::new(DataLoadingState::new()))
                 }
-                KeyCode::Char('d') => {
-                    // Toggle details panel
-                    self.show_details = !self.show_details;
-                    StateChange::Keep
-                }
                 _ => StateChange::Keep,
             }
         }
@@ -1619,7 +1556,7 @@ impl AppState for PullRequestSelectionState {
                 StateChange::Keep
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(row) = self.mouse_y_to_row(event.row, app.pull_requests.len()) {
+                if let Some(row) = self.mouse_y_to_row(event.row, app.pull_requests().len()) {
                     let now = Instant::now();
                     let is_double_click = self
                         .last_click_time
@@ -1650,15 +1587,27 @@ impl AppState for PullRequestSelectionState {
     }
 }
 
-/// Gets a color for a work item state, preferring API color over fallback.
-fn get_state_color_with_rgb(state: &str, api_color: Option<(u8, u8, u8)>) -> Color {
-    // If we have an API color (already converted to RGB), use it
-    if let Some((r, g, b)) = api_color {
-        return Color::Rgb(r, g, b);
+fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
+    if work_items.is_empty() {
+        return Color::Gray;
     }
 
-    // Fall back to hardcoded colors
-    get_state_color(state)
+    // Return color based on the most important state
+    for wi in work_items {
+        if let Some(state) = &wi.fields.state {
+            match state.as_str() {
+                "Next Merged" | "Next Closed" => return get_state_color(state),
+                _ => {}
+            }
+        }
+    }
+
+    work_items
+        .iter()
+        .filter_map(|wi| wi.fields.state.as_deref())
+        .next()
+        .map(get_state_color)
+        .unwrap_or(Color::White)
 }
 
 fn get_state_color(state: &str) -> Color {
@@ -1704,7 +1653,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let state = Box::new(PullRequestSelectionState::new());
             harness.render_state(state);
@@ -1763,7 +1712,7 @@ mod tests {
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
             prs[2].selected = true;
-            harness.app.pull_requests = prs;
+            *harness.app.pull_requests_mut() = prs;
 
             let state = Box::new(PullRequestSelectionState::new());
             harness.render_state(state);
@@ -1792,7 +1741,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.search_iteration_mode = true;
@@ -1827,7 +1776,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.multi_select_mode = true;
@@ -1866,7 +1815,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.multi_select_mode = true;
@@ -1901,7 +1850,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = crate::ui::testing::create_large_pr_list();
+            *harness.app.pull_requests_mut() = crate::ui::testing::create_large_pr_list();
 
             let mut state = PullRequestSelectionState::new();
             // Scroll to middle of list to show scrolling behavior
@@ -1935,7 +1884,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let states = crate::ui::testing::create_test_work_item_states();
             let mut state = PullRequestSelectionState::new();
@@ -1966,7 +1915,7 @@ mod tests {
     fn test_scrollbar_state_updates_on_next() {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.initialize_selection(&harness.app);
@@ -2003,7 +1952,7 @@ mod tests {
     fn test_scrollbar_state_updates_on_previous() {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.initialize_selection(&harness.app);
@@ -2013,7 +1962,7 @@ mod tests {
 
         // Navigate to previous (should wrap to end)
         state.previous(&harness.app);
-        let last_idx = harness.app.pull_requests.len() - 1;
+        let last_idx = harness.app.pull_requests().len() - 1;
         assert_eq!(state.table_state.selected(), Some(last_idx));
 
         // Navigate previous again
@@ -2037,7 +1986,7 @@ mod tests {
     fn test_scrollbar_state_initialized_correctly() {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.initialize_selection(&harness.app);
@@ -2090,7 +2039,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.table_state.select(Some(0));
@@ -2139,7 +2088,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.table_state.select(Some(1)); // Start at second item
@@ -2186,7 +2135,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.table_state.select(Some(0));
@@ -2235,7 +2184,7 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.table_state.select(Some(0));
@@ -2293,7 +2242,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
 
@@ -2317,7 +2266,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(1));
@@ -2341,7 +2290,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(0));
@@ -2365,25 +2314,25 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(0));
 
-        assert!(!harness.app.pull_requests[0].selected);
+        assert!(!harness.app.pull_requests()[0].selected);
 
         let result = state
             .process_key(KeyCode::Char(' '), &mut harness.app)
             .await;
         assert!(matches!(result, StateChange::Keep));
-        assert!(harness.app.pull_requests[0].selected);
+        assert!(harness.app.pull_requests()[0].selected);
 
         // Toggle again
         let result = state
             .process_key(KeyCode::Char(' '), &mut harness.app)
             .await;
         assert!(matches!(result, StateChange::Keep));
-        assert!(!harness.app.pull_requests[0].selected);
+        assert!(!harness.app.pull_requests()[0].selected);
     }
 
     /// # PR Selection State - Enter Without Selection
@@ -2400,7 +2349,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
 
@@ -2425,7 +2374,7 @@ mod tests {
 
         let mut prs = create_test_pull_requests();
         prs[0].selected = true;
-        harness.app.pull_requests = prs;
+        *harness.app.pull_requests_mut() = prs;
 
         let mut state = PullRequestSelectionState::new();
 
@@ -2447,7 +2396,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
 
@@ -2471,7 +2420,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         assert!(!state.search_mode);
@@ -2497,7 +2446,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         assert!(!state.multi_select_mode);
@@ -2524,7 +2473,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.search_mode = true;
@@ -2566,7 +2515,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.search_mode = true;
@@ -2591,7 +2540,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
@@ -2620,7 +2569,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
@@ -2654,7 +2603,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
@@ -2678,7 +2627,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(2)); // Select PR with multiple work items
@@ -2705,7 +2654,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(0));
@@ -2730,7 +2679,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(0));
@@ -2759,7 +2708,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.search_mode = true;
@@ -2788,7 +2737,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.search_mode = true;
@@ -2818,7 +2767,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.pull_requests = create_test_pull_requests();
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let mut state = PullRequestSelectionState::new();
             state.search_mode = true;
@@ -2864,7 +2813,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.search_iteration_mode = true;
@@ -2899,7 +2848,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.search_iteration_mode = true;
@@ -2924,7 +2873,7 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.pull_requests = create_test_pull_requests();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
 
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
@@ -2956,7 +2905,7 @@ mod tests {
 
         let mut prs = create_test_pull_requests();
         prs[0].selected = true;
-        harness.app.pull_requests = prs;
+        *harness.app.pull_requests_mut() = prs;
 
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
@@ -2965,235 +2914,6 @@ mod tests {
             .process_key(KeyCode::Char('c'), &mut harness.app)
             .await;
         assert!(!state.multi_select_mode);
-        assert!(!harness.app.pull_requests[0].selected);
-    }
-
-    // ==================== State Color Tests ====================
-
-    /// # Get State Color With RGB - Uses API Color
-    ///
-    /// Tests that API-provided RGB color takes precedence.
-    ///
-    /// ## Test Scenario
-    /// - Provides both state name and API RGB color
-    ///
-    /// ## Expected Outcome
-    /// - Returns the API-provided RGB color
-    #[test]
-    fn test_get_state_color_with_rgb_uses_api_color() {
-        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)));
-        assert_eq!(color, Color::Rgb(0, 122, 204));
-    }
-
-    /// # Get State Color With RGB - Falls Back to Hardcoded
-    ///
-    /// Tests that hardcoded colors are used when no API color is provided.
-    ///
-    /// ## Test Scenario
-    /// - Provides state name without API color
-    ///
-    /// ## Expected Outcome
-    /// - Returns the hardcoded color for that state
-    #[test]
-    fn test_get_state_color_with_rgb_fallback() {
-        assert_eq!(get_state_color_with_rgb("Closed", None), Color::Green);
-        assert_eq!(get_state_color_with_rgb("Active", None), Color::Blue);
-        assert_eq!(get_state_color_with_rgb("New", None), Color::Gray);
-    }
-
-    /// # Get State Color - Known States
-    ///
-    /// Tests hardcoded color mappings for known work item states.
-    ///
-    /// ## Test Scenario
-    /// - Provides various known state names
-    ///
-    /// ## Expected Outcome
-    /// - Returns correct hardcoded color for each state
-    #[test]
-    fn test_get_state_color_known_states() {
-        assert_eq!(get_state_color("Dev Closed"), Color::LightGreen);
-        assert_eq!(get_state_color("Closed"), Color::Green);
-        assert_eq!(get_state_color("Resolved"), Color::Rgb(255, 165, 0));
-        assert_eq!(get_state_color("In Review"), Color::Yellow);
-        assert_eq!(get_state_color("New"), Color::Gray);
-        assert_eq!(get_state_color("Active"), Color::Blue);
-        assert_eq!(get_state_color("Next Merged"), Color::Red);
-        assert_eq!(get_state_color("Next Closed"), Color::Magenta);
-        assert_eq!(get_state_color("Hold"), Color::Cyan);
-    }
-
-    /// # Get State Color - Unknown State
-    ///
-    /// Tests fallback color for unknown states.
-    ///
-    /// ## Test Scenario
-    /// - Provides an unknown state name
-    ///
-    /// ## Expected Outcome
-    /// - Returns white as the default fallback color
-    #[test]
-    fn test_get_state_color_unknown_state() {
-        assert_eq!(get_state_color("Unknown State"), Color::White);
-        assert_eq!(get_state_color(""), Color::White);
-        assert_eq!(get_state_color("Some Random State"), Color::White);
-    }
-
-    // ==================== PR Sorting Tests ====================
-
-    /// # Sort PRs By Date - Newest First
-    ///
-    /// Tests that PRs are sorted by closed_date with newest first.
-    #[test]
-    fn test_sort_prs_by_date_newest_first() {
-        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
-
-        let prs = vec![
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 100,
-                    title: "Oldest".to_string(),
-                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 101,
-                    title: "Newest".to_string(),
-                    closed_date: Some("2024-01-14T10:00:00Z".to_string()),
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 102,
-                    title: "Middle".to_string(),
-                    closed_date: Some("2024-01-12T10:00:00Z".to_string()),
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-        ];
-
-        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
-        assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].pr.id, 101); // Newest
-        assert_eq!(sorted[1].pr.id, 102); // Middle
-        assert_eq!(sorted[2].pr.id, 100); // Oldest
-    }
-
-    /// # Sort PRs By Date - With None Dates
-    ///
-    /// Tests that PRs without closed_date are sorted last.
-    #[test]
-    fn test_sort_prs_by_date_with_none() {
-        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
-
-        let prs = vec![
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 100,
-                    title: "With date".to_string(),
-                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 101,
-                    title: "Without date".to_string(),
-                    closed_date: None,
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-            PullRequestWithWorkItems {
-                pr: PullRequest {
-                    id: 102,
-                    title: "Newer".to_string(),
-                    closed_date: Some("2024-01-15T10:00:00Z".to_string()),
-                    created_by: CreatedBy {
-                        display_name: "User".to_string(),
-                    },
-                    last_merge_commit: None,
-                    labels: None,
-                },
-                work_items: vec![],
-                selected: false,
-            },
-        ];
-
-        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
-        assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].pr.id, 102); // Newest with date
-        assert_eq!(sorted[1].pr.id, 100); // Older with date
-        assert_eq!(sorted[2].pr.id, 101); // No date (last)
-    }
-
-    /// # Sort PRs By Date - Empty List
-    ///
-    /// Tests that sorting empty list doesn't panic.
-    #[test]
-    fn test_sort_prs_by_date_empty() {
-        use crate::models::PullRequestWithWorkItems;
-        let prs: Vec<PullRequestWithWorkItems> = vec![];
-        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
-        assert!(sorted.is_empty());
-    }
-
-    /// # Sort PRs By Date - Single PR
-    ///
-    /// Tests that sorting single PR works.
-    #[test]
-    fn test_sort_prs_by_date_single() {
-        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
-
-        let prs = vec![PullRequestWithWorkItems {
-            pr: PullRequest {
-                id: 100,
-                title: "Single".to_string(),
-                closed_date: Some("2024-01-10T10:00:00Z".to_string()),
-                created_by: CreatedBy {
-                    display_name: "User".to_string(),
-                },
-                last_merge_commit: None,
-                labels: None,
-            },
-            work_items: vec![],
-            selected: false,
-        }];
-
-        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
-        assert_eq!(sorted.len(), 1);
-        assert_eq!(sorted[0].pr.id, 100);
+        assert!(!harness.app.pull_requests()[0].selected);
     }
 }

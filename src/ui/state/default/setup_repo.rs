@@ -81,10 +81,13 @@ impl SetupRepoState {
         // Get SSH URL if needed
         let ssh_url = if app.local_repo().is_none() {
             self.set_status("Fetching repository details...".to_string());
-            match app.client.fetch_repo_details().await {
+            match app.client().fetch_repo_details().await {
                 Ok(details) => details.ssh_url,
                 Err(e) => {
-                    app.error_message = Some(format!("Failed to fetch repository details: {}", e));
+                    app.set_error_message(Some(format!(
+                        "Failed to fetch repository details: {}",
+                        e
+                    )));
                     return StateChange::Change(Box::new(ErrorState::new()));
                 }
             }
@@ -92,61 +95,84 @@ impl SetupRepoState {
             String::new()
         };
 
-        let version = app.version.as_ref().unwrap();
-
-        self.set_status(if app.local_repo().is_some() {
+        // Get status message before any setup operations
+        let status_msg = if app.local_repo().is_some() {
             "Creating worktree...".to_string()
         } else {
             "Cloning repository...".to_string()
-        });
+        };
+        self.set_status(status_msg);
 
-        // Setup repository
-        match git::setup_repository(app.local_repo(), &ssh_url, app.target_branch(), version) {
+        // Extract ALL immutable data before any mutations
+        let version: String;
+        let target_branch: String;
+        let local_repo_path: Option<std::path::PathBuf>;
+        let setup_result: Result<git::RepositorySetup, git::RepositorySetupError>;
+        let cherry_pick_items_data: Vec<(String, i32, String)>; // (commit_id, pr_id, pr_title)
+
+        {
+            version = app.version().as_ref().unwrap().to_string();
+            target_branch = app.target_branch().to_string();
+            local_repo_path = app.local_repo().map(std::path::PathBuf::from);
+            let local_repo = app.local_repo();
+            setup_result = git::setup_repository(local_repo, &ssh_url, &target_branch, &version);
+
+            // Extract cherry-pick data
+            let selected_prs = app.get_selected_prs();
+            cherry_pick_items_data = selected_prs
+                .iter()
+                .filter_map(|pr| {
+                    pr.pr
+                        .last_merge_commit
+                        .as_ref()
+                        .map(|commit| (commit.commit_id.clone(), pr.pr.id, pr.pr.title.clone()))
+                })
+                .collect();
+        }
+
+        // Now handle the result with mutable access to app
+        match setup_result {
             Ok(setup) => {
                 match setup {
                     git::RepositorySetup::Local(path) => {
                         // Store the base repo path for cleanup (worktree case)
-                        if let Some(local_repo) = app.local_repo() {
-                            app.base_repo_path = Some(std::path::PathBuf::from(local_repo));
+                        if let Some(local_repo) = local_repo_path {
+                            app.base_mut().worktree.base_repo_path = Some(local_repo);
                         }
-                        app.repo_path = Some(path);
+                        app.set_repo_path(Some(path));
                     }
                     git::RepositorySetup::Clone(path, temp_dir) => {
-                        app.repo_path = Some(path);
-                        app._temp_dir = Some(temp_dir);
+                        app.set_repo_path(Some(path));
+                        app.set_temp_dir(Some(temp_dir));
                         // base_repo_path stays None for cloned repos
                     }
                 }
 
                 // Prepare cherry-pick items
-                let selected_prs = app.get_selected_prs();
-                let mut cherry_pick_items = Vec::new();
-
-                for pr in selected_prs {
-                    if let Some(commit) = &pr.pr.last_merge_commit {
-                        cherry_pick_items.push(CherryPickItem {
-                            commit_id: commit.commit_id.clone(),
-                            pr_id: pr.pr.id,
-                            pr_title: pr.pr.title.clone(),
-                            status: crate::models::CherryPickStatus::Pending,
-                        });
-                    }
-                }
+                let cherry_pick_items: Vec<CherryPickItem> = cherry_pick_items_data
+                    .into_iter()
+                    .map(|(commit_id, pr_id, pr_title)| CherryPickItem {
+                        commit_id,
+                        pr_id,
+                        pr_title,
+                        status: crate::models::CherryPickStatus::Pending,
+                    })
+                    .collect();
 
                 if cherry_pick_items.is_empty() {
-                    app.error_message = Some("No commits found to cherry-pick".to_string());
+                    app.set_error_message(Some("No commits found to cherry-pick".to_string()));
                     StateChange::Change(Box::new(ErrorState::new()))
                 } else {
-                    app.cherry_pick_items = cherry_pick_items;
+                    *app.cherry_pick_items_mut() = cherry_pick_items;
 
                     // Create branch for cherry-picking
                     self.set_status("Creating branch...".to_string());
-                    let branch_name = format!("patch/{}-{}", app.target_branch(), version);
+                    let branch_name = format!("patch/{}-{}", target_branch, version);
 
                     if let Err(e) =
-                        git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name)
+                        git::create_branch(app.repo_path().as_ref().unwrap(), &branch_name)
                     {
-                        app.error_message = Some(format!("Failed to create branch: {}", e));
+                        app.set_error_message(Some(format!("Failed to create branch: {}", e)));
                         StateChange::Change(Box::new(ErrorState::new()))
                     } else {
                         StateChange::Change(Box::new(CherryPickState::new()))
@@ -165,7 +191,7 @@ impl SetupRepoState {
         app: &mut App,
         error: git::RepositorySetupError,
     ) -> StateChange {
-        let version = app.version.as_ref().unwrap();
+        let version = app.version().unwrap();
 
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
@@ -174,7 +200,7 @@ impl SetupRepoState {
                     && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                 {
-                    app.error_message = Some(format!("Failed to force delete branch: {}", e));
+                    app.set_error_message(Some(format!("Failed to force delete branch: {}", e)));
                     return StateChange::Change(Box::new(ErrorState::new()));
                 }
             }
@@ -184,7 +210,7 @@ impl SetupRepoState {
                     && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {
-                    app.error_message = Some(format!("Failed to force remove worktree: {}", e));
+                    app.set_error_message(Some(format!("Failed to force remove worktree: {}", e)));
                     return StateChange::Change(Box::new(ErrorState::new()));
                 }
             }

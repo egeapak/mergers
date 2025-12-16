@@ -3,7 +3,7 @@ source: src/ui/state/default/pr_selection.rs
 expression: harness.backend()
 ---
 "                                                                                "
-" ┌Pull Requests (6/60)────────────────────────────────────────────────────────┐ "
+" ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
 " │      PR #     Date         Title           Author          Work Items      ↑ "
 " │      1015     2024-01-15   Pull Request #1 Developer 5     #5015 (New)     ║ "
 " │      1016     2024-01-15   Pull Request #1 Developer 6                     ║ "
@@ -29,6 +29,6 @@ expression: harness.backend()
 " │                                                                            │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
-" │↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Con│ "
+" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | E│ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

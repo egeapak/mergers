@@ -70,7 +70,7 @@ impl AppState for MigrationVersionInputState {
         f.render_widget(input_block, chunks[2]);
 
         // Summary info
-        let (eligible_count, not_marked_prs) = if let Some(analysis) = &app.migration_analysis {
+        let (eligible_count, not_marked_prs) = if let Some(analysis) = &app.migration_analysis() {
             let eligible_count = analysis.eligible_prs.len();
             let mut not_marked = Vec::new();
 
@@ -192,7 +192,7 @@ impl AppState for MigrationVersionInputState {
             }
             KeyCode::Enter => {
                 if !self.input.trim().is_empty() {
-                    app.version = Some(self.input.trim().to_string());
+                    app.set_version(Some(self.input.trim().to_string()));
                     // Transition to tagging state
                     StateChange::Change(Box::new(super::MigrationTaggingState::new(
                         self.input.trim().to_string(),
@@ -312,7 +312,7 @@ mod tests {
             // Keep PR 102 in not_merged_prs (has manual override to eligible)
             // This simulates a state where user has made manual changes
 
-            harness.app.migration_analysis = Some(analysis);
+            harness.app.set_migration_analysis(Some(analysis));
 
             let mut state = MigrationVersionInputState::new();
             state.input = "v2.0.0".to_string();

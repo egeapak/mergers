@@ -66,10 +66,18 @@ pub async fn run_app_with_events<B: ratatui::backend::Backend>(
     app: &mut App,
     event_source: &dyn EventSource,
 ) -> anyhow::Result<()> {
-    let mut current_state: Box<dyn AppState> = app
-        .initial_state
-        .take()
-        .unwrap_or_else(|| Box::new(DataLoadingState::new()));
+    run_app_with_events_and_state(terminal, app, event_source, None).await
+}
+
+/// Run the application loop with an injectable event source and initial state.
+pub async fn run_app_with_events_and_state<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    event_source: &dyn EventSource,
+    initial_state: Option<Box<dyn AppState>>,
+) -> anyhow::Result<()> {
+    let mut current_state: Box<dyn AppState> =
+        initial_state.unwrap_or_else(|| Box::new(DataLoadingState::new()));
 
     loop {
         terminal.draw(|f| current_state.ui(f, app))?;
@@ -380,7 +388,7 @@ mod tests {
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
-        let result = run_app_with_events(&mut harness.terminal, &mut harness.app, &events).await;
+        let result = harness.run_with_events(&events).await;
 
         assert!(result.is_ok());
 

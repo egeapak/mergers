@@ -90,10 +90,10 @@ impl PostCompletionState {
             return; // Already initialized
         }
 
-        let _version = app.version.as_ref().unwrap();
+        let _version = app.version().as_ref().unwrap();
 
         // Add tasks for tagging successful PRs
-        for item in &app.cherry_pick_items {
+        for item in app.cherry_pick_items() {
             if matches!(item.status, CherryPickStatus::Success) {
                 self.tasks.push(PostCompletionTaskItem {
                     task: PostCompletionTask::TaggingPR {
@@ -104,7 +104,8 @@ impl PostCompletionState {
                 });
 
                 // Add tasks for updating work items associated with successful PRs
-                if let Some(pr_data) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id) {
+                if let Some(pr_data) = app.pull_requests().iter().find(|pr| pr.pr.id == item.pr_id)
+                {
                     for work_item in &pr_data.work_items {
                         if let Some(title) = &work_item.fields.title {
                             self.tasks.push(PostCompletionTaskItem {
@@ -140,12 +141,12 @@ impl PostCompletionState {
 
         let result = match &task_item.task {
             PostCompletionTask::TaggingPR { pr_id, .. } => {
-                let version = app.version.as_ref().unwrap();
+                let version = app.version().unwrap();
                 let tag_name = format!("{}{}", app.tag_prefix(), version);
-                app.client.add_label_to_pr(*pr_id, &tag_name).await
+                app.client().add_label_to_pr(*pr_id, &tag_name).await
             }
             PostCompletionTask::UpdatingWorkItem { work_item_id, .. } => {
-                app.client
+                app.client()
                     .update_work_item_state(*work_item_id, app.work_item_state())
                     .await
             }
@@ -284,7 +285,7 @@ impl AppState for PostCompletionState {
                 Line::from(format!(
                     "✅ PRs tagged with '{}{}' ",
                     app.tag_prefix(),
-                    app.version.as_ref().unwrap()
+                    app.version().as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "✅ Work items updated to '{}'",
@@ -314,7 +315,7 @@ impl AppState for PostCompletionState {
                 Line::from(format!(
                     "🏷️  Tagging PRs with '{}{}' ",
                     app.tag_prefix(),
-                    app.version.as_ref().unwrap()
+                    app.version().as_ref().unwrap()
                 )),
                 Line::from(format!(
                     "📝 Updating work items to '{}'",
@@ -385,8 +386,8 @@ mod tests {
 
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
-            harness.app.pull_requests = prs;
-            harness.app.version = Some("v1.0.0".to_string());
+            *harness.app.pull_requests_mut() = prs;
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let state = Box::new(PostCompletionState::new());
             harness.render_state(state);
@@ -418,8 +419,8 @@ mod tests {
 
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
-            harness.app.pull_requests = prs;
-            harness.app.version = Some("v1.0.0".to_string());
+            *harness.app.pull_requests_mut() = prs;
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let tasks = crate::ui::testing::create_test_post_completion_tasks();
             let mut state = PostCompletionState::new();
@@ -457,8 +458,8 @@ mod tests {
 
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
-            harness.app.pull_requests = prs;
-            harness.app.version = Some("v1.0.0".to_string());
+            *harness.app.pull_requests_mut() = prs;
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
             // Mark some tasks as successful and some with permission errors
@@ -508,8 +509,8 @@ mod tests {
 
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
-            harness.app.pull_requests = prs;
-            harness.app.version = Some("v1.0.0".to_string());
+            *harness.app.pull_requests_mut() = prs;
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
             tasks[0].status = TaskStatus::Success;
@@ -559,8 +560,8 @@ mod tests {
 
             let mut prs = create_test_pull_requests();
             prs[0].selected = true;
-            harness.app.pull_requests = prs;
-            harness.app.version = Some("v1.0.0".to_string());
+            *harness.app.pull_requests_mut() = prs;
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut tasks = crate::ui::testing::create_test_post_completion_tasks();
             for task in &mut tasks {

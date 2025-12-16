@@ -77,8 +77,18 @@ impl WorktreeContext {
     }
 
     /// Returns the current working repository path, if set.
-    pub fn repo_path(&self) -> Option<&PathBuf> {
-        self.repo_path.as_ref()
+    pub fn repo_path(&self) -> Option<&std::path::Path> {
+        self.repo_path.as_deref()
+    }
+
+    /// Sets the repository path.
+    pub fn set_repo_path(&mut self, path: Option<PathBuf>) {
+        self.repo_path = path;
+    }
+
+    /// Sets the temporary directory to keep it alive.
+    pub fn set_temp_dir(&mut self, temp_dir: Option<TempDir>) {
+        self._temp_dir = temp_dir;
     }
 }
 
@@ -207,7 +217,7 @@ mod tests {
 
         let path = PathBuf::from("/test/repo");
         ctx.repo_path = Some(path.clone());
-        assert_eq!(ctx.repo_path(), Some(&path));
+        assert_eq!(ctx.repo_path(), Some(path.as_path()));
     }
 
     /// # WorktreeContext Drop Behavior

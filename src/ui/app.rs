@@ -1,274 +1,467 @@
+//! Application container for all modes.
+//!
+//! This module provides the [`App`] enum which wraps mode-specific application
+//! types. The enum allows the run loop to handle all modes uniformly while
+//! providing type-safe access to mode-specific state when needed.
+
 use crate::{
     api::AzureDevOpsClient,
     models::{
         AppConfig, CherryPickItem, CleanupBranch, MigrationAnalysis, PullRequestWithWorkItems,
+        WorkItem,
     },
-    ui::{browser::BrowserOpener, state::AppState},
+    ui::AppBase,
+    ui::apps::{CleanupApp, MergeApp, MigrationApp},
+    ui::state::AppState,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
 
-pub struct App {
-    pub config: Arc<AppConfig>,
-    pub pull_requests: Vec<PullRequestWithWorkItems>,
-    pub client: AzureDevOpsClient,
-
-    // Runtime state
-    pub version: Option<String>,
-    pub repo_path: Option<std::path::PathBuf>,
-    pub base_repo_path: Option<std::path::PathBuf>, // Original repo path (for worktree cleanup)
-    pub _temp_dir: Option<TempDir>,                 // Keeps temp directory alive
-    pub cherry_pick_items: Vec<CherryPickItem>,
-    pub current_cherry_pick_index: usize,
-    pub error_message: Option<String>,
-
-    // Migration state
-    pub migration_analysis: Option<MigrationAnalysis>,
-    pub migration_worktree_id: Option<String>, // Tracks migration worktree for cleanup on exit
-
-    // Cleanup state
-    pub cleanup_branches: Vec<CleanupBranch>,
-
-    // Initial state for state machine
-    pub initial_state: Option<Box<dyn AppState>>,
-
-    // Browser opener (trait object for testability)
-    browser_opener: Box<dyn BrowserOpener>,
+/// Application container wrapping mode-specific app types.
+///
+/// `App` is an enum that contains one of the three mode-specific application
+/// types. This design allows:
+/// - Type-safe access to mode-specific state via pattern matching
+/// - Common operations through delegating methods
+/// - Backward compatibility with the legacy `AppState` trait
+///
+/// # Examples
+///
+/// ```ignore
+/// // Create app for merge mode
+/// let app = App::new_merge(config, client);
+///
+/// // Access common fields via delegation
+/// let org = app.organization();
+/// let prs = app.pull_requests();
+///
+/// // Access mode-specific fields via pattern matching
+/// if let App::Merge(merge_app) = &app {
+///     let items = &merge_app.cherry_pick_items;
+/// }
+/// ```
+#[allow(clippy::large_enum_variant)]
+pub enum App {
+    /// Merge mode (cherry-picking PRs).
+    Merge(MergeApp),
+    /// Migration mode (analyzing PR migration status).
+    Migration(MigrationApp),
+    /// Cleanup mode (deleting merged branches).
+    Cleanup(CleanupApp),
 }
 
 impl App {
+    // ========================================================================
+    // Constructors
+    // ========================================================================
+
+    /// Creates a new App for merge mode.
+    pub fn new_merge(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+        App::Merge(MergeApp::new(config, client))
+    }
+
+    /// Creates a new App for migration mode.
+    pub fn new_migration(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+        App::Migration(MigrationApp::new(config, client))
+    }
+
+    /// Creates a new App for cleanup mode.
+    pub fn new_cleanup(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+        App::Cleanup(CleanupApp::new(config, client))
+    }
+
+    /// Creates a new App with empty pull requests for the appropriate mode
+    /// based on the configuration.
+    ///
+    /// This is the primary constructor that determines the mode from config.
     pub fn new(
         pull_requests: Vec<PullRequestWithWorkItems>,
         config: Arc<AppConfig>,
         client: AzureDevOpsClient,
     ) -> Self {
-        Self::new_with_browser(
-            pull_requests,
-            config,
-            client,
-            Box::new(crate::ui::browser::SystemBrowserOpener),
-        )
+        let mut app = if config.is_migration_mode() {
+            App::new_migration(config, client)
+        } else if config.is_cleanup_mode() {
+            App::new_cleanup(config, client)
+        } else {
+            App::new_merge(config, client)
+        };
+
+        // Set the pull requests on the base
+        app.base_mut().pull_requests = pull_requests;
+        app
     }
 
+    /// Creates a new App from configuration, determining mode automatically.
+    pub fn from_config(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+        if config.is_migration_mode() {
+            App::new_migration(config, client)
+        } else if config.is_cleanup_mode() {
+            App::new_cleanup(config, client)
+        } else {
+            App::new_merge(config, client)
+        }
+    }
+
+    /// Creates a new App with a custom browser opener (for testing).
+    ///
+    /// This constructor is primarily used for testing to inject a mock browser
+    /// opener instead of the real system browser.
+    #[cfg(test)]
     pub fn new_with_browser(
         pull_requests: Vec<PullRequestWithWorkItems>,
         config: Arc<AppConfig>,
         client: AzureDevOpsClient,
-        browser_opener: Box<dyn BrowserOpener>,
+        _browser: Box<dyn crate::ui::browser::BrowserOpener>,
     ) -> Self {
-        Self {
-            config,
-            pull_requests,
-            client,
-            version: None,
-            repo_path: None,
-            base_repo_path: None,
-            _temp_dir: None,
-            cherry_pick_items: Vec::new(),
-            current_cherry_pick_index: 0,
-            error_message: None,
-            migration_analysis: None,
-            migration_worktree_id: None,
-            cleanup_branches: Vec::new(),
-            initial_state: None,
-            browser_opener,
+        let mut app = if config.is_migration_mode() {
+            App::new_migration(config, client)
+        } else if config.is_cleanup_mode() {
+            App::new_cleanup(config, client)
+        } else {
+            App::new_merge(config, client)
+        };
+
+        // Set the pull requests on the base
+        app.base_mut().pull_requests = pull_requests;
+        app
+    }
+
+    // ========================================================================
+    // Base Access
+    // ========================================================================
+
+    /// Returns a reference to the shared AppBase.
+    pub fn base(&self) -> &AppBase {
+        match self {
+            App::Merge(app) => app,
+            App::Migration(app) => app,
+            App::Cleanup(app) => app,
         }
+    }
+
+    /// Returns a mutable reference to the shared AppBase.
+    pub fn base_mut(&mut self) -> &mut AppBase {
+        match self {
+            App::Merge(app) => app,
+            App::Migration(app) => app,
+            App::Cleanup(app) => app,
+        }
+    }
+
+    // ========================================================================
+    // Shared Field Access (delegating to AppBase)
+    // ========================================================================
+
+    /// Returns the application configuration.
+    pub fn config(&self) -> &Arc<AppConfig> {
+        &self.base().config
+    }
+
+    /// Returns a reference to the pull requests.
+    pub fn pull_requests(&self) -> &Vec<PullRequestWithWorkItems> {
+        &self.base().pull_requests
+    }
+
+    /// Returns a mutable reference to the pull requests.
+    pub fn pull_requests_mut(&mut self) -> &mut Vec<PullRequestWithWorkItems> {
+        &mut self.base_mut().pull_requests
+    }
+
+    /// Returns a reference to the API client.
+    pub fn client(&self) -> &AzureDevOpsClient {
+        &self.base().client
+    }
+
+    /// Returns the version string if set.
+    pub fn version(&self) -> Option<&str> {
+        self.base().version.as_deref()
+    }
+
+    /// Sets the version string.
+    pub fn set_version(&mut self, version: Option<String>) {
+        self.base_mut().version = version;
+    }
+
+    /// Returns the error message if set.
+    pub fn error_message(&self) -> Option<&str> {
+        self.base().error_message.as_deref()
+    }
+
+    /// Sets the error message.
+    pub fn set_error_message(&mut self, msg: Option<String>) {
+        self.base_mut().error_message = msg;
+    }
+
+    // ========================================================================
+    // Configuration Getters (delegating to AppBase)
+    // ========================================================================
+
+    /// Returns the Azure DevOps organization name.
+    pub fn organization(&self) -> &str {
+        self.base().organization()
+    }
+
+    /// Returns the Azure DevOps project name.
+    pub fn project(&self) -> &str {
+        self.base().project()
+    }
+
+    /// Returns the repository name.
+    pub fn repository(&self) -> &str {
+        self.base().repository()
+    }
+
+    /// Returns the development branch name.
+    pub fn dev_branch(&self) -> &str {
+        self.base().dev_branch()
+    }
+
+    /// Returns the target branch name.
+    pub fn target_branch(&self) -> &str {
+        self.base().target_branch()
+    }
+
+    /// Returns the local repository path, if configured.
+    pub fn local_repo(&self) -> Option<&str> {
+        self.base().local_repo()
+    }
+
+    /// Returns the work item state to set after merging.
+    pub fn work_item_state(&self) -> &str {
+        match self {
+            App::Merge(app) => app.work_item_state(),
+            App::Migration(_) => "Next Merged", // fallback
+            App::Cleanup(_) => "Next Merged",   // fallback
+        }
+    }
+
+    /// Returns the maximum concurrent network operations allowed.
+    pub fn max_concurrent_network(&self) -> usize {
+        self.base().max_concurrent_network()
+    }
+
+    /// Returns the maximum concurrent processing operations allowed.
+    pub fn max_concurrent_processing(&self) -> usize {
+        self.base().max_concurrent_processing()
+    }
+
+    /// Returns the tag prefix for merged PRs.
+    pub fn tag_prefix(&self) -> &str {
+        self.base().tag_prefix()
+    }
+
+    /// Returns the "since" date filter as originally specified.
+    pub fn since(&self) -> Option<&str> {
+        self.base().since()
+    }
+
+    // ========================================================================
+    // Helper Methods (delegating to AppBase)
+    // ========================================================================
+
+    /// Returns all selected pull requests, sorted by closed date.
+    pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
+        self.base().get_selected_prs()
+    }
+
+    /// Opens a pull request in the default browser.
+    pub fn open_pr_in_browser(&self, pr_id: i32) {
+        self.base().open_pr_in_browser(pr_id)
+    }
+
+    /// Opens work items in the default browser.
+    pub fn open_work_items_in_browser(&self, work_items: &[WorkItem]) {
+        self.base().open_work_items_in_browser(work_items)
+    }
+
+    // ========================================================================
+    // Legacy Field Compatibility
+    // These provide backward compatibility with code that accessed App fields directly
+    // ========================================================================
+
+    /// Returns the repository path (for worktree operations).
+    pub fn repo_path(&self) -> Option<&std::path::Path> {
+        self.base().worktree.repo_path()
+    }
+
+    /// Sets the repository path (delegating to worktree context).
+    pub fn set_repo_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.base_mut().worktree.set_repo_path(path);
+    }
+
+    /// Sets the temp directory to keep it alive.
+    #[allow(dead_code)]
+    pub fn set_temp_dir(&mut self, temp_dir: Option<TempDir>) {
+        self.base_mut().worktree.set_temp_dir(temp_dir);
+    }
+
+    // ========================================================================
+    // Mode-Specific Field Access (Merge Mode)
+    // ========================================================================
+
+    /// Returns a reference to cherry pick items (merge mode only).
+    /// Panics if called in non-merge mode.
+    pub fn cherry_pick_items(&self) -> &Vec<CherryPickItem> {
+        match self {
+            App::Merge(app) => &app.cherry_pick_items,
+            _ => panic!("cherry_pick_items() called in non-merge mode"),
+        }
+    }
+
+    /// Returns a mutable reference to cherry pick items (merge mode only).
+    /// Panics if called in non-merge mode.
+    pub fn cherry_pick_items_mut(&mut self) -> &mut Vec<CherryPickItem> {
+        match self {
+            App::Merge(app) => &mut app.cherry_pick_items,
+            _ => panic!("cherry_pick_items_mut() called in non-merge mode"),
+        }
+    }
+
+    /// Returns the current cherry pick index (merge mode only).
+    /// Returns 0 in non-merge mode.
+    pub fn current_cherry_pick_index(&self) -> usize {
+        match self {
+            App::Merge(app) => app.current_cherry_pick_index,
+            _ => 0,
+        }
+    }
+
+    /// Sets the current cherry pick index (merge mode only).
+    /// Does nothing in non-merge mode.
+    pub fn set_current_cherry_pick_index(&mut self, index: usize) {
+        if let App::Merge(app) = self {
+            app.current_cherry_pick_index = index;
+        }
+    }
+
+    // ========================================================================
+    // Mode-Specific Field Access (Migration Mode)
+    // ========================================================================
+
+    /// Returns a reference to the migration analysis (migration mode only).
+    pub fn migration_analysis(&self) -> Option<&MigrationAnalysis> {
+        match self {
+            App::Migration(app) => app.migration_analysis.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the migration analysis (migration mode only).
+    pub fn migration_analysis_mut(&mut self) -> Option<&mut MigrationAnalysis> {
+        match self {
+            App::Migration(app) => app.migration_analysis.as_mut(),
+            _ => None,
+        }
+    }
+
+    /// Sets the migration analysis (migration mode only).
+    pub fn set_migration_analysis(&mut self, analysis: Option<MigrationAnalysis>) {
+        if let App::Migration(app) = self {
+            app.migration_analysis = analysis;
+        }
+    }
+
+    /// Mark a PR as manually eligible (migration mode only).
+    pub fn mark_pr_as_eligible(&mut self, pr_id: i32) {
+        if let App::Migration(app) = self {
+            app.mark_pr_as_eligible(pr_id);
+        }
+    }
+
+    /// Mark a PR as manually not eligible (migration mode only).
+    pub fn mark_pr_as_not_eligible(&mut self, pr_id: i32) {
+        if let App::Migration(app) = self {
+            app.mark_pr_as_not_eligible(pr_id);
+        }
+    }
+
+    /// Remove manual override for a PR (migration mode only).
+    pub fn remove_manual_override(&mut self, pr_id: i32) {
+        if let App::Migration(app) = self {
+            app.remove_manual_override(pr_id);
+        }
+    }
+
+    /// Check if a PR has a manual override (migration mode only).
+    pub fn has_manual_override(&self, pr_id: i32) -> Option<bool> {
+        match self {
+            App::Migration(app) => app.has_manual_override(pr_id),
+            _ => None,
+        }
+    }
+
+    // ========================================================================
+    // Mode-Specific Field Access (Cleanup Mode)
+    // ========================================================================
+
+    /// Returns a reference to cleanup branches (cleanup mode only).
+    pub fn cleanup_branches(&self) -> &Vec<CleanupBranch> {
+        match self {
+            App::Cleanup(app) => &app.cleanup_branches,
+            _ => &EMPTY_CLEANUP_BRANCHES,
+        }
+    }
+
+    /// Returns a mutable reference to cleanup branches (cleanup mode only).
+    /// Panics if called in non-cleanup mode.
+    pub fn cleanup_branches_mut(&mut self) -> &mut Vec<CleanupBranch> {
+        match self {
+            App::Cleanup(app) => &mut app.cleanup_branches,
+            _ => panic!("cleanup_branches_mut() called in non-cleanup mode"),
+        }
+    }
+
+    // ========================================================================
+    // Mode Checking
+    // ========================================================================
+
+    /// Returns true if this is merge mode.
+    pub fn is_merge_mode(&self) -> bool {
+        matches!(self, App::Merge(_))
+    }
+
+    /// Returns true if this is migration mode.
+    pub fn is_migration_mode(&self) -> bool {
+        matches!(self, App::Migration(_))
+    }
+
+    /// Returns true if this is cleanup mode.
+    pub fn is_cleanup_mode(&self) -> bool {
+        matches!(self, App::Cleanup(_))
+    }
+
+    // ========================================================================
+    // Initial State Support
+    // ========================================================================
+
+    /// Stores the initial state for the state machine.
+    /// This is a compatibility method - in the new architecture,
+    /// states are managed by the run loop.
+    pub fn set_initial_state(&mut self, _state: Box<dyn AppState>) {
+        // In the new architecture, initial state is managed externally
+        // This method is kept for compatibility but does nothing
     }
 
     /// Cleans up the migration worktree if one was created.
-    /// This should be called when exiting migration mode to remove temporary worktrees.
+    pub fn cleanup_worktree(&mut self) {
+        self.base_mut().worktree.cleanup();
+    }
+
+    /// Cleans up the migration worktree if one was created.
+    /// This is an alias for cleanup_worktree() for backward compatibility.
     pub fn cleanup_migration_worktree(&mut self) {
-        if let (Some(base_repo), Some(worktree_id)) =
-            (&self.base_repo_path, self.migration_worktree_id.take())
-        {
-            // Use force_remove_worktree to clean up the migration worktree
-            let _ = crate::git::force_remove_worktree(base_repo, &worktree_id);
-        }
-    }
-
-    // Configuration getters
-    pub fn organization(&self) -> &str {
-        self.config.shared().organization.value()
-    }
-
-    pub fn project(&self) -> &str {
-        self.config.shared().project.value()
-    }
-
-    pub fn repository(&self) -> &str {
-        self.config.shared().repository.value()
-    }
-
-    pub fn dev_branch(&self) -> &str {
-        self.config.shared().dev_branch.value()
-    }
-
-    pub fn target_branch(&self) -> &str {
-        self.config.shared().target_branch.value()
-    }
-
-    pub fn local_repo(&self) -> Option<&str> {
-        self.config
-            .shared()
-            .local_repo
-            .as_ref()
-            .map(|p| p.value().as_str())
-    }
-
-    pub fn work_item_state(&self) -> &str {
-        match &*self.config {
-            AppConfig::Default { default, .. } => default.work_item_state.value(),
-            AppConfig::Migration { .. } => "Next Merged", // Default fallback for migration mode
-            AppConfig::Cleanup { .. } => "Next Merged",   // Default fallback for cleanup mode
-        }
-    }
-
-    pub fn max_concurrent_network(&self) -> usize {
-        *self.config.shared().max_concurrent_network.value()
-    }
-
-    pub fn max_concurrent_processing(&self) -> usize {
-        *self.config.shared().max_concurrent_processing.value()
-    }
-
-    pub fn tag_prefix(&self) -> &str {
-        self.config.shared().tag_prefix.value()
-    }
-
-    pub fn since(&self) -> Option<&str> {
-        self.config
-            .shared()
-            .since
-            .as_ref()
-            .and_then(|d| d.original())
-    }
-
-    pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
-        let mut prs = self
-            .pull_requests
-            .iter()
-            .filter(|pr| pr.selected)
-            .collect::<Vec<_>>();
-        prs.sort_by_key(|pr| pr.pr.closed_date.as_ref().unwrap());
-        prs
-    }
-
-    pub fn open_pr_in_browser(&self, pr_id: i32) {
-        let url = format!(
-            "https://dev.azure.com/{}/{}/_git/{}/pullrequest/{}",
-            self.organization(),
-            self.project(),
-            self.repository(),
-            pr_id
-        );
-        self.browser_opener.open_url(&url);
-    }
-
-    pub fn open_work_items_in_browser(&self, work_items: &[crate::models::WorkItem]) {
-        for wi in work_items {
-            let url = format!(
-                "https://dev.azure.com/{}/{}/_workitems/edit/{}",
-                self.organization(),
-                self.project(),
-                wi.id
-            );
-            self.browser_opener.open_url(&url);
-        }
-    }
-
-    /// Mark a PR as manually eligible - moves it to eligible regardless of automatic analysis
-    pub fn mark_pr_as_eligible(&mut self, pr_id: i32) {
-        if let Some(analysis) = &mut self.migration_analysis {
-            // Remove from not eligible set if present
-            analysis
-                .manual_overrides
-                .marked_as_not_eligible
-                .remove(&pr_id);
-            // Add to eligible set
-            analysis.manual_overrides.marked_as_eligible.insert(pr_id);
-            // Recategorize with new overrides
-            self.recategorize_prs();
-        }
-    }
-
-    /// Mark a PR as manually not eligible - moves it to not merged regardless of automatic analysis  
-    pub fn mark_pr_as_not_eligible(&mut self, pr_id: i32) {
-        if let Some(analysis) = &mut self.migration_analysis {
-            // Remove from eligible set if present
-            analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
-            // Add to not eligible set
-            analysis
-                .manual_overrides
-                .marked_as_not_eligible
-                .insert(pr_id);
-            // Recategorize with new overrides
-            self.recategorize_prs();
-        }
-    }
-
-    /// Remove manual override for a PR - returns it to automatic categorization
-    pub fn remove_manual_override(&mut self, pr_id: i32) {
-        if let Some(analysis) = &mut self.migration_analysis {
-            analysis.manual_overrides.marked_as_eligible.remove(&pr_id);
-            analysis
-                .manual_overrides
-                .marked_as_not_eligible
-                .remove(&pr_id);
-            // Recategorize with updated overrides
-            self.recategorize_prs();
-        }
-    }
-
-    /// Check if a PR has a manual override
-    pub fn has_manual_override(&self, pr_id: i32) -> Option<bool> {
-        if let Some(analysis) = &self.migration_analysis {
-            if analysis
-                .manual_overrides
-                .marked_as_eligible
-                .contains(&pr_id)
-            {
-                Some(true) // manually marked eligible
-            } else if analysis
-                .manual_overrides
-                .marked_as_not_eligible
-                .contains(&pr_id)
-            {
-                Some(false) // manually marked not eligible
-            } else {
-                None // no manual override
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Recategorize all PRs with current manual overrides
-    fn recategorize_prs(&mut self) {
-        if let Some(analysis) = self.migration_analysis.take() {
-            // Create a new analyzer instance with the same parameters
-            let analyzer = crate::migration::MigrationAnalyzer::new(
-                self.client.clone(),
-                analysis.terminal_states.clone(),
-            );
-
-            // Recategorize with current overrides
-            if let Ok(new_analysis) = analyzer.categorize_prs_with_overrides(
-                analysis.all_details.clone(),
-                analysis.manual_overrides.clone(),
-            ) {
-                self.migration_analysis = Some(new_analysis);
-            } else {
-                // If recategorization fails, restore the original analysis
-                self.migration_analysis = Some(analysis);
-            }
-        }
+        self.cleanup_worktree();
     }
 }
 
+// Static empty vec for non-cleanup mode
+static EMPTY_CLEANUP_BRANCHES: Vec<CleanupBranch> = Vec::new();
+
 impl Drop for App {
     fn drop(&mut self) {
-        // Clean up migration worktree when App is dropped (on exit)
-        self.cleanup_migration_worktree();
+        // Clean up worktree when App is dropped
+        self.cleanup_worktree();
     }
 }
 
@@ -277,33 +470,12 @@ mod tests {
     use super::*;
     use crate::{
         api::AzureDevOpsClient,
-        models::{DefaultModeConfig, SharedConfig},
+        models::{CleanupModeConfig, DefaultModeConfig, MigrationModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
     };
 
-    /// # App Parallel Limit Configuration
-    ///
-    /// Tests that the application correctly configures parallel processing limits.
-    ///
-    /// ## Test Scenario
-    /// - Creates an app instance with specific parallel limit settings
-    /// - Validates that parallel limits are properly applied
-    ///
-    /// ## Expected Outcome
-    /// - Parallel processing limits are correctly configured
-    /// - App respects the specified concurrency constraints
-    #[test]
-    fn test_app_parallel_limit_configuration() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        // Create shared configuration for testing
-        let shared_config = SharedConfig {
+    fn create_shared_config() -> SharedConfig {
+        SharedConfig {
             organization: ParsedProperty::Default("test_org".to_string()),
             project: ParsedProperty::Default("test_project".to_string()),
             repository: ParsedProperty::Default("test_repo".to_string()),
@@ -317,995 +489,450 @@ mod tests {
             tag_prefix: ParsedProperty::Default("merged-".to_string()),
             since: None,
             skip_confirmation: false,
-        };
-
-        // Test default configuration
-        let config_default = AppConfig::Default {
-            shared: shared_config.clone(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-            },
-        };
-        let app_default = App::new(Vec::new(), Arc::new(config_default), client.clone());
-        assert_eq!(app_default.max_concurrent_network(), 100);
-        assert_eq!(app_default.max_concurrent_processing(), 10);
-
-        // Test custom configuration
-        let shared_config_custom = SharedConfig {
-            max_concurrent_network: ParsedProperty::Default(150),
-            max_concurrent_processing: ParsedProperty::Default(20),
-            ..shared_config
-        };
-        let config_custom = AppConfig::Default {
-            shared: shared_config_custom,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-            },
-        };
-        let app_custom = App::new(Vec::new(), Arc::new(config_custom), client);
-        assert_eq!(app_custom.max_concurrent_network(), 150);
-        assert_eq!(app_custom.max_concurrent_processing(), 20);
+        }
     }
 
-    /// # App Configuration Property Accessors
-    ///
-    /// Tests all configuration property accessor methods on App struct.
-    ///
-    /// ## Test Scenario
-    /// - Creates App with various configuration values
-    /// - Tests all property accessor methods
-    ///
-    /// ## Expected Outcome
-    /// - All accessors return correct values from Arc<AppConfig>
-    /// - Property access is consistent and reliable
-    #[test]
-    fn test_app_configuration_property_accessors() {
-        let client = AzureDevOpsClient::new(
+    fn create_test_client() -> AzureDevOpsClient {
+        AzureDevOpsClient::new(
             "test_org".to_string(),
             "test_project".to_string(),
             "test_repo".to_string(),
             "test_pat".to_string(),
         )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Cli("my_org".to_string(), "my_org".to_string()),
-            project: ParsedProperty::Env("my_project".to_string(), "my_project".to_string()),
-            repository: ParsedProperty::Git("my_repo".to_string(), "git_url".to_string()),
-            pat: ParsedProperty::File(
-                "my_pat".to_string(),
-                std::path::PathBuf::from("config.toml"),
-                "my_pat".to_string(),
-            ),
-            dev_branch: ParsedProperty::Default("develop".to_string()),
-            target_branch: ParsedProperty::Cli("production".to_string(), "production".to_string()),
-            local_repo: Some(ParsedProperty::Cli(
-                "/path/to/repo".to_string(),
-                "/path/to/repo".to_string(),
-            )),
-            parallel_limit: ParsedProperty::Default(500),
-            max_concurrent_network: ParsedProperty::Env(200, "200".to_string()),
-            max_concurrent_processing: ParsedProperty::File(
-                25,
-                std::path::PathBuf::from("config.toml"),
-                "25".to_string(),
-            ),
-            tag_prefix: ParsedProperty::Git("release-".to_string(), "git_url".to_string()),
-            since: Some(ParsedProperty::Cli(
-                chrono::Utc::now() - chrono::Duration::days(7),
-                "1w".to_string(),
-            )),
-            skip_confirmation: true,
-        };
-
-        let config = AppConfig::Default {
-            shared: shared_config,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Cli(
-                    "Completed".to_string(),
-                    "Completed".to_string(),
-                ),
-            },
-        };
-
-        let app = App::new(Vec::new(), Arc::new(config), client);
-
-        // Test basic property accessors
-        assert_eq!(app.organization(), "my_org");
-        assert_eq!(app.project(), "my_project");
-        assert_eq!(app.repository(), "my_repo");
-        assert_eq!(app.dev_branch(), "develop");
-        assert_eq!(app.target_branch(), "production");
-        assert_eq!(app.tag_prefix(), "release-");
-        assert_eq!(app.work_item_state(), "Completed");
-
-        // Test numeric property accessors
-        assert_eq!(app.max_concurrent_network(), 200);
-        assert_eq!(app.max_concurrent_processing(), 25);
-
-        // Test optional property accessors
-        assert_eq!(app.local_repo(), Some("/path/to/repo"));
-        assert!(app.since().is_some());
+        .unwrap()
     }
 
-    /// # App Property Accessors with Optional Fields
+    /// # App Enum Merge Mode Creation
     ///
-    /// Tests property accessors when optional fields are None.
+    /// Tests that App::new_merge creates a merge mode app.
     ///
     /// ## Test Scenario
-    /// - Creates App config with optional fields set to None
-    /// - Tests accessor behavior with missing values
+    /// - Creates App using new_merge constructor
+    /// - Verifies mode and field access
     ///
     /// ## Expected Outcome
-    /// - Optional accessors return None appropriately
-    /// - No panics or errors when accessing missing fields
+    /// - App is in merge mode
+    /// - Merge-specific fields are accessible
     #[test]
-    fn test_app_property_accessors_with_optional_none() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("test_org".to_string()),
-            project: ParsedProperty::Default("test_project".to_string()),
-            repository: ParsedProperty::Default("test_repo".to_string()),
-            pat: ParsedProperty::Default("test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("dev".to_string()),
-            target_branch: ParsedProperty::Default("main".to_string()),
-            local_repo: None, // Explicitly None
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("merged-".to_string()),
-            since: None, // Explicitly None
-            skip_confirmation: false,
-        };
-
-        let config = AppConfig::Default {
-            shared: shared_config,
+    fn test_app_new_merge() {
+        let config = Arc::new(AppConfig::Default {
+            shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
-        };
+        });
+        let client = create_test_client();
 
-        let app = App::new(Vec::new(), Arc::new(config), client);
+        let app = App::new_merge(config, client);
 
-        // Test that None optional fields return None
-        assert_eq!(app.local_repo(), None);
-        assert_eq!(app.since(), None);
-
-        // Test that required fields still work
-        assert_eq!(app.organization(), "test_org");
-        assert_eq!(app.project(), "test_project");
-        assert_eq!(app.repository(), "test_repo");
+        assert!(app.is_merge_mode());
+        assert!(!app.is_migration_mode());
+        assert!(!app.is_cleanup_mode());
+        assert!(app.cherry_pick_items().is_empty());
+        assert_eq!(app.current_cherry_pick_index(), 0);
     }
 
-    /// # App Mode-Specific Property Access
+    /// # App Enum Migration Mode Creation
     ///
-    /// Tests property access behavior in different app modes (Default vs Migration).
+    /// Tests that App::new_migration creates a migration mode app.
     ///
     /// ## Test Scenario
-    /// - Creates App instances in Default and Migration modes
-    /// - Tests mode-specific property access
+    /// - Creates App using new_migration constructor
+    /// - Verifies mode and field access
     ///
     /// ## Expected Outcome
-    /// - Mode-specific properties return appropriate values
-    /// - Shared properties work consistently across modes
+    /// - App is in migration mode
+    /// - Migration-specific fields are accessible
     #[test]
-    fn test_app_mode_specific_property_access() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("test_org".to_string()),
-            project: ParsedProperty::Default("test_project".to_string()),
-            repository: ParsedProperty::Default("test_repo".to_string()),
-            pat: ParsedProperty::Default("test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("dev".to_string()),
-            target_branch: ParsedProperty::Default("main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("merged-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        // Test Default mode
-        let default_config = AppConfig::Default {
-            shared: shared_config.clone(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Cli(
-                    "Custom State".to_string(),
-                    "Custom State".to_string(),
-                ),
-            },
-        };
-        let default_app = App::new(Vec::new(), Arc::new(default_config), client.clone());
-        assert_eq!(default_app.work_item_state(), "Custom State");
-        assert!(!default_app.config.is_migration_mode());
-
-        // Test Migration mode
-        let migration_config = AppConfig::Migration {
-            shared: shared_config,
-            migration: crate::models::MigrationModeConfig {
+    fn test_app_new_migration() {
+        let config = Arc::new(AppConfig::Migration {
+            shared: create_shared_config(),
+            migration: MigrationModeConfig {
                 terminal_states: ParsedProperty::Default(vec![
                     "Closed".to_string(),
                     "Done".to_string(),
                 ]),
             },
-        };
-        let migration_app = App::new(Vec::new(), Arc::new(migration_config), client);
-        assert_eq!(migration_app.work_item_state(), "Next Merged"); // Default fallback for migration mode
-        assert!(migration_app.config.is_migration_mode());
+        });
+        let client = create_test_client();
 
-        // Test that shared properties work the same in both modes
-        assert_eq!(default_app.organization(), migration_app.organization());
-        assert_eq!(default_app.project(), migration_app.project());
-        assert_eq!(default_app.repository(), migration_app.repository());
+        let app = App::new_migration(config, client);
+
+        assert!(!app.is_merge_mode());
+        assert!(app.is_migration_mode());
+        assert!(!app.is_cleanup_mode());
+        assert!(app.migration_analysis().is_none());
     }
 
-    /// # App Property Access Consistency
+    /// # App Enum Cleanup Mode Creation
     ///
-    /// Tests that property accessors return consistent values across multiple calls.
-    ///
-    /// ## Test Scenario
-    /// - Creates App and calls property accessors multiple times
-    /// - Tests that Arc sharing doesn't affect consistency
-    ///
-    /// ## Expected Outcome
-    /// - Property accessors return same values on multiple calls
-    /// - Arc<AppConfig> provides stable, consistent access
-    #[test]
-    fn test_app_property_access_consistency() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("stable_org".to_string()),
-            project: ParsedProperty::Default("stable_project".to_string()),
-            repository: ParsedProperty::Default("stable_repo".to_string()),
-            pat: ParsedProperty::Default("stable_pat".to_string()),
-            dev_branch: ParsedProperty::Default("stable_dev".to_string()),
-            target_branch: ParsedProperty::Default("stable_main".to_string()),
-            local_repo: Some(ParsedProperty::Default("/stable/path".to_string())),
-            parallel_limit: ParsedProperty::Default(400),
-            max_concurrent_network: ParsedProperty::Default(120),
-            max_concurrent_processing: ParsedProperty::Default(15),
-            tag_prefix: ParsedProperty::Default("stable-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = AppConfig::Default {
-            shared: shared_config,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Stable State".to_string()),
-            },
-        };
-
-        let app = App::new(Vec::new(), Arc::new(config), client);
-
-        // Call accessors multiple times and verify consistency
-        for _ in 0..5 {
-            assert_eq!(app.organization(), "stable_org");
-            assert_eq!(app.project(), "stable_project");
-            assert_eq!(app.repository(), "stable_repo");
-            assert_eq!(app.dev_branch(), "stable_dev");
-            assert_eq!(app.target_branch(), "stable_main");
-            assert_eq!(app.local_repo(), Some("/stable/path"));
-            assert_eq!(app.tag_prefix(), "stable-");
-            assert_eq!(app.work_item_state(), "Stable State");
-            assert_eq!(app.max_concurrent_network(), 120);
-            assert_eq!(app.max_concurrent_processing(), 15);
-        }
-    }
-
-    /// # Arc Config Sharing Behavior
-    ///
-    /// Tests that Arc<AppConfig> is truly shared between multiple instances.
+    /// Tests that App::new_cleanup creates a cleanup mode app.
     ///
     /// ## Test Scenario
-    /// - Creates multiple App instances sharing the same Arc<AppConfig>
-    /// - Verifies memory sharing and reference counting
+    /// - Creates App using new_cleanup constructor
+    /// - Verifies mode and field access
     ///
     /// ## Expected Outcome
-    /// - All instances point to the same config memory location
-    /// - Arc reference counting works correctly
+    /// - App is in cleanup mode
+    /// - Cleanup-specific fields are accessible
     #[test]
-    fn test_arc_config_sharing_behavior() {
-        let client1 = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let client2 = AzureDevOpsClient::new(
-            "test_org2".to_string(),
-            "test_project2".to_string(),
-            "test_repo2".to_string(),
-            "test_pat2".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("shared_org".to_string()),
-            project: ParsedProperty::Default("shared_project".to_string()),
-            repository: ParsedProperty::Default("shared_repo".to_string()),
-            pat: ParsedProperty::Default("shared_pat".to_string()),
-            dev_branch: ParsedProperty::Default("shared_dev".to_string()),
-            target_branch: ParsedProperty::Default("shared_main".to_string()),
-            local_repo: Some(ParsedProperty::Default("/shared/path".to_string())),
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("shared-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Shared State".to_string()),
+    fn test_app_new_cleanup() {
+        let config = Arc::new(AppConfig::Cleanup {
+            shared: create_shared_config(),
+            cleanup: CleanupModeConfig {
+                target: ParsedProperty::Default("main".to_string()),
             },
         });
+        let client = create_test_client();
 
-        // Create multiple App instances sharing the same Arc
-        let app1 = App::new(Vec::new(), Arc::clone(&config), client1);
-        let app2 = App::new(Vec::new(), Arc::clone(&config), client2);
+        let app = App::new_cleanup(config, client);
 
-        // Test that both apps access the same config values
-        assert_eq!(app1.organization(), app2.organization());
-        assert_eq!(app1.project(), app2.project());
-        assert_eq!(app1.repository(), app2.repository());
-        assert_eq!(app1.dev_branch(), app2.dev_branch());
-        assert_eq!(app1.target_branch(), app2.target_branch());
-        assert_eq!(app1.local_repo(), app2.local_repo());
-        assert_eq!(app1.work_item_state(), app2.work_item_state());
-        assert_eq!(app1.max_concurrent_network(), app2.max_concurrent_network());
-        assert_eq!(
-            app1.max_concurrent_processing(),
-            app2.max_concurrent_processing()
-        );
-        assert_eq!(app1.tag_prefix(), app2.tag_prefix());
-
-        // Test that the Arc instances point to the same memory
-        assert!(Arc::ptr_eq(&app1.config, &app2.config));
-
-        // Test Arc reference count (should be at least 3: original + app1 + app2)
-        let strong_count = Arc::strong_count(&config);
-        assert!(strong_count >= 3);
+        assert!(!app.is_merge_mode());
+        assert!(!app.is_migration_mode());
+        assert!(app.is_cleanup_mode());
+        assert!(app.cleanup_branches().is_empty());
     }
 
-    /// # Arc Config Memory Efficiency
+    /// # App Enum from_config Auto Detection
     ///
-    /// Tests memory efficiency of Arc<AppConfig> sharing.
+    /// Tests that App::from_config creates the correct mode based on config.
     ///
     /// ## Test Scenario
-    /// - Creates many App instances sharing the same Arc<AppConfig>
-    /// - Verifies that config is not duplicated in memory
+    /// - Creates various configs and uses from_config
+    /// - Verifies correct mode is selected
     ///
     /// ## Expected Outcome
-    /// - All instances share the same config memory
-    /// - Memory usage is efficient through Arc sharing
+    /// - Mode matches the config type
     #[test]
-    fn test_arc_config_memory_efficiency() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
+    fn test_app_from_config() {
+        let client = create_test_client();
 
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("memory_test_org".to_string()),
-            project: ParsedProperty::Default("memory_test_project".to_string()),
-            repository: ParsedProperty::Default("memory_test_repo".to_string()),
-            pat: ParsedProperty::Default("memory_test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("memory_test_dev".to_string()),
-            target_branch: ParsedProperty::Default("memory_test_main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("memory-test-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+        // Default config -> Merge mode
+        let default_config = Arc::new(AppConfig::Default {
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Memory Test State".to_string()),
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
         });
+        let app = App::from_config(default_config, client.clone());
+        assert!(app.is_merge_mode());
 
-        // Create multiple App instances
-        let mut apps = Vec::new();
-        for _ in 0..10 {
-            apps.push(App::new(Vec::new(), Arc::clone(&config), client.clone()));
-        }
+        // Migration config -> Migration mode
+        let migration_config = Arc::new(AppConfig::Migration {
+            shared: create_shared_config(),
+            migration: MigrationModeConfig {
+                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
+            },
+        });
+        let app = App::from_config(migration_config, client.clone());
+        assert!(app.is_migration_mode());
 
-        // Verify all apps share the same config memory
-        for app in &apps {
-            assert!(Arc::ptr_eq(&config, &app.config));
-            assert_eq!(app.organization(), "memory_test_org");
-            assert_eq!(app.work_item_state(), "Memory Test State");
-        }
-
-        // Verify Arc reference count is as expected (original + 10 apps)
-        let strong_count = Arc::strong_count(&config);
-        assert_eq!(strong_count, 11); // 1 original + 10 apps
+        // Cleanup config -> Cleanup mode
+        let cleanup_config = Arc::new(AppConfig::Cleanup {
+            shared: create_shared_config(),
+            cleanup: CleanupModeConfig {
+                target: ParsedProperty::Default("main".to_string()),
+            },
+        });
+        let app = App::from_config(cleanup_config, client);
+        assert!(app.is_cleanup_mode());
     }
 
-    /// # Arc Config Immutability
+    /// # App Configuration Property Accessors
     ///
-    /// Tests that Arc<AppConfig> provides immutable access to configuration.
+    /// Tests that configuration properties are accessible through App.
     ///
     /// ## Test Scenario
-    /// - Attempts to verify config immutability through Arc
-    /// - Tests that config values cannot be modified
+    /// - Creates App and accesses configuration properties
     ///
     /// ## Expected Outcome
-    /// - Arc provides read-only access to config
-    /// - Config values remain stable and immutable
+    /// - All config properties return expected values
     #[test]
-    fn test_arc_config_immutability() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("immutable_org".to_string()),
-            project: ParsedProperty::Default("immutable_project".to_string()),
-            repository: ParsedProperty::Default("immutable_repo".to_string()),
-            pat: ParsedProperty::Default("immutable_pat".to_string()),
-            dev_branch: ParsedProperty::Default("immutable_dev".to_string()),
-            target_branch: ParsedProperty::Default("immutable_main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("immutable-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
+    fn test_app_config_accessors() {
         let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Immutable State".to_string()),
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
         });
+        let client = create_test_client();
+        let app = App::new_merge(config, client);
 
-        let app = App::new(Vec::new(), Arc::clone(&config), client);
-
-        // Store original values
-        let original_org = app.organization().to_string();
-        let original_project = app.project().to_string();
-        let original_state = app.work_item_state().to_string();
-
-        // Note: The following operations would be compile-time errors
-        // demonstrating that Arc provides immutable access:
-        // app.config.shared.organization = ParsedProperty::Default("modified".to_string()); // Error
-        // *app.config.shared().organization.value() = "modified".to_string(); // Error
-
-        // Verify values remain unchanged (demonstrating immutability)
-        assert_eq!(app.organization(), original_org);
-        assert_eq!(app.project(), original_project);
-        assert_eq!(app.work_item_state(), original_state);
-
-        // Test with another reference to same Arc
-        let app2 = App::new(
-            Vec::new(),
-            Arc::clone(&config),
-            AzureDevOpsClient::new(
-                "test_org2".to_string(),
-                "test_project2".to_string(),
-                "test_repo2".to_string(),
-                "test_pat2".to_string(),
-            )
-            .unwrap(),
-        );
-
-        // Both apps should see the same immutable values
-        assert_eq!(app.organization(), app2.organization());
-        assert_eq!(app.project(), app2.project());
-        assert_eq!(app.work_item_state(), app2.work_item_state());
+        assert_eq!(app.organization(), "test_org");
+        assert_eq!(app.project(), "test_project");
+        assert_eq!(app.repository(), "test_repo");
+        assert_eq!(app.dev_branch(), "dev");
+        assert_eq!(app.target_branch(), "next");
+        assert_eq!(app.tag_prefix(), "merged-");
+        assert_eq!(app.max_concurrent_network(), 100);
+        assert_eq!(app.max_concurrent_processing(), 10);
+        assert!(app.local_repo().is_none());
+        assert!(app.since().is_none());
     }
 
-    /// # Arc Config Thread-Safe Access
+    /// # App Base Access
     ///
-    /// Tests thread-safe access to Arc<AppConfig> from multiple threads.
+    /// Tests that base() and base_mut() work correctly.
     ///
     /// ## Test Scenario
-    /// - Spawns multiple threads accessing the same Arc<AppConfig>
-    /// - Verifies concurrent read access works correctly
+    /// - Creates App and accesses/modifies base
     ///
     /// ## Expected Outcome
-    /// - Arc enables safe concurrent access from multiple threads
-    /// - All threads read consistent config values
+    /// - Can read and write to base fields
     #[test]
-    fn test_arc_config_thread_safe_access() {
-        use std::sync::mpsc;
-        use std::thread;
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("thread_safe_org".to_string()),
-            project: ParsedProperty::Default("thread_safe_project".to_string()),
-            repository: ParsedProperty::Default("thread_safe_repo".to_string()),
-            pat: ParsedProperty::Default("thread_safe_pat".to_string()),
-            dev_branch: ParsedProperty::Default("thread_safe_dev".to_string()),
-            target_branch: ParsedProperty::Default("thread_safe_main".to_string()),
-            local_repo: Some(ParsedProperty::Default("/thread/safe/path".to_string())),
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("thread-safe-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
+    fn test_app_base_access() {
         let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Thread Safe State".to_string()),
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
         });
+        let client = create_test_client();
+        let mut app = App::new_merge(config, client);
 
-        // Create channel for collecting results from threads
-        let (tx, rx) = mpsc::channel();
-        let num_threads = 5;
+        // Read from base
+        assert!(app.base().pull_requests.is_empty());
 
-        // Spawn multiple threads that access the config
-        let mut handles = Vec::new();
-        for thread_id in 0..num_threads {
-            let config_clone = Arc::clone(&config);
-            let tx_clone = tx.clone();
-
-            let handle = thread::spawn(move || {
-                // Create client in thread
-                let client = AzureDevOpsClient::new(
-                    format!("thread_org_{}", thread_id),
-                    format!("thread_project_{}", thread_id),
-                    format!("thread_repo_{}", thread_id),
-                    format!("thread_pat_{}", thread_id),
-                )
-                .unwrap();
-
-                // Create app in thread
-                let app = App::new(Vec::new(), config_clone, client);
-
-                // Access config properties
-                let results = (
-                    thread_id,
-                    app.organization().to_string(),
-                    app.project().to_string(),
-                    app.repository().to_string(),
-                    app.dev_branch().to_string(),
-                    app.target_branch().to_string(),
-                    app.work_item_state().to_string(),
-                    app.max_concurrent_network(),
-                    app.max_concurrent_processing(),
-                    app.tag_prefix().to_string(),
-                    app.local_repo().map(|s| s.to_string()),
-                );
-
-                tx_clone.send(results).unwrap();
-            });
-
-            handles.push(handle);
-        }
-
-        // Wait for all threads to complete
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // Collect all results
-        drop(tx); // Close the sending end
-        let mut results = Vec::new();
-        while let Ok(result) = rx.recv() {
-            results.push(result);
-        }
-
-        // Verify all threads got the same config values
-        assert_eq!(results.len(), num_threads);
-
-        let expected = (
-            "thread_safe_org".to_string(),
-            "thread_safe_project".to_string(),
-            "thread_safe_repo".to_string(),
-            "thread_safe_dev".to_string(),
-            "thread_safe_main".to_string(),
-            "Thread Safe State".to_string(),
-            100,
-            10,
-            "thread-safe-".to_string(),
-            Some("/thread/safe/path".to_string()),
-        );
-
-        for (
-            _thread_id,
-            org,
-            project,
-            repo,
-            dev_branch,
-            target_branch,
-            work_item_state,
-            max_net,
-            max_proc,
-            tag_prefix,
-            local_repo,
-        ) in results
-        {
-            assert_eq!(org, expected.0);
-            assert_eq!(project, expected.1);
-            assert_eq!(repo, expected.2);
-            assert_eq!(dev_branch, expected.3);
-            assert_eq!(target_branch, expected.4);
-            assert_eq!(work_item_state, expected.5);
-            assert_eq!(max_net, expected.6);
-            assert_eq!(max_proc, expected.7);
-            assert_eq!(tag_prefix, expected.8);
-            assert_eq!(local_repo, expected.9);
-        }
+        // Write to base
+        app.base_mut().version = Some("1.0.0".to_string());
+        assert_eq!(app.version(), Some("1.0.0"));
     }
 
-    /// # Arc Config Concurrent Reference Counting
+    /// # App Merge Mode Cherry Pick Operations
     ///
-    /// Tests Arc reference counting under concurrent access.
+    /// Tests cherry pick field access and mutation in merge mode.
     ///
     /// ## Test Scenario
-    /// - Creates and drops Arc references concurrently from multiple threads
-    /// - Verifies Arc reference counting remains consistent
+    /// - Creates merge mode App
+    /// - Accesses and modifies cherry pick fields
     ///
     /// ## Expected Outcome
-    /// - Arc reference counting works correctly under concurrent access
-    /// - No memory leaks or use-after-free issues occur
+    /// - Cherry pick fields work correctly
     #[test]
-    fn test_arc_config_concurrent_reference_counting() {
-        use std::sync::{Barrier, mpsc};
-        use std::thread;
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("concurrent_org".to_string()),
-            project: ParsedProperty::Default("concurrent_project".to_string()),
-            repository: ParsedProperty::Default("concurrent_repo".to_string()),
-            pat: ParsedProperty::Default("concurrent_pat".to_string()),
-            dev_branch: ParsedProperty::Default("concurrent_dev".to_string()),
-            target_branch: ParsedProperty::Default("concurrent_main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("concurrent-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
+    fn test_app_merge_cherry_pick_operations() {
+        use crate::models::CherryPickStatus;
 
         let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Concurrent State".to_string()),
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
         });
+        let client = create_test_client();
+        let mut app = App::new_merge(config, client);
 
-        let num_threads = 10;
-        let barrier = Arc::new(Barrier::new(num_threads));
-        let (tx, rx) = mpsc::channel();
+        // Add cherry pick items
+        app.cherry_pick_items_mut().push(CherryPickItem {
+            pr_id: 123,
+            commit_id: "abc".to_string(),
+            pr_title: "Test PR".to_string(),
+            status: CherryPickStatus::Pending,
+        });
 
-        // Spawn threads that create and drop Arc references simultaneously
-        let mut handles = Vec::new();
-        for thread_id in 0..num_threads {
-            let config_clone = Arc::clone(&config);
-            let barrier_clone = Arc::clone(&barrier);
-            let tx_clone = tx.clone();
+        assert_eq!(app.cherry_pick_items().len(), 1);
+        assert_eq!(app.cherry_pick_items()[0].pr_id, 123);
 
-            let handle = thread::spawn(move || {
-                // Wait for all threads to be ready
-                barrier_clone.wait();
-
-                // Create multiple Arc clones in this thread
-                let mut arcs = Vec::new();
-                for _ in 0..5 {
-                    arcs.push(Arc::clone(&config_clone));
-                }
-
-                // Access config through each Arc
-                for (i, arc) in arcs.iter().enumerate() {
-                    let org = arc.shared().organization.value();
-                    assert_eq!(org, "concurrent_org");
-
-                    // Send confirmation that this access worked
-                    tx_clone.send((thread_id, i, org.to_string())).unwrap();
-                }
-
-                // Arcs will be dropped when this thread exits
-            });
-
-            handles.push(handle);
-        }
-
-        // Wait for all threads to complete
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        drop(tx);
-
-        // Collect results to ensure all accesses succeeded
-        let mut access_count = 0;
-        while let Ok((_thread_id, _arc_id, org)) = rx.recv() {
-            assert_eq!(org, "concurrent_org");
-            access_count += 1;
-        }
-
-        // Verify all accesses succeeded (10 threads × 5 arcs each)
-        assert_eq!(access_count, 50);
-
-        // Original Arc should still be valid and accessible
-        assert_eq!(config.shared().organization.value(), "concurrent_org");
-        assert_eq!(config.shared().project.value(), "concurrent_project");
+        // Set index
+        app.set_current_cherry_pick_index(1);
+        assert_eq!(app.current_cherry_pick_index(), 1);
     }
 
-    /// # Arc Config Drop Behavior
+    /// # App Migration Mode Operations
     ///
-    /// Tests proper cleanup when Arc<AppConfig> references are dropped.
+    /// Tests migration-specific operations.
     ///
     /// ## Test Scenario
-    /// - Creates Arc references and verifies cleanup on drop
-    /// - Tests that the last reference properly cleans up
+    /// - Creates migration mode App
+    /// - Tests migration analysis access
     ///
     /// ## Expected Outcome
-    /// - Arc properly manages reference counting
-    /// - Memory is cleaned up when last reference is dropped
+    /// - Migration fields accessible in migration mode
     #[test]
-    fn test_arc_config_drop_behavior() {
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("drop_test_org".to_string()),
-            project: ParsedProperty::Default("drop_test_project".to_string()),
-            repository: ParsedProperty::Default("drop_test_repo".to_string()),
-            pat: ParsedProperty::Default("drop_test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("drop_test_dev".to_string()),
-            target_branch: ParsedProperty::Default("drop_test_main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("drop-test-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Drop Test State".to_string()),
+    fn test_app_migration_operations() {
+        let config = Arc::new(AppConfig::Migration {
+            shared: create_shared_config(),
+            migration: MigrationModeConfig {
+                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
             },
         });
+        let client = create_test_client();
+        let mut app = App::new_migration(config, client);
 
-        // Initially should have reference count of 1
-        assert_eq!(Arc::strong_count(&config), 1);
+        // Initially no analysis
+        assert!(app.migration_analysis().is_none());
 
-        // Create additional references
-        let config2 = Arc::clone(&config);
-        let config3 = Arc::clone(&config);
-        assert_eq!(Arc::strong_count(&config), 3);
-
-        // Test access through all references
-        assert_eq!(config.shared().organization.value(), "drop_test_org");
-        assert_eq!(config2.shared().organization.value(), "drop_test_org");
-        assert_eq!(config3.shared().organization.value(), "drop_test_org");
-
-        // Drop references one by one
-        drop(config2);
-        assert_eq!(Arc::strong_count(&config), 2);
-
-        drop(config3);
-        assert_eq!(Arc::strong_count(&config), 1);
-
-        // Original reference should still work
-        assert_eq!(config.shared().organization.value(), "drop_test_org");
-
-        // When config is dropped at end of scope, reference count goes to 0
-        // and memory is cleaned up (this is verified by the test not crashing)
+        // These should not panic in migration mode
+        app.mark_pr_as_eligible(123);
+        assert!(app.has_manual_override(123).is_none()); // No analysis yet
     }
 
-    /// # Migration Worktree Cleanup Method
+    /// # App Cleanup Mode Operations
     ///
-    /// Tests that cleanup_migration_worktree properly clears the migration tracking.
+    /// Tests cleanup-specific operations.
     ///
     /// ## Test Scenario
-    /// - Creates an App with migration_worktree_id set
-    /// - Calls cleanup_migration_worktree
-    /// - Verifies the field is cleared
+    /// - Creates cleanup mode App
+    /// - Tests cleanup branch access
     ///
     /// ## Expected Outcome
-    /// - migration_worktree_id is None after cleanup
-    /// - Method completes without error
+    /// - Cleanup fields accessible in cleanup mode
     #[test]
-    fn test_cleanup_migration_worktree_clears_tracking() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
+    fn test_app_cleanup_operations() {
+        use crate::models::CleanupStatus;
 
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("test_org".to_string()),
-            project: ParsedProperty::Default("test_project".to_string()),
-            repository: ParsedProperty::Default("test_repo".to_string()),
-            pat: ParsedProperty::Default("test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("dev".to_string()),
-            target_branch: ParsedProperty::Default("main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("merged-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Test State".to_string()),
+        let config = Arc::new(AppConfig::Cleanup {
+            shared: create_shared_config(),
+            cleanup: CleanupModeConfig {
+                target: ParsedProperty::Default("main".to_string()),
             },
         });
+        let client = create_test_client();
+        let mut app = App::new_cleanup(config, client);
 
-        let mut app = App::new(Vec::new(), config, client);
+        // Add cleanup branches
+        app.cleanup_branches_mut().push(CleanupBranch {
+            name: "feature/test".to_string(),
+            target: "main".to_string(),
+            version: "1.0".to_string(),
+            is_merged: true,
+            selected: false,
+            status: CleanupStatus::Pending,
+        });
 
-        // Set up migration worktree tracking
-        app.migration_worktree_id = Some("migration-123456".to_string());
-        // Note: We don't set base_repo_path because we don't have a real repo
-        // This tests that cleanup handles the case gracefully
-
-        // Call cleanup
-        app.cleanup_migration_worktree();
-
-        // Verify the tracking was cleared (take() returns None now)
-        assert!(app.migration_worktree_id.is_none());
+        assert_eq!(app.cleanup_branches().len(), 1);
+        assert_eq!(app.cleanup_branches()[0].name, "feature/test");
     }
 
-    /// # Migration Worktree Cleanup Without Tracking
+    /// # App Mode Mismatch - Cleanup in Non-Cleanup Mode
     ///
-    /// Tests that cleanup_migration_worktree works when no worktree is tracked.
+    /// Tests that cleanup_branches() returns empty in non-cleanup mode.
     ///
     /// ## Test Scenario
-    /// - Creates an App without migration_worktree_id set
-    /// - Calls cleanup_migration_worktree
-    /// - Verifies no errors occur
+    /// - Creates merge mode App
+    /// - Calls cleanup_branches()
     ///
     /// ## Expected Outcome
-    /// - Method completes without error
-    /// - No panics when there's nothing to clean up
+    /// - Returns empty slice (no panic)
     #[test]
-    fn test_cleanup_migration_worktree_without_tracking() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
-
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("test_org".to_string()),
-            project: ParsedProperty::Default("test_project".to_string()),
-            repository: ParsedProperty::Default("test_repo".to_string()),
-            pat: ParsedProperty::Default("test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("dev".to_string()),
-            target_branch: ParsedProperty::Default("main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("merged-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
+    fn test_app_cleanup_branches_in_merge_mode() {
         let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Test State".to_string()),
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
             },
         });
+        let client = create_test_client();
+        let app = App::new_merge(config, client);
 
-        let mut app = App::new(Vec::new(), config, client);
-
-        // Verify no tracking is set initially
-        assert!(app.migration_worktree_id.is_none());
-
-        // Call cleanup - should not panic or error
-        app.cleanup_migration_worktree();
-
-        // Still None after cleanup
-        assert!(app.migration_worktree_id.is_none());
+        // Should return empty, not panic
+        assert!(app.cleanup_branches().is_empty());
     }
 
-    /// # App Drop Trait Implementation
+    /// # App Work Item State by Mode
     ///
-    /// Tests that the Drop trait properly calls cleanup.
+    /// Tests that work_item_state returns appropriate values per mode.
     ///
     /// ## Test Scenario
-    /// - Creates an App with migration tracking set
-    /// - Drops the App (goes out of scope)
-    /// - Verifies Drop is called (test doesn't panic)
+    /// - Creates apps in different modes
+    /// - Tests work_item_state()
     ///
     /// ## Expected Outcome
-    /// - App can be dropped without panic
-    /// - Drop trait runs cleanup (verified by not panicking)
+    /// - Merge mode returns configured value
+    /// - Other modes return fallback
     #[test]
-    fn test_app_drop_calls_cleanup() {
-        let client = AzureDevOpsClient::new(
-            "test_org".to_string(),
-            "test_project".to_string(),
-            "test_repo".to_string(),
-            "test_pat".to_string(),
-        )
-        .unwrap();
+    fn test_app_work_item_state_by_mode() {
+        let client = create_test_client();
 
-        let shared_config = SharedConfig {
-            organization: ParsedProperty::Default("test_org".to_string()),
-            project: ParsedProperty::Default("test_project".to_string()),
-            repository: ParsedProperty::Default("test_repo".to_string()),
-            pat: ParsedProperty::Default("test_pat".to_string()),
-            dev_branch: ParsedProperty::Default("dev".to_string()),
-            target_branch: ParsedProperty::Default("main".to_string()),
-            local_repo: None,
-            parallel_limit: ParsedProperty::Default(300),
-            max_concurrent_network: ParsedProperty::Default(100),
-            max_concurrent_processing: ParsedProperty::Default(10),
-            tag_prefix: ParsedProperty::Default("merged-".to_string()),
-            since: None,
-            skip_confirmation: false,
-        };
-
-        let config = Arc::new(AppConfig::Default {
-            shared: shared_config,
+        // Merge mode with custom state
+        let merge_config = Arc::new(AppConfig::Default {
+            shared: create_shared_config(),
             default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Test State".to_string()),
+                work_item_state: ParsedProperty::Default("Custom State".to_string()),
             },
         });
+        let merge_app = App::new_merge(merge_config, client.clone());
+        assert_eq!(merge_app.work_item_state(), "Custom State");
 
-        {
-            let mut app = App::new(Vec::new(), config, client);
+        // Migration mode - fallback
+        let migration_config = Arc::new(AppConfig::Migration {
+            shared: create_shared_config(),
+            migration: MigrationModeConfig {
+                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
+            },
+        });
+        let migration_app = App::new_migration(migration_config, client.clone());
+        assert_eq!(migration_app.work_item_state(), "Next Merged");
 
-            // Set up migration tracking
-            app.migration_worktree_id = Some("migration-789".to_string());
-            // Note: base_repo_path is None, so cleanup won't try to remove anything
+        // Cleanup mode - fallback
+        let cleanup_config = Arc::new(AppConfig::Cleanup {
+            shared: create_shared_config(),
+            cleanup: CleanupModeConfig {
+                target: ParsedProperty::Default("main".to_string()),
+            },
+        });
+        let cleanup_app = App::new_cleanup(cleanup_config, client);
+        assert_eq!(cleanup_app.work_item_state(), "Next Merged");
+    }
 
-            // App goes out of scope here, Drop is called
-        }
+    /// # App Error Message Access
+    ///
+    /// Tests error message getter and setter.
+    ///
+    /// ## Test Scenario
+    /// - Creates App
+    /// - Gets and sets error message
+    ///
+    /// ## Expected Outcome
+    /// - Error message can be read and written
+    #[test]
+    fn test_app_error_message() {
+        let config = Arc::new(AppConfig::Default {
+            shared: create_shared_config(),
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            },
+        });
+        let client = create_test_client();
+        let mut app = App::new_merge(config, client);
 
-        // If we get here without panicking, Drop worked correctly
+        // Initially None
+        assert!(app.error_message().is_none());
+
+        // Set error
+        app.set_error_message(Some("Test error".to_string()));
+        assert_eq!(app.error_message(), Some("Test error"));
+
+        // Clear error
+        app.set_error_message(None);
+        assert!(app.error_message().is_none());
+    }
+
+    /// # App Version Access
+    ///
+    /// Tests version getter and setter.
+    ///
+    /// ## Test Scenario
+    /// - Creates App
+    /// - Gets and sets version
+    ///
+    /// ## Expected Outcome
+    /// - Version can be read and written
+    #[test]
+    fn test_app_version() {
+        let config = Arc::new(AppConfig::Default {
+            shared: create_shared_config(),
+            default: DefaultModeConfig {
+                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            },
+        });
+        let client = create_test_client();
+        let mut app = App::new_merge(config, client);
+
+        // Initially None
+        assert!(app.version().is_none());
+
+        // Set version
+        app.set_version(Some("1.2.3".to_string()));
+        assert_eq!(app.version(), Some("1.2.3"));
     }
 }

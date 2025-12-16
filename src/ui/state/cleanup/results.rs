@@ -54,14 +54,14 @@ impl CleanupResultsState {
     }
 
     fn get_success_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
-        app.cleanup_branches
+        app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Success))
             .collect()
     }
 
     fn get_failed_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
-        app.cleanup_branches
+        app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Failed(_)))
             .collect()
@@ -309,7 +309,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with success status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -366,7 +366,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with failed status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -415,7 +415,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with mixed statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -470,7 +470,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with only success status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),

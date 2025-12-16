@@ -33,12 +33,12 @@ impl CompletionState {
     }
 
     fn next(&mut self, app: &App) {
-        if app.cherry_pick_items.is_empty() {
+        if app.cherry_pick_items().is_empty() {
             return;
         }
         let i = match self.list_state.selected() {
             Some(i) => {
-                if i >= app.cherry_pick_items.len() - 1 {
+                if i >= app.cherry_pick_items().len() - 1 {
                     0
                 } else {
                     i + 1
@@ -50,13 +50,13 @@ impl CompletionState {
     }
 
     fn previous(&mut self, app: &App) {
-        if app.cherry_pick_items.is_empty() {
+        if app.cherry_pick_items().is_empty() {
             return;
         }
         let i = match self.list_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    app.cherry_pick_items.len() - 1
+                    app.cherry_pick_items().len() - 1
                 } else {
                     i - 1
                 }
@@ -95,7 +95,7 @@ impl AppState for CompletionState {
         let available_width = content_chunks[0].width.saturating_sub(4); // Account for borders
 
         let items: Vec<ListItem> = app
-            .cherry_pick_items
+            .cherry_pick_items()
             .iter()
             .map(|item| {
                 let mut spans = vec![];
@@ -121,7 +121,7 @@ impl AppState for CompletionState {
 
                 // Find work items for this PR
                 let work_items: Vec<i32> = app
-                    .pull_requests
+                    .pull_requests()
                     .iter()
                     .find(|pr| pr.pr.id == item.pr_id)
                     .map(|pr| pr.work_items.iter().map(|wi| wi.id).collect())
@@ -205,7 +205,7 @@ impl AppState for CompletionState {
         // Calculate summary
         let mut successful = 0;
         let mut failed = 0;
-        for item in &app.cherry_pick_items {
+        for item in app.cherry_pick_items() {
             match &item.status {
                 CherryPickStatus::Success => successful += 1,
                 CherryPickStatus::Failed(_) => failed += 1,
@@ -252,14 +252,14 @@ impl AppState for CompletionState {
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch(),
-            app.version.as_ref().unwrap()
+            app.version().as_ref().unwrap()
         );
         summary_text.push(Line::from(vec![
             Span::raw("Branch: "),
             Span::styled(branch_name, Style::default().fg(Color::Cyan)),
         ]));
 
-        if let Some(repo_path) = &app.repo_path {
+        if let Some(repo_path) = &app.repo_path() {
             summary_text.push(Line::from(vec![
                 Span::raw("Location: "),
                 Span::styled(
@@ -312,7 +312,7 @@ impl AppState for CompletionState {
             }
             KeyCode::Char('p') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items.get(i)
+                    && let Some(item) = app.cherry_pick_items().get(i)
                 {
                     app.open_pr_in_browser(item.pr_id);
                 }
@@ -320,10 +320,10 @@ impl AppState for CompletionState {
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items.get(i)
+                    && let Some(item) = app.cherry_pick_items().get(i)
                 {
                     // Find the corresponding PR and open its work items
-                    if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
+                    if let Some(pr) = app.pull_requests().iter().find(|pr| pr.pr.id == item.pr_id)
                         && !pr.work_items.is_empty()
                     {
                         app.open_work_items_in_browser(&pr.work_items);
@@ -375,9 +375,11 @@ mod tests {
             for item in &mut items {
                 item.status = CherryPickStatus::Success;
             }
-            harness.app.cherry_pick_items = items;
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = items;
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
             let state = Box::new(CompletionState::new());
             harness.render_state(state);
@@ -404,9 +406,11 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.cherry_pick_items = create_test_cherry_pick_items();
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
             let state = Box::new(CompletionState::new());
             harness.render_state(state);
@@ -430,8 +434,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
@@ -456,8 +460,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
@@ -467,7 +471,7 @@ mod tests {
         // Should wrap to last item
         assert_eq!(
             state.list_state.selected(),
-            Some(harness.app.cherry_pick_items.len() - 1)
+            Some(harness.app.cherry_pick_items().len() - 1)
         );
     }
 
@@ -485,8 +489,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -510,8 +514,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -535,8 +539,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -562,9 +566,9 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.pull_requests = create_test_pull_requests();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -588,8 +592,8 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -630,7 +634,7 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         // Leave cherry_pick_items empty
-        harness.app.version = Some("v1.0.0".to_string());
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
@@ -664,9 +668,11 @@ mod tests {
             items[1].status = CherryPickStatus::Skipped;
             items[2].status = CherryPickStatus::Success;
             items[3].status = CherryPickStatus::Skipped;
-            harness.app.cherry_pick_items = items;
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = items;
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
             let state = Box::new(CompletionState::new());
             harness.render_state(state);
@@ -691,11 +697,11 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
-        let item_count = harness.app.cherry_pick_items.len();
+        let item_count = harness.app.cherry_pick_items().len();
 
         // Navigate to end
         for _ in 0..item_count {

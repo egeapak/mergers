@@ -3,11 +3,11 @@ source: src/ui/state/default/pr_selection.rs
 expression: harness.backend()
 ---
 "                                                                                "
-" ┌Pull Requests (2/3)─────────────────────────────────────────────────────────┐ "
+" ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
 " │      PR #     Date         Title           Author          Work Items      ↑ "
-" │→ ✓   102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved)█ "
+" │→ ✓   100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)  █ "
 " │      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)  █ "
-" │  ✓   100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)  █ "
+" │  ✓   102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved)█ "
 " │                                                                            █ "
 " │                                                                            █ "
 " │                                                                            █ "
@@ -29,6 +29,6 @@ expression: harness.backend()
 " │2. Click login button                                                       │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
-" │↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Con│ "
+" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | E│ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

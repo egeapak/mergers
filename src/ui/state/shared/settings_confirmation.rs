@@ -359,7 +359,7 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);
@@ -388,7 +388,7 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);
@@ -419,7 +419,7 @@ mod tests {
             let config = create_test_config_all_defaults();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);
@@ -450,7 +450,7 @@ mod tests {
             let config = create_test_config_cli_values();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);
@@ -480,7 +480,7 @@ mod tests {
             let config = create_test_config_env_values();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);
@@ -511,7 +511,7 @@ mod tests {
             let config = create_test_config_file_values();
             let mut harness = TuiTestHarness::with_config(config);
             let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
+                harness.app.config().as_ref().clone(),
             ));
 
             harness.render_state(state);

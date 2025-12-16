@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let mut app = App::new(pr_with_work_items, config.clone(), client);
 
     // Set the initial state based on the configuration
-    app.initial_state = Some(create_initial_state(Some((*config).clone())));
+    app.set_initial_state(create_initial_state(Some((*config).clone())));
 
     // Run app with unified state machine
     let result = run_app(&mut terminal, &mut app).await;

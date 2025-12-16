@@ -1,14 +1,13 @@
 use crate::ui::App;
 use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
-use chrono::DateTime;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,9 +19,9 @@ pub enum MigrationTab {
 
 pub struct MigrationState {
     pub current_tab: MigrationTab,
-    pub eligible_table_state: TableState,
-    pub unsure_table_state: TableState,
-    pub not_merged_table_state: TableState,
+    pub eligible_list_state: ListState,
+    pub unsure_list_state: ListState,
+    pub not_merged_list_state: ListState,
     pub show_details: bool,
 }
 
@@ -34,28 +33,28 @@ impl Default for MigrationState {
 
 impl MigrationState {
     pub fn new() -> Self {
-        let mut eligible_table_state = TableState::default();
-        eligible_table_state.select(Some(0));
+        let mut eligible_list_state = ListState::default();
+        eligible_list_state.select(Some(0));
 
         Self {
             current_tab: MigrationTab::Eligible,
-            eligible_table_state,
-            unsure_table_state: TableState::default(),
-            not_merged_table_state: TableState::default(),
+            eligible_list_state,
+            unsure_list_state: ListState::default(),
+            not_merged_list_state: ListState::default(),
             show_details: false,
         }
     }
 
-    fn get_current_table_state(&mut self) -> &mut TableState {
+    fn get_current_list_state(&mut self) -> &mut ListState {
         match self.current_tab {
-            MigrationTab::Eligible => &mut self.eligible_table_state,
-            MigrationTab::Unsure => &mut self.unsure_table_state,
-            MigrationTab::NotMerged => &mut self.not_merged_table_state,
+            MigrationTab::Eligible => &mut self.eligible_list_state,
+            MigrationTab::Unsure => &mut self.unsure_list_state,
+            MigrationTab::NotMerged => &mut self.not_merged_list_state,
         }
     }
 
     fn get_current_prs_count(&self, app: &App) -> usize {
-        if let Some(analysis) = &app.migration_analysis {
+        if let Some(analysis) = &app.migration_analysis() {
             match self.current_tab {
                 MigrationTab::Eligible => analysis.eligible_prs.len(),
                 MigrationTab::Unsure => analysis.unsure_prs.len(),
@@ -73,8 +72,8 @@ impl MigrationState {
             return;
         }
 
-        let current_table = self.get_current_table_state();
-        let current = current_table.selected().unwrap_or(0);
+        let current_list = self.get_current_list_state();
+        let current = current_list.selected().unwrap_or(0);
         let new_index = if direction > 0 {
             (current + 1) % count
         } else if current == 0 {
@@ -82,7 +81,7 @@ impl MigrationState {
         } else {
             current - 1
         };
-        current_table.select(Some(new_index));
+        current_list.select(Some(new_index));
     }
 
     fn switch_tab(&mut self, app: &App, direction: i32) {
@@ -113,9 +112,9 @@ impl MigrationState {
         // Ensure the new tab has a valid selection
         let count = self.get_current_prs_count(app);
         if count > 0 {
-            let current_table = self.get_current_table_state();
-            if current_table.selected().is_none() {
-                current_table.select(Some(0));
+            let current_list = self.get_current_list_state();
+            if current_list.selected().is_none() {
+                current_list.select(Some(0));
             }
         }
     }
@@ -124,40 +123,25 @@ impl MigrationState {
         &self,
         app: &'a App,
     ) -> Option<&'a crate::models::PullRequestWithWorkItems> {
-        if let Some(analysis) = &app.migration_analysis {
-            let table_state = match self.current_tab {
-                MigrationTab::Eligible => &self.eligible_table_state,
-                MigrationTab::Unsure => &self.unsure_table_state,
-                MigrationTab::NotMerged => &self.not_merged_table_state,
+        if let Some(analysis) = &app.migration_analysis() {
+            let list_state = match self.current_tab {
+                MigrationTab::Eligible => &self.eligible_list_state,
+                MigrationTab::Unsure => &self.unsure_list_state,
+                MigrationTab::NotMerged => &self.not_merged_list_state,
             };
 
-            if let Some(selected) = table_state.selected() {
-                // Get the sorted PRs for the current tab
-                let sorted_prs = match self.current_tab {
-                    MigrationTab::Eligible => Self::sort_prs_by_date(&analysis.eligible_prs),
-                    MigrationTab::Unsure => Self::sort_prs_by_date(&analysis.unsure_prs),
-                    MigrationTab::NotMerged => Self::sort_prs_by_date(&analysis.not_merged_prs),
-                };
-                sorted_prs.get(selected).copied()
+            if let Some(selected) = list_state.selected() {
+                match self.current_tab {
+                    MigrationTab::Eligible => analysis.eligible_prs.get(selected),
+                    MigrationTab::Unsure => analysis.unsure_prs.get(selected),
+                    MigrationTab::NotMerged => analysis.not_merged_prs.get(selected),
+                }
             } else {
                 None
             }
         } else {
             None
         }
-    }
-
-    /// Sort PRs by closed_date (completion date), newest first (same as merge mode)
-    fn sort_prs_by_date(
-        prs: &[crate::models::PullRequestWithWorkItems],
-    ) -> Vec<&crate::models::PullRequestWithWorkItems> {
-        let mut sorted: Vec<&crate::models::PullRequestWithWorkItems> = prs.iter().collect();
-        sorted.sort_by(|a, b| {
-            let date_a = a.pr.closed_date.as_deref().unwrap_or("");
-            let date_b = b.pr.closed_date.as_deref().unwrap_or("");
-            date_b.cmp(date_a) // Newest first
-        });
-        sorted
     }
 
     fn open_current_pr(&self, app: &App) {
@@ -230,7 +214,8 @@ impl MigrationState {
     }
 
     fn render_tabs(&self, f: &mut Frame, app: &App, area: Rect) {
-        let analysis = app.migration_analysis.as_ref().unwrap();
+        let migration_analysis_opt = app.migration_analysis();
+        let analysis = migration_analysis_opt.as_ref().unwrap();
 
         let tab_titles = vec![
             format!("✅ Eligible ({})", analysis.eligible_prs.len()),
@@ -251,9 +236,10 @@ impl MigrationState {
     }
 
     fn render_pr_list(&mut self, f: &mut Frame, app: &App, area: Rect) {
-        let analysis = app.migration_analysis.as_ref().unwrap();
+        let migration_analysis_opt = app.migration_analysis();
+        let analysis = migration_analysis_opt.as_ref().unwrap();
 
-        let (prs, title_base, color) = match self.current_tab {
+        let (prs, title, color) = match self.current_tab {
             MigrationTab::Eligible => (
                 &analysis.eligible_prs,
                 "Eligible PRs - Ready for tagging",
@@ -271,111 +257,87 @@ impl MigrationState {
             ),
         };
 
-        let title = format!("{} ({})", title_base, prs.len());
-
-        // Sort PRs by closed_date (completion date)
-        let sorted_prs = Self::sort_prs_by_date(prs);
-
-        // Create table headers (same as merge mode, with override indicator column)
-        let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
+        let items: Vec<ListItem> = prs
             .iter()
-            .map(|h| {
-                Cell::from(*h).style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )
-            });
-        let header = Row::new(header_cells).height(1);
-
-        // Create table rows
-        let rows: Vec<Row> = sorted_prs
-            .iter()
-            .map(|pr_with_wi| {
-                // Format date from closed_date
-                let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
-                    if let Ok(date) = DateTime::parse_from_rfc3339(closed_date) {
-                        date.format("%Y-%m-%d").to_string()
-                    } else {
-                        "Active".to_string()
+            .map(|pr| {
+                // Check if this PR has a manual override and show what Space will do
+                let (override_indicator, space_action) = match app.has_manual_override(pr.pr.id) {
+                    Some(true) => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Reset",          // will reset override
+                            MigrationTab::NotMerged => " → Reset",       // will reset override
+                        };
+                        (" ✅ [Manual]", action)
                     }
-                } else {
-                    "Active".to_string()
-                };
-
-                // Build work items as individually colored spans
-                let work_items_spans: Vec<Span> = if !pr_with_wi.work_items.is_empty() {
-                    let mut spans = Vec::new();
-                    for (idx, wi) in pr_with_wi.work_items.iter().enumerate() {
-                        if idx > 0 {
-                            spans.push(Span::raw(", "));
-                        }
-                        let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                        let color = get_state_color_with_rgb(
-                            state,
-                            wi.fields.state_color,
-                            &analysis.terminal_states,
-                        );
-                        spans.push(Span::styled(
-                            format!("#{} ({})", wi.id, state),
-                            Style::default().fg(color),
-                        ));
+                    Some(false) => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " → Reset",     // will reset override
+                            MigrationTab::Unsure => " → Eligible",    // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible", // will mark eligible
+                        };
+                        (" ❌ [Manual Override]", action)
                     }
-                    spans
-                } else {
-                    vec![Span::raw("")]
+                    None => {
+                        let action = match self.current_tab {
+                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
+                            MigrationTab::Unsure => " → Eligible",       // will mark eligible
+                            MigrationTab::NotMerged => " → Eligible",    // will mark eligible
+                        };
+                        ("", action)
+                    }
                 };
 
-                // Check for manual override indicator (leftmost column)
-                let override_indicator = match app.has_manual_override(pr_with_wi.pr.id) {
-                    Some(true) => "✅",
-                    Some(false) => "❌",
-                    None => " ",
-                };
-
-                let cells = vec![
-                    Cell::from(override_indicator).style(Style::default().fg(Color::Magenta)),
-                    Cell::from(format!("{:<6}", pr_with_wi.pr.id))
-                        .style(Style::default().fg(Color::Cyan)),
-                    Cell::from(date).style(Style::default()),
-                    Cell::from(pr_with_wi.pr.title.clone()).style(Style::default()),
-                    Cell::from(pr_with_wi.pr.created_by.display_name.clone())
-                        .style(Style::default().fg(Color::Yellow)),
-                    Cell::from(Line::from(work_items_spans)),
-                ];
-
-                Row::new(cells).height(1)
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            format!("#{}", pr.pr.id),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" "),
+                        Span::raw(&pr.pr.title),
+                        Span::styled(
+                            override_indicator,
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(space_action, Style::default().fg(Color::Cyan)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(
+                            format!("  By: {}", pr.pr.created_by.display_name),
+                            Style::default().fg(Color::Gray),
+                        ),
+                        Span::raw(" | "),
+                        Span::styled(
+                            format!("Work Items: {}", pr.work_items.len()),
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ]),
+                ])
             })
             .collect();
 
-        let table = Table::new(
-            rows,
-            vec![
-                Constraint::Length(3),      // Override indicator
-                Constraint::Length(8),      // PR #
-                Constraint::Length(12),     // Date
-                Constraint::Percentage(30), // Title
-                Constraint::Percentage(20), // Author
-                Constraint::Percentage(25), // Work Items
-            ],
-        )
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(Style::default().fg(color)),
-        )
-        .row_highlight_style(Style::default().bg(Color::DarkGray))
-        .highlight_symbol("→ ");
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(color)),
+            )
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-        let current_table = self.get_current_table_state();
-        f.render_stateful_widget(table, area, current_table);
+        let current_list = self.get_current_list_state();
+        f.render_stateful_widget(list, area, current_list);
     }
 
     fn render_details(&self, f: &mut Frame, app: &App, area: Rect) {
         if let Some(pr) = self.get_current_pr(app) {
-            let analysis = app.migration_analysis.as_ref().unwrap();
+            let migration_analysis_opt = app.migration_analysis();
+            let analysis = migration_analysis_opt.as_ref().unwrap();
 
             let mut details = vec![
                 Line::from(vec![Span::styled(
@@ -408,11 +370,11 @@ impl MigrationState {
                 )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let color = get_state_color_with_rgb(
-                        state,
-                        work_item.fields.state_color,
-                        &analysis.terminal_states,
-                    );
+                    let color = if analysis.terminal_states.contains(&state.to_string()) {
+                        Color::Green
+                    } else {
+                        Color::Red
+                    };
                     details.push(Line::from(vec![
                         Span::raw("  "),
                         Span::styled(
@@ -503,50 +465,45 @@ impl MigrationState {
 #[async_trait]
 impl AppState for MigrationState {
     fn ui(&mut self, f: &mut Frame, app: &App) {
-        if app.migration_analysis.is_none() {
+        if app.migration_analysis().is_none() {
             return;
         }
 
-        // Layout with details panel at bottom (like merge mode)
-        let chunks = if self.show_details {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),      // Tabs
-                    Constraint::Min(10),        // PR table (fills remaining space)
-                    Constraint::Percentage(35), // Details panel (from bottom)
-                    Constraint::Length(9),      // Help
-                ])
-                .split(f.area())
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Tabs
-                    Constraint::Min(10),   // PR table (full height)
-                    Constraint::Length(9), // Help
-                ])
-                .split(f.area())
-        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Tabs
+                Constraint::Min(10),   // Main content
+                Constraint::Length(9), // Help
+            ])
+            .split(f.area());
 
         // Render tabs
         self.render_tabs(f, app, chunks[0]);
 
-        // Render PR list
-        self.render_pr_list(f, app, chunks[1]);
+        // Split main content area
+        let main_chunks = if self.show_details {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(chunks[1])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(100)])
+                .split(chunks[1])
+        };
 
-        // Render details if enabled (from bottom)
-        if self.show_details {
-            self.render_details(f, app, chunks[2]);
+        // Render PR list
+        self.render_pr_list(f, app, main_chunks[0]);
+
+        // Render details if enabled
+        if self.show_details && main_chunks.len() > 1 {
+            self.render_details(f, app, main_chunks[1]);
         }
 
-        // Render help (last chunk)
-        let help_chunk = if self.show_details {
-            chunks[3]
-        } else {
-            chunks[2]
-        };
-        self.render_help(f, help_chunk);
+        // Render help
+        self.render_help(f, chunks[2]);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
@@ -593,27 +550,6 @@ impl AppState for MigrationState {
     }
 }
 
-/// Gets a color for a work item state in migration mode.
-///
-/// Prefers API color (RGB tuple), then falls back to terminal state logic (green if terminal, red if not).
-fn get_state_color_with_rgb(
-    state: &str,
-    api_color: Option<(u8, u8, u8)>,
-    terminal_states: &[String],
-) -> Color {
-    // If we have an API color (already converted to RGB), use it
-    if let Some((r, g, b)) = api_color {
-        return Color::Rgb(r, g, b);
-    }
-
-    // Fall back to terminal state logic
-    if terminal_states.contains(&state.to_string()) {
-        Color::Green
-    } else {
-        Color::Red
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,7 +579,9 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.migration_analysis = Some(create_test_migration_analysis());
+            harness
+                .app
+                .set_migration_analysis(Some(create_test_migration_analysis()));
 
             let state = Box::new(MigrationState::new());
             harness.render_state(state);
@@ -673,7 +611,9 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.migration_analysis = Some(create_test_migration_analysis());
+            harness
+                .app
+                .set_migration_analysis(Some(create_test_migration_analysis()));
 
             let state = Box::new(MigrationState::new());
             harness.render_state(state);
@@ -742,7 +682,7 @@ mod tests {
                 analysis.not_merged_prs.clear();
             }
 
-            harness.app.migration_analysis = Some(analysis);
+            harness.app.set_migration_analysis(Some(analysis));
 
             let state = Box::new(MigrationState::new());
             harness.render_state(state);
@@ -790,12 +730,12 @@ mod tests {
                 analysis.eligible_prs.remove(0);
             }
 
-            harness.app.migration_analysis = Some(analysis);
+            harness.app.set_migration_analysis(Some(analysis));
 
             let mut state = MigrationState::new();
             // Switch to not-merged tab to see the manual override
             state.current_tab = MigrationTab::NotMerged;
-            state.not_merged_table_state.select(Some(0));
+            state.not_merged_list_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -827,11 +767,11 @@ mod tests {
                 analysis.unsure_prs.push(pr);
             }
 
-            harness.app.migration_analysis = Some(analysis);
+            harness.app.set_migration_analysis(Some(analysis));
 
             let mut state = MigrationState::new();
             state.current_tab = MigrationTab::Unsure;
-            state.unsure_table_state.select(Some(0));
+            state.unsure_list_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -857,7 +797,9 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.migration_analysis = Some(create_test_migration_analysis());
+            harness
+                .app
+                .set_migration_analysis(Some(create_test_migration_analysis()));
 
             let mut state = MigrationState::new();
             state.show_details = true;
@@ -885,11 +827,13 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.migration_analysis = Some(create_test_migration_analysis());
+            harness
+                .app
+                .set_migration_analysis(Some(create_test_migration_analysis()));
 
             let mut state = MigrationState::new();
             state.current_tab = MigrationTab::NotMerged;
-            state.not_merged_table_state.select(Some(0));
+            state.not_merged_list_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -912,14 +856,16 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
-        assert_eq!(state.eligible_table_state.selected(), Some(0));
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
 
         let result = state.process_key(KeyCode::Down, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
-        assert_eq!(state.eligible_table_state.selected(), Some(1));
+        assert_eq!(state.eligible_list_state.selected(), Some(1));
     }
 
     /// # Migration Results State - Navigation Up
@@ -937,15 +883,17 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
-        assert_eq!(state.eligible_table_state.selected(), Some(0));
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
 
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
         // Should wrap to last item (there are 2 eligible PRs)
-        assert_eq!(state.eligible_table_state.selected(), Some(1));
+        assert_eq!(state.eligible_list_state.selected(), Some(1));
     }
 
     /// # Migration Results State - Tab Switch Right
@@ -963,7 +911,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
@@ -988,7 +938,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
@@ -1013,7 +965,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
         assert!(!state.show_details);
@@ -1046,7 +1000,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
 
@@ -1070,7 +1026,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
 
@@ -1092,7 +1050,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
 
@@ -1116,17 +1076,17 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
-        // Get the PR ID that will be displayed first after sorting (newest first)
-        // eligible_prs contains PR 100 (2024-01-10) and PR 101 (2024-01-12)
-        // After sorting newest first, PR 101 is displayed first
+        // Get the PR ID before toggling (it will be moved to a different list)
         let pr_id = harness
             .app
-            .migration_analysis
+            .migration_analysis()
             .as_ref()
             .unwrap()
-            .eligible_prs[1] // PR 101 - the newest, displayed first after sorting
+            .eligible_prs[0]
             .pr
             .id;
 
@@ -1155,7 +1115,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
 
@@ -1207,7 +1169,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
 
@@ -1239,7 +1203,9 @@ mod tests {
         let config = create_test_config_migration();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.migration_analysis = Some(create_test_migration_analysis());
+        harness
+            .app
+            .set_migration_analysis(Some(create_test_migration_analysis()));
 
         let mut state = MigrationState::new();
         state.current_tab = MigrationTab::Unsure;
@@ -1263,7 +1229,7 @@ mod tests {
     fn test_migration_state_default() {
         let state = MigrationState::default();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
-        assert_eq!(state.eligible_table_state.selected(), Some(0));
+        assert_eq!(state.eligible_list_state.selected(), Some(0));
         assert!(!state.show_details);
     }
 
@@ -1285,7 +1251,7 @@ mod tests {
 
         let mut analysis = create_test_migration_analysis();
         analysis.unsure_prs.clear();
-        harness.app.migration_analysis = Some(analysis);
+        harness.app.set_migration_analysis(Some(analysis));
 
         let mut state = MigrationState::new();
         state.current_tab = MigrationTab::Unsure;
@@ -1296,97 +1262,5 @@ mod tests {
 
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
-    }
-
-    // ==================== State Color Tests ====================
-
-    /// # Get State Color With RGB - Uses API Color
-    ///
-    /// Tests that API-provided RGB color takes precedence in migration mode.
-    ///
-    /// ## Test Scenario
-    /// - Provides both state name and API RGB color
-    ///
-    /// ## Expected Outcome
-    /// - Returns the API-provided RGB color regardless of terminal state
-    #[test]
-    fn test_migration_get_state_color_with_rgb_uses_api_color() {
-        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
-        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)), &terminal_states);
-        assert_eq!(color, Color::Rgb(0, 122, 204));
-
-        // Even for terminal states, API color takes precedence
-        let color = get_state_color_with_rgb("Closed", Some((255, 100, 50)), &terminal_states);
-        assert_eq!(color, Color::Rgb(255, 100, 50));
-    }
-
-    /// # Get State Color With RGB - Terminal State Fallback
-    ///
-    /// Tests that terminal states get green color when no API color.
-    ///
-    /// ## Test Scenario
-    /// - Provides terminal state without API color
-    ///
-    /// ## Expected Outcome
-    /// - Returns Green color for terminal states
-    #[test]
-    fn test_migration_get_state_color_terminal_fallback() {
-        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
-        assert_eq!(
-            get_state_color_with_rgb("Closed", None, &terminal_states),
-            Color::Green
-        );
-        assert_eq!(
-            get_state_color_with_rgb("Done", None, &terminal_states),
-            Color::Green
-        );
-    }
-
-    /// # Get State Color With RGB - Non-Terminal State Fallback
-    ///
-    /// Tests that non-terminal states get red color when no API color.
-    ///
-    /// ## Test Scenario
-    /// - Provides non-terminal state without API color
-    ///
-    /// ## Expected Outcome
-    /// - Returns Red color for non-terminal states
-    #[test]
-    fn test_migration_get_state_color_non_terminal_fallback() {
-        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
-        assert_eq!(
-            get_state_color_with_rgb("Active", None, &terminal_states),
-            Color::Red
-        );
-        assert_eq!(
-            get_state_color_with_rgb("In Progress", None, &terminal_states),
-            Color::Red
-        );
-        assert_eq!(
-            get_state_color_with_rgb("New", None, &terminal_states),
-            Color::Red
-        );
-    }
-
-    /// # Get State Color With RGB - Empty Terminal States
-    ///
-    /// Tests behavior when terminal states list is empty.
-    ///
-    /// ## Test Scenario
-    /// - Provides empty terminal states list
-    ///
-    /// ## Expected Outcome
-    /// - All states should be red (none are terminal)
-    #[test]
-    fn test_migration_get_state_color_empty_terminal_states() {
-        let terminal_states: Vec<String> = vec![];
-        assert_eq!(
-            get_state_color_with_rgb("Closed", None, &terminal_states),
-            Color::Red
-        );
-        assert_eq!(
-            get_state_color_with_rgb("Active", None, &terminal_states),
-            Color::Red
-        );
     }
 }

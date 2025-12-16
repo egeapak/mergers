@@ -33,7 +33,7 @@ impl ConflictResolutionState {
         let mut commit_text = vec![];
 
         // Try to get detailed commit info from git
-        if let Some(repo_path) = &app.repo_path {
+        if let Some(repo_path) = &app.repo_path() {
             match crate::git::get_commit_info(repo_path, &current_item.commit_id) {
                 Ok(commit_info) => {
                     // Shortened commit hash
@@ -277,11 +277,11 @@ impl AppState for ConflictResolutionState {
             .split(content_chunks[1]);
 
         // Get current cherry-pick item
-        let current_item = &app.cherry_pick_items[app.current_cherry_pick_index];
+        let current_item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
 
         // Find the corresponding PR and work items
         let pr_with_work_items = app
-            .pull_requests
+            .pull_requests()
             .iter()
             .find(|pr| pr.pr.id == current_item.pr_id);
 
@@ -301,7 +301,7 @@ impl AppState for ConflictResolutionState {
         self.render_work_item_details(f, right_chunks[1], work_items);
 
         // Bottom: Instructions and Help
-        let repo_path = app.repo_path.as_ref().unwrap().display();
+        let repo_path = app.repo_path().as_ref().unwrap().display();
         let instructions = vec![
             Line::from(vec![
                 Span::raw("Repository: "),
@@ -321,12 +321,15 @@ impl AppState for ConflictResolutionState {
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        let repo_path = app.repo_path.as_ref().unwrap();
+        let repo_path = {
+            let repo_path_ref = app.repo_path();
+            repo_path_ref.unwrap().to_path_buf()
+        };
 
         match code {
             KeyCode::Char('c') => {
                 // Check if conflicts are resolved
-                match git::check_conflicts_resolved(repo_path) {
+                match git::check_conflicts_resolved(&repo_path) {
                     Ok(true) => {
                         // Transition to CherryPickContinueState to process the commit with feedback
                         StateChange::Change(Box::new(CherryPickContinueState::new(
@@ -340,19 +343,20 @@ impl AppState for ConflictResolutionState {
             }
             KeyCode::Char('s') => {
                 // Skip current commit - abort cherry-pick, mark as skipped, continue
-                let _ = git::abort_cherry_pick(repo_path);
-                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                    CherryPickStatus::Skipped;
-                app.current_cherry_pick_index += 1;
+                let _ = git::abort_cherry_pick(&repo_path);
+                let current_index = app.current_cherry_pick_index();
+                app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Skipped;
+                app.set_current_cherry_pick_index(current_index + 1);
                 StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
             }
             KeyCode::Char('a') => {
                 // Abort entire process with cleanup
-                let version = app.version.as_ref().unwrap();
+                let version_opt = app.version();
+                let version = version_opt.as_ref().unwrap();
                 let target_branch = app.target_branch().to_string();
                 let _ = git::cleanup_cherry_pick(
-                    app.base_repo_path.as_deref(),
-                    repo_path,
+                    None, // base_repo_path is no longer stored in App
+                    &repo_path,
                     version,
                     &target_branch,
                 );
@@ -395,14 +399,16 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.cherry_pick_items = vec![CherryPickItem {
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
                 commit_id: "abc123".to_string(),
                 pr_id: 100,
                 pr_title: "Fix critical database migration bug".to_string(),
                 status: CherryPickStatus::Conflict,
             }];
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-            harness.app.current_cherry_pick_index = 0;
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+            harness.app.set_current_cherry_pick_index(0);
 
             let conflicted_files = vec!["src/database/migrations.rs".to_string()];
             let state = Box::new(ConflictResolutionState::new(conflicted_files));
@@ -432,14 +438,16 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         // Set up with non-existent repo to trigger error path
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/repo/path")));
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let mut state = ConflictResolutionState::new(conflicted_files);
@@ -472,15 +480,17 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         // Set up with non-existent repo (abort will fail silently which is OK)
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
-        harness.app.version = Some("v1.0.0".to_string()); // Required for cleanup
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/repo/path")));
+        harness.app.set_version(Some("v1.0.0".to_string())); // Required for cleanup
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let mut state = ConflictResolutionState::new(conflicted_files);
@@ -511,14 +521,16 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/repo/path")));
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let mut state = ConflictResolutionState::new(conflicted_files);
@@ -555,8 +567,10 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         // Set up with non-existent repo (abort will fail silently which is OK)
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
-        harness.app.cherry_pick_items = vec![
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/repo/path")));
+        *harness.app.cherry_pick_items_mut() = vec![
             CherryPickItem {
                 commit_id: "abc123".to_string(),
                 pr_id: 100,
@@ -570,7 +584,7 @@ mod tests {
                 status: CherryPickStatus::Pending,
             },
         ];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let mut state = ConflictResolutionState::new(conflicted_files);
@@ -585,12 +599,12 @@ mod tests {
 
         // Should mark the commit as Skipped
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Skipped
         ));
 
         // Should increment index
-        assert_eq!(harness.app.current_cherry_pick_index, 1);
+        assert_eq!(harness.app.current_cherry_pick_index(), 1);
     }
 
     /// # Conflict Resolution - Skip Preserves Second Commit Status
@@ -611,8 +625,10 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/repo/path"));
-        harness.app.cherry_pick_items = vec![
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/repo/path")));
+        *harness.app.cherry_pick_items_mut() = vec![
             CherryPickItem {
                 commit_id: "abc123".to_string(),
                 pr_id: 100,
@@ -632,7 +648,7 @@ mod tests {
                 status: CherryPickStatus::Pending,
             },
         ];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let mut state = ConflictResolutionState::new(conflicted_files);
@@ -646,22 +662,22 @@ mod tests {
 
         // First commit should be Skipped
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Skipped
         ));
 
         // Second and third commits should still be Pending
         assert!(matches!(
-            harness.app.cherry_pick_items[1].status,
+            harness.app.cherry_pick_items()[1].status,
             CherryPickStatus::Pending
         ));
         assert!(matches!(
-            harness.app.cherry_pick_items[2].status,
+            harness.app.cherry_pick_items()[2].status,
             CherryPickStatus::Pending
         ));
 
         // Index should be at second commit
-        assert_eq!(harness.app.current_cherry_pick_index, 1);
+        assert_eq!(harness.app.current_cherry_pick_index(), 1);
     }
 
     /// # ConflictResolutionState Default Implementation
@@ -695,10 +711,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-            harness.app.cherry_pick_items = create_test_cherry_pick_items();
-            harness.app.cherry_pick_items[0].status = CherryPickStatus::Conflict;
-            harness.app.current_cherry_pick_index = 0;
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+            *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+            harness.app.cherry_pick_items_mut()[0].status = CherryPickStatus::Conflict;
+            harness.app.set_current_cherry_pick_index(0);
 
             let conflicted_files = vec![
                 "src/main.rs".to_string(),

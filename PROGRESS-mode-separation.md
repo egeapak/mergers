@@ -3,22 +3,38 @@
 Track implementation progress for the mode separation refactoring.
 
 **Last Updated:** 2025-12-16
-**Status:** Phase 1-3 Complete
+**Status:** Phases 1-3 Complete, App Enum Converted
 
 ## Overview
 
 | Phase | Status | Progress |
 |-------|--------|----------|
 | Phase 1: Core Infrastructure | ✅ Complete | 3/3 |
-| Phase 2: Mode-Specific App Types | ✅ Complete | 4/4 |
+| Phase 2: Mode-Specific App Types | ✅ Complete | 5/5 |
 | Phase 3: State Infrastructure | ✅ Complete | 5/5 |
-| Phase 4: Mode-Specific States | ⬜ Not Started | 0/3 |
+| Phase 4: Mode-Specific States | 🔄 In Progress | 0/3 |
 | Phase 5: Run Loop & Entry Points | ⬜ Not Started | 0/2 |
 | Phase 6: Cleanup & Tests | ⬜ Not Started | 0/2 |
 
+## Recent Updates
+
+- **App Enum Conversion Complete**: Converted `App` from struct to enum wrapping mode-specific types:
+  - `App::Merge(MergeApp)` for cherry-picking PRs
+  - `App::Migration(MigrationApp)` for migration analysis
+  - `App::Cleanup(CleanupApp)` for branch cleanup
+  - All state files updated to use method accessors instead of field access
+  - All 515 tests passing
+
+- **Master Merged**: Integrated changes from master including:
+  - PR sorting by close date (#42)
+  - Work item API colors (#41)
+  - BrowserOpener trait (#40)
+  - Item counts in table titles (#39)
+  - PR list layout fixes (#38)
+
 ---
 
-## Phase 1: Core Infrastructure
+## Phase 1: Core Infrastructure ✅
 
 ### 1.1 Create `src/ui/worktree_context.rs` ✅
 - [x] Define `WorktreeContext` struct with fields:
@@ -55,57 +71,51 @@ Track implementation progress for the mode separation refactoring.
 
 ---
 
-## Phase 2: Mode-Specific App Types
+## Phase 2: Mode-Specific App Types ✅
 
-### 2.1 Create `src/ui/apps/merge_app.rs`
-- [ ] Define `MergeApp` struct with fields:
+### 2.1 Create `src/ui/apps/merge_app.rs` ✅
+- [x] Define `MergeApp` struct with fields:
   - `base: AppBase`
   - `cherry_pick_items: Vec<CherryPickItem>`
   - `current_cherry_pick_index: usize`
-- [ ] Implement `Deref` and `DerefMut` to `AppBase`
-- [ ] Implement `AppMode` trait
-- [ ] Add merge-specific methods (work_item_state, etc.)
+- [x] Implement `Deref` and `DerefMut` to `AppBase`
+- [x] Implement `AppMode` trait
+- [x] Add merge-specific methods (work_item_state, etc.)
+- [x] Add unit tests (6 tests)
 
 **Files:** `src/ui/apps/merge_app.rs` (new)
 
-### 2.2 Create `src/ui/apps/migration_app.rs`
-- [ ] Define `MigrationApp` struct with fields:
+### 2.2 Create `src/ui/apps/migration_app.rs` ✅
+- [x] Define `MigrationApp` struct with fields:
   - `base: AppBase`
   - `migration_analysis: Option<MigrationAnalysis>`
-  - `manual_overrides: HashMap<i32, bool>` (if applicable)
-- [ ] Implement `Deref` and `DerefMut` to `AppBase`
-- [ ] Implement `AppMode` trait
-- [ ] Move manual override methods from App
+  - `manual_overrides: HashMap<i32, bool>`
+- [x] Implement `Deref` and `DerefMut` to `AppBase`
+- [x] Implement `AppMode` trait
+- [x] Add manual override methods
+- [x] Add unit tests (7 tests)
 
 **Files:** `src/ui/apps/migration_app.rs` (new)
 
-### 2.3 Create `src/ui/apps/cleanup_app.rs`
-- [ ] Define `CleanupApp` struct with fields:
+### 2.3 Create `src/ui/apps/cleanup_app.rs` ✅
+- [x] Define `CleanupApp` struct with fields:
   - `base: AppBase`
   - `cleanup_branches: Vec<CleanupBranch>`
-- [ ] Implement `Deref` and `DerefMut` to `AppBase`
-- [ ] Implement `AppMode` trait
-- [ ] Add cleanup-specific methods
+- [x] Implement `Deref` and `DerefMut` to `AppBase`
+- [x] Implement `AppMode` trait
+- [x] Add cleanup-specific methods
+- [x] Add unit tests (6 tests)
 
 **Files:** `src/ui/apps/cleanup_app.rs` (new)
 
-### 2.4 Create `src/ui/apps/mod.rs`
-- [ ] Export `MergeApp`, `MigrationApp`, `CleanupApp`
+### 2.4 Create `src/ui/apps/mod.rs` ✅
+- [x] Export `MergeApp`, `MigrationApp`, `CleanupApp`
 
 **Files:** `src/ui/apps/mod.rs` (new)
 
-### 2.5 Update `src/ui/app.rs`
-- [ ] Change `App` from struct to enum:
-  - `Merge(MergeApp)`
-  - `Migration(MigrationApp)`
-  - `Cleanup(CleanupApp)`
-- [ ] Add `from_config()` factory method
-- [ ] Implement `Deref`/`DerefMut` to `AppBase`
-
-**Files:** `src/ui/app.rs` (modify)
-
-### 2.6 Update `src/ui/mod.rs`
-- [ ] Add exports for new modules
+### 2.5 Update `src/ui/mod.rs` ✅
+- [x] Add exports for new modules (app_base, app_mode, apps, worktree_context)
+- [x] Keep browser module from master merge
 
 **Files:** `src/ui/mod.rs` (modify)
 
@@ -181,7 +191,11 @@ Track implementation progress for the mode separation refactoring.
 
 ---
 
-## Phase 4: Update Mode-Specific States
+## Phase 4: Update Mode-Specific States 🔄
+
+**Note:** Phase 4 involves migrating individual states to implement `TypedAppState`.
+This is a significant undertaking as it requires updating the legacy `AppState` trait
+implementations to use mode-specific app types.
 
 ### 4.1 Merge/Default States
 
@@ -259,7 +273,7 @@ Track implementation progress for the mode separation refactoring.
 ## Verification Checklist
 
 After completion, verify:
-- [ ] All tests pass (`cargo nextest run`)
+- [ ] All tests pass (`cargo test`)
 - [ ] No clippy warnings (`cargo clippy --all-targets --all-features -- -D warnings`)
 - [ ] Code is formatted (`cargo fmt --check`)
 - [ ] Migration worktree cleanup works on exit
@@ -272,6 +286,6 @@ After completion, verify:
 ## Notes
 
 - Keep tests passing after each phase
-- Can be done incrementally - phases 1-2 can be done without breaking existing code
-- Phase 3+ requires updating all state files simultaneously
-- Consider feature branch for phases 3+
+- Phases 1-3 are done without breaking existing code (new types coexist with legacy)
+- Phase 4+ will require careful migration of state implementations
+- The new typed infrastructure provides compile-time type safety for mode-specific states

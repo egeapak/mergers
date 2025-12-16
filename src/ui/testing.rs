@@ -19,6 +19,8 @@ pub const TEST_TERMINAL_HEIGHT: u16 = 30;
 pub struct TuiTestHarness {
     pub terminal: Terminal<TestBackend>,
     pub app: App,
+    /// Initial state for the state machine (used by run_with_events)
+    initial_state: Option<Box<dyn AppState>>,
 }
 
 impl Default for TuiTestHarness {
@@ -42,7 +44,11 @@ impl TuiTestHarness {
             Box::new(crate::ui::browser::MockBrowserOpener::new()),
         );
 
-        Self { terminal, app }
+        Self {
+            terminal,
+            app,
+            initial_state: None,
+        }
     }
 
     /// Create a test harness with a specific configuration
@@ -58,12 +64,16 @@ impl TuiTestHarness {
             Box::new(crate::ui::browser::MockBrowserOpener::new()),
         );
 
-        Self { terminal, app }
+        Self {
+            terminal,
+            app,
+            initial_state: None,
+        }
     }
 
     /// Set an error message on the app (for error state testing)
     pub fn with_error_message(mut self, message: impl Into<String>) -> Self {
-        self.app.error_message = Some(message.into());
+        self.app.set_error_message(Some(message.into()));
         self
     }
 
@@ -77,9 +87,9 @@ impl TuiTestHarness {
         self.terminal.backend()
     }
 
-    /// Set the initial state for the app
+    /// Set the initial state for the app (used by run_with_events)
     pub fn with_initial_state(mut self, state: Box<dyn AppState>) -> Self {
-        self.app.initial_state = Some(state);
+        self.initial_state = Some(state);
         self
     }
 
@@ -103,7 +113,13 @@ impl TuiTestHarness {
         &mut self,
         event_source: &crate::ui::MockEventSource,
     ) -> anyhow::Result<()> {
-        crate::ui::run_app_with_events(&mut self.terminal, &mut self.app, event_source).await
+        crate::ui::run_app_with_events_and_state(
+            &mut self.terminal,
+            &mut self.app,
+            event_source,
+            self.initial_state.take(),
+        )
+        .await
     }
 
     /// Run the app with a sequence of key codes.

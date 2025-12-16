@@ -59,7 +59,7 @@ impl MigrationTaggingState {
             return;
         }
         self.started = true;
-        if let Some(analysis) = &app.migration_analysis {
+        if let Some(analysis) = &app.migration_analysis() {
             let eligible_prs = &analysis.eligible_prs;
             self.total_prs = eligible_prs.len();
 
@@ -84,7 +84,7 @@ impl MigrationTaggingState {
             let mut tasks = Vec::new();
 
             for batch in batches.into_iter() {
-                let client = app.client.clone();
+                let client = app.client().clone();
                 let tag_name = self.tag_name.clone();
 
                 let task = tokio::spawn(async move {
@@ -472,7 +472,7 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 3;
@@ -503,7 +503,7 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 5;
@@ -537,7 +537,7 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 5;

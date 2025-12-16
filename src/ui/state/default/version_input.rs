@@ -71,7 +71,7 @@ impl AppState for VersionInputState {
             }
             KeyCode::Enter => {
                 if !self.input.is_empty() {
-                    app.version = Some(self.input.clone());
+                    app.set_version(Some(self.input.clone()));
                     StateChange::Change(Box::new(SetupRepoState::new()))
                 } else {
                     StateChange::Keep

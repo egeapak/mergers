@@ -5,9 +5,10 @@ use crate::{
         setup_repository,
     },
     migration::MigrationAnalyzer,
-    models::{AppConfig, PullRequest, PullRequestWithWorkItems},
+    models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
     ui::App,
     ui::state::{AppState, StateChange},
+    utils::throttle::NetworkProcessor,
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -34,7 +35,14 @@ pub struct RepoSetupResult {
     pub base_repo_path: Option<std::path::PathBuf>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkItemsResult {
+    pub pr_index: usize,
+    pub work_items: Vec<WorkItem>,
+}
+
 type RepoSetupTaskHandle = AsyncTaskHandle<RepoSetupResult>;
+type WorkItemsTaskHandle = AsyncTaskHandle<WorkItemsResult>;
 
 #[derive(Debug, Clone, PartialEq)]
 enum LoadingStage {
@@ -42,6 +50,7 @@ enum LoadingStage {
     FetchingPullRequests,
     SettingUpRepository,
     FetchingWorkItems,
+    WaitingForWorkItems,
     RunningAnalysis,
     Complete,
 }
@@ -58,10 +67,14 @@ pub struct MigrationDataLoadingState {
     pr_fetch_task: Option<tokio::task::JoinHandle<Result<Vec<PullRequest>>>>,
     repo_setup_task: Option<RepoSetupTaskHandle>,
     git_history_task: Option<tokio::task::JoinHandle<Result<crate::git::CommitHistory>>>,
+    work_items_tasks: Option<Vec<WorkItemsTaskHandle>>,
     analysis_task: Option<tokio::task::JoinHandle<Result<crate::models::MigrationAnalysis>>>,
+    network_processor: Option<NetworkProcessor>,
 
     // Progress tracking
     total_prs: usize,
+    work_items_fetched: usize,
+    work_items_total: usize,
     prs_analyzed: usize,
     prs_to_analyze: usize,
     analysis_progress: Option<Arc<AtomicUsize>>,
@@ -93,8 +106,12 @@ impl MigrationDataLoadingState {
             pr_fetch_task: None,
             repo_setup_task: None,
             git_history_task: None,
+            work_items_tasks: None,
             analysis_task: None,
+            network_processor: None,
             total_prs: 0,
+            work_items_fetched: 0,
+            work_items_total: 0,
             migration_id: format!("migration-{}", timestamp),
             prs_analyzed: 0,
             prs_to_analyze: 0,
@@ -113,7 +130,7 @@ impl MigrationDataLoadingState {
         self.status = "Fetching pull requests...".to_string();
         self.progress = 0.1;
 
-        let client = app.client.clone();
+        let client = app.client().clone();
         let dev_branch = app.dev_branch().to_string();
         let since = app.since().map(|s| s.to_string());
 
@@ -268,23 +285,120 @@ impl MigrationDataLoadingState {
         Ok(false)
     }
 
-    async fn fetch_work_items_with_colors(&mut self, app: &App) -> Result<()> {
+    fn start_work_items_fetching(&mut self, app: &App) {
         self.loading_stage = LoadingStage::FetchingWorkItems;
-        self.status = "Fetching work items and enriching with colors...".to_string();
+        self.work_items_total = self.prs.len();
+        self.work_items_fetched = 0;
+        self.status = "Fetching work items for PRs...".to_string();
         self.progress = 0.3;
 
-        // Use the batch method that fetches work items in parallel AND enriches with colors
-        self.prs_with_work_items = app
-            .client
-            .fetch_work_items_for_prs_parallel(
-                &self.prs,
-                app.max_concurrent_network(),
-                app.max_concurrent_processing(),
-            )
-            .await;
+        // Initialize network processor with configurable network and processing throttling
+        self.network_processor = Some(NetworkProcessor::new_with_limits(
+            app.max_concurrent_network(),
+            app.max_concurrent_processing(),
+        ));
 
-        self.progress = 0.6;
-        Ok(())
+        // Start all network tasks in parallel without batching
+        self.start_all_work_items_fetching(app);
+    }
+
+    fn start_all_work_items_fetching(&mut self, app: &App) {
+        let mut tasks = Vec::new();
+
+        // Clone the network processor for use in tasks
+        let network_processor = self.network_processor.as_ref().unwrap().clone();
+
+        // Start network requests with throttling
+        for index in 0..self.prs.len() {
+            if let Some(pr) = self.prs.get(index) {
+                let client = app.client().clone();
+                let pr_id = pr.id;
+                let processor = network_processor.clone();
+
+                let task = tokio::spawn(async move {
+                    let result = processor
+                        .execute_network_operation(|| async {
+                            client
+                                .fetch_work_items_with_history_for_pr(pr_id)
+                                .await
+                                .context("Failed to fetch work items")
+                        })
+                        .await;
+
+                    match result {
+                        Ok(work_items) => Ok(WorkItemsResult {
+                            pr_index: index,
+                            work_items,
+                        }),
+                        Err(e) => Err(e),
+                    }
+                });
+
+                tasks.push(task);
+            }
+        }
+
+        self.work_items_tasks = Some(tasks);
+    }
+
+    async fn check_work_items_progress(&mut self, _app: &App) -> Result<bool> {
+        if let Some(ref mut tasks) = self.work_items_tasks {
+            let mut completed = Vec::new();
+            let mut still_running = Vec::new();
+
+            // Check which tasks have completed
+            for task in tasks.drain(..) {
+                if task.is_finished() {
+                    match task.await {
+                        Ok(Ok(result)) => {
+                            completed.push(result);
+                        }
+                        Ok(Err(e)) => {
+                            return Err(e).context("Failed to fetch work items");
+                        }
+                        Err(e) => {
+                            return Err(e).context("Work items task failed");
+                        }
+                    }
+                } else {
+                    still_running.push(task);
+                }
+            }
+
+            // Update completed work items
+            for result in completed {
+                if let Some(pr) = self.prs.get(result.pr_index) {
+                    self.prs_with_work_items.push(PullRequestWithWorkItems {
+                        pr: pr.clone(),
+                        work_items: result.work_items,
+                        selected: false,
+                    });
+                    self.work_items_fetched += 1;
+                }
+            }
+
+            // Update progress
+            if self.work_items_total > 0 {
+                self.progress =
+                    0.3 + (0.3 * self.work_items_fetched as f64 / self.work_items_total as f64);
+                self.status = format!(
+                    "Fetching work items ({}/{})",
+                    self.work_items_fetched, self.work_items_total
+                );
+            }
+            *tasks = still_running;
+
+            // Check if all tasks are completed
+            if tasks.is_empty() {
+                // All work items fetched
+                self.work_items_tasks = None;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(true) // No tasks means we're done
+        }
     }
 
     async fn start_migration_analysis(&mut self) -> Result<()> {
@@ -400,9 +514,8 @@ impl MigrationDataLoadingState {
                         self.loading_stage = LoadingStage::Complete;
                         self.status = "Analysis complete!".to_string();
                         self.progress = 1.0;
-                        app.migration_analysis = Some(analysis);
-                        // Clear worktree tracking since it was cleaned up in perform_migration_analysis
-                        app.migration_worktree_id = None;
+                        app.set_migration_analysis(Some(analysis));
+                        // Worktree cleanup is now handled by WorktreeContext on exit
                         return Ok(true);
                     }
                     Ok(Err(e)) => {
@@ -448,12 +561,31 @@ impl MigrationDataLoadingState {
                 }
             }
             LoadingStage::FetchingWorkItems => {
-                let base_msg = "Fetching work items and enriching with colors...".to_string();
+                let base_msg = if self.work_items_total > 0 {
+                    format!(
+                        "Fetching work items ({}/{})",
+                        self.work_items_fetched, self.work_items_total
+                    )
+                } else {
+                    "Fetching work items...".to_string()
+                };
 
                 if self.git_history_task.is_some() {
                     format!("{} and git history...", base_msg)
                 } else {
                     base_msg
+                }
+            }
+            LoadingStage::WaitingForWorkItems => {
+                let work_items_msg = format!(
+                    "Fetching work items ({}/{})",
+                    self.work_items_fetched, self.work_items_total
+                );
+
+                if self.git_history_task.is_some() {
+                    format!("{} and git history...", work_items_msg)
+                } else {
+                    work_items_msg
                 }
             }
             LoadingStage::RunningAnalysis => {
@@ -584,15 +716,10 @@ impl AppState for MigrationDataLoadingState {
                 LoadingStage::SettingUpRepository => {
                     match self.check_repository_setup_progress().await {
                         Ok(true) => {
-                            // Repository setup complete, track worktree for cleanup on exit
-                            if self.base_repo_path.is_some() {
-                                app.base_repo_path = self.base_repo_path.clone();
-                                app.migration_worktree_id = Some(self.migration_id.clone());
-                            }
-                            // Fetch work items with colors
-                            if let Err(e) = self.fetch_work_items_with_colors(app).await {
-                                self.error = Some(e.to_string());
-                            }
+                            // Repository setup complete
+                            // Worktree cleanup is now handled by WorktreeContext
+                            // Start fetching work items
+                            self.start_work_items_fetching(app);
                         }
                         Ok(false) => {
                             // Still setting up, continue
@@ -604,9 +731,23 @@ impl AppState for MigrationDataLoadingState {
                     return StateChange::Keep;
                 }
                 LoadingStage::FetchingWorkItems => {
-                    // Work items fetched and enriched, start migration analysis
-                    if let Err(e) = self.start_migration_analysis().await {
-                        self.error = Some(e.to_string());
+                    self.loading_stage = LoadingStage::WaitingForWorkItems;
+                    return StateChange::Keep;
+                }
+                LoadingStage::WaitingForWorkItems => {
+                    match self.check_work_items_progress(app).await {
+                        Ok(true) => {
+                            // Work items complete, start migration analysis
+                            if let Err(e) = self.start_migration_analysis().await {
+                                self.error = Some(e.to_string());
+                            }
+                        }
+                        Ok(false) => {
+                            // Still fetching work items, continue
+                        }
+                        Err(e) => {
+                            self.error = Some(e.to_string());
+                        }
                     }
                     return StateChange::Keep;
                 }
@@ -653,8 +794,11 @@ impl AppState for MigrationDataLoadingState {
                 self.loaded = false;
                 self.pr_fetch_task = None;
                 self.repo_setup_task = None;
+                self.work_items_tasks = None;
                 self.analysis_task = None;
                 self.total_prs = 0;
+                self.work_items_fetched = 0;
+                self.work_items_total = 0;
                 self.prs.clear();
                 self.prs_with_work_items.clear();
                 self.repo_path = None;
@@ -946,6 +1090,7 @@ mod tests {
         state.progress = 0.5;
         state.loaded = true;
         state.total_prs = 10;
+        state.work_items_fetched = 5;
         state.prs = vec![create_test_pull_request()];
 
         let mut app = create_test_app(config);
@@ -960,6 +1105,7 @@ mod tests {
         assert_eq!(state.progress, 0.0);
         assert!(!state.loaded);
         assert_eq!(state.total_prs, 0);
+        assert_eq!(state.work_items_fetched, 0);
         assert!(state.prs.is_empty());
         assert!(state.prs_with_work_items.is_empty());
         assert!(state.repo_path.is_none());
@@ -1064,12 +1210,19 @@ mod tests {
         state.loading_stage = LoadingStage::SettingUpRepository;
         assert_eq!(state.get_loading_message(), "Setting up repository...");
 
-        // FetchingWorkItems
+        // FetchingWorkItems without progress
         state.loading_stage = LoadingStage::FetchingWorkItems;
-        assert_eq!(
-            state.get_loading_message(),
-            "Fetching work items and enriching with colors..."
-        );
+        state.work_items_total = 0;
+        assert_eq!(state.get_loading_message(), "Fetching work items...");
+
+        // FetchingWorkItems with progress
+        state.work_items_total = 10;
+        state.work_items_fetched = 5;
+        assert_eq!(state.get_loading_message(), "Fetching work items (5/10)");
+
+        // WaitingForWorkItems
+        state.loading_stage = LoadingStage::WaitingForWorkItems;
+        assert_eq!(state.get_loading_message(), "Fetching work items (5/10)");
 
         // RunningAnalysis
         state.loading_stage = LoadingStage::RunningAnalysis;
@@ -1124,9 +1277,18 @@ mod tests {
 
         // FetchingWorkItems with git history
         state.loading_stage = LoadingStage::FetchingWorkItems;
+        state.work_items_total = 10;
+        state.work_items_fetched = 5;
         assert_eq!(
             state.get_loading_message(),
-            "Fetching work items and enriching with colors... and git history..."
+            "Fetching work items (5/10) and git history..."
+        );
+
+        // WaitingForWorkItems with git history
+        state.loading_stage = LoadingStage::WaitingForWorkItems;
+        assert_eq!(
+            state.get_loading_message(),
+            "Fetching work items (5/10) and git history..."
         );
     }
 
@@ -1263,12 +1425,12 @@ mod tests {
     /// Tests the loading screen during work items fetching.
     ///
     /// ## Test Scenario
-    /// - Creates a migration data loading state at FetchingWorkItems
+    /// - Creates a migration data loading state at WaitingForWorkItems
     /// - Sets progress values
     /// - Renders the progress display
     ///
     /// ## Expected Outcome
-    /// - Should display "Fetching work items and enriching with colors..." message
+    /// - Should display work items progress (x/y)
     /// - Should show appropriate progress percentage
     #[test]
     fn test_migration_data_loading_work_items_progress() {
@@ -1283,7 +1445,9 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config.clone());
 
             let mut state = MigrationDataLoadingState::new(config);
-            state.loading_stage = LoadingStage::FetchingWorkItems;
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_total = 25;
+            state.work_items_fetched = 12;
             state.progress = 0.45;
             harness.render_state(Box::new(state));
 
@@ -1346,8 +1510,12 @@ mod tests {
         assert!(state.pr_fetch_task.is_none());
         assert!(state.repo_setup_task.is_none());
         assert!(state.git_history_task.is_none());
+        assert!(state.work_items_tasks.is_none());
         assert!(state.analysis_task.is_none());
+        assert!(state.network_processor.is_none());
         assert_eq!(state.total_prs, 0);
+        assert_eq!(state.work_items_fetched, 0);
+        assert_eq!(state.work_items_total, 0);
         assert_eq!(state.prs_analyzed, 0);
         assert_eq!(state.prs_to_analyze, 0);
         assert!(state.analysis_progress.is_none());
