@@ -1323,11 +1323,11 @@ impl AppState for PullRequestSelectionState {
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Pull Requests"),
-        )
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Pull Requests ({}/{})",
+            app.pull_requests.iter().filter(|pr| pr.selected).count(),
+            app.pull_requests.len()
+        )))
         .row_highlight_style(Style::default().bg(Color::Rgb(0, 80, 0)))
         .highlight_symbol("→ ");
 

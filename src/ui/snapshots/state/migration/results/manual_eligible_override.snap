@@ -5,7 +5,7 @@ expression: harness.backend()
 " ✅ Eligible (3) │ ❓ Unsure (0) │ ❌ Not Merged (0)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
 "                                                                                "
 "                                                                                "
-"┌Eligible PRs - Ready for tagging──────────────────────────────────────────────┐"
+"┌Eligible PRs - Ready for tagging (3)──────────────────────────────────────────┐"
 "│      PR #     Date         Title           Author          Work Items        │"
 "│→ ✅  102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved), │" Hidden by multi-width symbols: [(4, " ")]
 "│      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)    │"
