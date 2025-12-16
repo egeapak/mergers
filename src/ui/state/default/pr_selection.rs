@@ -299,6 +299,19 @@ impl PullRequestSelectionState {
         self.update_scrollbar_state(app.pull_requests.len());
     }
 
+    /// Sort PRs by closed_date (completion date), newest first
+    fn sort_prs_by_date(
+        prs: &[crate::models::PullRequestWithWorkItems],
+    ) -> Vec<&crate::models::PullRequestWithWorkItems> {
+        let mut sorted: Vec<&crate::models::PullRequestWithWorkItems> = prs.iter().collect();
+        sorted.sort_by(|a, b| {
+            let date_a = a.pr.closed_date.as_deref().unwrap_or("");
+            let date_b = b.pr.closed_date.as_deref().unwrap_or("");
+            date_b.cmp(date_a) // Newest first
+        });
+        sorted
+    }
+
     fn next(&mut self, app: &App) {
         if app.pull_requests.is_empty() {
             return;
@@ -1217,12 +1230,19 @@ impl AppState for PullRequestSelectionState {
             });
         let header = Row::new(header_cells).height(1);
 
+        // Sort PRs by closed_date (newest first)
+        let sorted_prs = Self::sort_prs_by_date(&app.pull_requests);
+
         // Create table rows
-        let rows: Vec<Row> = app
-            .pull_requests
+        let rows: Vec<Row> = sorted_prs
             .iter()
-            .enumerate()
-            .map(|(pr_index, pr_with_wi)| {
+            .map(|pr_with_wi| {
+                // Find the original index in app.pull_requests for this PR
+                let pr_index = app
+                    .pull_requests
+                    .iter()
+                    .position(|p| p.pr.id == pr_with_wi.pr.id)
+                    .unwrap_or(0);
                 let selected = if pr_with_wi.selected { "✓" } else { " " };
 
                 let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
@@ -3017,5 +3037,163 @@ mod tests {
         assert_eq!(get_state_color("Unknown State"), Color::White);
         assert_eq!(get_state_color(""), Color::White);
         assert_eq!(get_state_color("Some Random State"), Color::White);
+    }
+  
+    // ==================== PR Sorting Tests ====================
+
+    /// # Sort PRs By Date - Newest First
+    ///
+    /// Tests that PRs are sorted by closed_date with newest first.
+    #[test]
+    fn test_sort_prs_by_date_newest_first() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "Oldest".to_string(),
+                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 101,
+                    title: "Newest".to_string(),
+                    closed_date: Some("2024-01-14T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 102,
+                    title: "Middle".to_string(),
+                    closed_date: Some("2024-01-12T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+        ];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].pr.id, 101); // Newest
+        assert_eq!(sorted[1].pr.id, 102); // Middle
+        assert_eq!(sorted[2].pr.id, 100); // Oldest
+    }
+
+    /// # Sort PRs By Date - With None Dates
+    ///
+    /// Tests that PRs without closed_date are sorted last.
+    #[test]
+    fn test_sort_prs_by_date_with_none() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "With date".to_string(),
+                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 101,
+                    title: "Without date".to_string(),
+                    closed_date: None,
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 102,
+                    title: "Newer".to_string(),
+                    closed_date: Some("2024-01-15T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+        ];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].pr.id, 102); // Newest with date
+        assert_eq!(sorted[1].pr.id, 100); // Older with date
+        assert_eq!(sorted[2].pr.id, 101); // No date (last)
+    }
+
+    /// # Sort PRs By Date - Empty List
+    ///
+    /// Tests that sorting empty list doesn't panic.
+    #[test]
+    fn test_sort_prs_by_date_empty() {
+        use crate::models::PullRequestWithWorkItems;
+        let prs: Vec<PullRequestWithWorkItems> = vec![];
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert!(sorted.is_empty());
+    }
+
+    /// # Sort PRs By Date - Single PR
+    ///
+    /// Tests that sorting single PR works.
+    #[test]
+    fn test_sort_prs_by_date_single() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![PullRequestWithWorkItems {
+            pr: PullRequest {
+                id: 100,
+                title: "Single".to_string(),
+                closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                created_by: CreatedBy {
+                    display_name: "User".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            work_items: vec![],
+            selected: false,
+        }];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 1);
+        assert_eq!(sorted[0].pr.id, 100);
     }
 }
