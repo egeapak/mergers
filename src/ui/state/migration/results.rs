@@ -548,7 +548,7 @@ impl AppState for MigrationState {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(3),      // Tabs
-                    Constraint::Percentage(50), // PR table
+                    Constraint::Min(10),        // PR table (fills remaining space)
                     Constraint::Percentage(35), // Details panel (from bottom)
                     Constraint::Length(9),      // Help
                 ])
