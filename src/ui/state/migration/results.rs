@@ -301,7 +301,7 @@ impl MigrationState {
                     "Active".to_string()
                 };
 
-                // Format work items with states
+// Format work items with states
                 let work_items = if !pr_with_wi.work_items.is_empty() {
                     pr_with_wi
                         .work_items
@@ -323,9 +323,11 @@ impl MigrationState {
                     None => " ",
                 };
 
-                // Get work items color based on terminal states
-                let work_items_color =
-                    Self::get_work_items_color(&pr_with_wi.work_items, &analysis.terminal_states);
+                // Get work items color based on terminal states and API colors
+                let work_items_color = Self::get_work_items_color(
+                    &pr_with_wi.work_items,
+                    &analysis.terminal_states,
+                );
 
                 let cells = vec![
                     Cell::from(override_indicator).style(Style::default().fg(Color::Magenta)),
@@ -367,7 +369,10 @@ impl MigrationState {
         f.render_stateful_widget(table, area, current_table);
     }
 
-    /// Get the color for work items based on their states
+    /// Get the color for work items based on their states and API colors
+    ///
+    /// Uses API color from the first non-terminal work item if available,
+    /// otherwise falls back to terminal state logic (green if all terminal, red if not).
     fn get_work_items_color(
         work_items: &[crate::models::WorkItem],
         terminal_states: &[String],
@@ -376,6 +381,7 @@ impl MigrationState {
             return Color::Gray;
         }
 
+        // Check if all work items are in terminal states
         let all_terminal = work_items.iter().all(|wi| {
             wi.fields
                 .state
@@ -384,8 +390,26 @@ impl MigrationState {
         });
 
         if all_terminal {
+            // All terminal - try to use API color from first work item, otherwise green
+            if let Some(wi) = work_items.first() {
+                if let Some(state) = wi.fields.state.as_deref() {
+                    return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
+                }
+            }
             Color::Green
         } else {
+            // Find first non-terminal work item and use its color
+            for wi in work_items {
+                if let Some(state) = wi.fields.state.as_deref() {
+                    if !terminal_states.contains(&state.to_string()) {
+                        return get_state_color_with_rgb(
+                            state,
+                            wi.fields.state_color,
+                            terminal_states,
+                        );
+                    }
+                }
+            }
             Color::Red
         }
     }
@@ -425,11 +449,11 @@ impl MigrationState {
                 )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let color = if analysis.terminal_states.contains(&state.to_string()) {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    };
+                    let color = get_state_color_with_rgb(
+                        state,
+                        work_item.fields.state_color,
+                        &analysis.terminal_states,
+                    );
                     details.push(Line::from(vec![
                         Span::raw("  "),
                         Span::styled(
@@ -607,6 +631,27 @@ impl AppState for MigrationState {
             }
             _ => StateChange::Keep,
         }
+    }
+}
+
+/// Gets a color for a work item state in migration mode.
+///
+/// Prefers API color (RGB tuple), then falls back to terminal state logic (green if terminal, red if not).
+fn get_state_color_with_rgb(
+    state: &str,
+    api_color: Option<(u8, u8, u8)>,
+    terminal_states: &[String],
+) -> Color {
+    // If we have an API color (already converted to RGB), use it
+    if let Some((r, g, b)) = api_color {
+        return Color::Rgb(r, g, b);
+    }
+
+    // Fall back to terminal state logic
+    if terminal_states.contains(&state.to_string()) {
+        Color::Green
+    } else {
+        Color::Red
     }
 }
 
@@ -1292,5 +1337,97 @@ mod tests {
 
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
+    }
+
+    // ==================== State Color Tests ====================
+
+    /// # Get State Color With RGB - Uses API Color
+    ///
+    /// Tests that API-provided RGB color takes precedence in migration mode.
+    ///
+    /// ## Test Scenario
+    /// - Provides both state name and API RGB color
+    ///
+    /// ## Expected Outcome
+    /// - Returns the API-provided RGB color regardless of terminal state
+    #[test]
+    fn test_migration_get_state_color_with_rgb_uses_api_color() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)), &terminal_states);
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+
+        // Even for terminal states, API color takes precedence
+        let color = get_state_color_with_rgb("Closed", Some((255, 100, 50)), &terminal_states);
+        assert_eq!(color, Color::Rgb(255, 100, 50));
+    }
+
+    /// # Get State Color With RGB - Terminal State Fallback
+    ///
+    /// Tests that terminal states get green color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Green color for terminal states
+    #[test]
+    fn test_migration_get_state_color_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Green
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Done", None, &terminal_states),
+            Color::Green
+        );
+    }
+
+    /// # Get State Color With RGB - Non-Terminal State Fallback
+    ///
+    /// Tests that non-terminal states get red color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides non-terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Red color for non-terminal states
+    #[test]
+    fn test_migration_get_state_color_non_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("In Progress", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("New", None, &terminal_states),
+            Color::Red
+        );
+    }
+
+    /// # Get State Color With RGB - Empty Terminal States
+    ///
+    /// Tests behavior when terminal states list is empty.
+    ///
+    /// ## Test Scenario
+    /// - Provides empty terminal states list
+    ///
+    /// ## Expected Outcome
+    /// - All states should be red (none are terminal)
+    #[test]
+    fn test_migration_get_state_color_empty_terminal_states() {
+        let terminal_states: Vec<String> = vec![];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
     }
 }
