@@ -301,7 +301,7 @@ impl MigrationState {
                     "Active".to_string()
                 };
 
-// Format work items with states
+                // Format work items with states
                 let work_items = if !pr_with_wi.work_items.is_empty() {
                     pr_with_wi
                         .work_items
@@ -324,10 +324,8 @@ impl MigrationState {
                 };
 
                 // Get work items color based on terminal states and API colors
-                let work_items_color = Self::get_work_items_color(
-                    &pr_with_wi.work_items,
-                    &analysis.terminal_states,
-                );
+                let work_items_color =
+                    Self::get_work_items_color(&pr_with_wi.work_items, &analysis.terminal_states);
 
                 let cells = vec![
                     Cell::from(override_indicator).style(Style::default().fg(Color::Magenta)),
@@ -391,23 +389,19 @@ impl MigrationState {
 
         if all_terminal {
             // All terminal - try to use API color from first work item, otherwise green
-            if let Some(wi) = work_items.first() {
-                if let Some(state) = wi.fields.state.as_deref() {
-                    return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
-                }
+            if let Some(wi) = work_items.first()
+                && let Some(state) = wi.fields.state.as_deref()
+            {
+                return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
             }
             Color::Green
         } else {
             // Find first non-terminal work item and use its color
             for wi in work_items {
-                if let Some(state) = wi.fields.state.as_deref() {
-                    if !terminal_states.contains(&state.to_string()) {
-                        return get_state_color_with_rgb(
-                            state,
-                            wi.fields.state_color,
-                            terminal_states,
-                        );
-                    }
+                if let Some(state) = wi.fields.state.as_deref()
+                    && !terminal_states.contains(&state.to_string())
+                {
+                    return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
                 }
             }
             Color::Red
@@ -1429,5 +1423,152 @@ mod tests {
             get_state_color_with_rgb("Active", None, &terminal_states),
             Color::Red
         );
+    }
+
+    /// # Get Work Items Color - Empty List
+    ///
+    /// Tests that empty work items list returns gray.
+    #[test]
+    fn test_get_work_items_color_empty() {
+        let terminal_states = vec!["Closed".to_string()];
+        let color = MigrationState::get_work_items_color(&[], &terminal_states);
+        assert_eq!(color, Color::Gray);
+    }
+
+    /// # Get Work Items Color - All Terminal States
+    ///
+    /// Tests that all terminal work items returns green (or API color).
+    #[test]
+    fn test_get_work_items_color_all_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        let work_items = vec![
+            WorkItem {
+                id: 1,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Closed".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: None,
+                },
+                history: vec![],
+            },
+            WorkItem {
+                id: 2,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Done".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: None,
+                },
+                history: vec![],
+            },
+        ];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Green);
+    }
+
+    /// # Get Work Items Color - Non-Terminal States
+    ///
+    /// Tests that non-terminal work items returns red (or API color).
+    #[test]
+    fn test_get_work_items_color_non_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: None,
+                state: Some("Active".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+                state_color: None,
+            },
+            history: vec![],
+        }];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Red);
+    }
+
+    /// # Get Work Items Color - Uses API Color
+    ///
+    /// Tests that API color is used when available.
+    #[test]
+    fn test_get_work_items_color_uses_api_color() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: None,
+                state: Some("Active".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+                state_color: Some((0, 122, 204)), // Blue API color
+            },
+            history: vec![],
+        }];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+    }
+
+    /// # Get Work Items Color - Mixed States Uses First Non-Terminal API Color
+    ///
+    /// Tests that first non-terminal work item's API color is used for mixed states.
+    #[test]
+    fn test_get_work_items_color_mixed_uses_first_non_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![
+            WorkItem {
+                id: 1,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Closed".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: Some((0, 255, 0)), // Green - terminal
+                },
+                history: vec![],
+            },
+            WorkItem {
+                id: 2,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Active".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: Some((255, 165, 0)), // Orange - non-terminal
+                },
+                history: vec![],
+            },
+        ];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        // Should use the Active (non-terminal) work item's orange color
+        assert_eq!(color, Color::Rgb(255, 165, 0));
     }
 }
