@@ -49,6 +49,8 @@ pub struct PullRequestSelectionState {
     last_click_time: Option<Instant>,
     last_click_row: Option<usize>,
     table_area: Option<Rect>,
+    // Details panel toggle
+    pub show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -79,6 +81,8 @@ impl PullRequestSelectionState {
             last_click_time: None,
             last_click_row: None,
             table_area: None,
+            // Details panel toggle - default to shown
+            show_details: true,
         }
     }
 
@@ -293,6 +297,19 @@ impl PullRequestSelectionState {
             self.table_state.select(Some(0));
         }
         self.update_scrollbar_state(app.pull_requests.len());
+    }
+
+    /// Sort PRs by closed_date (completion date), newest first
+    fn sort_prs_by_date(
+        prs: &[crate::models::PullRequestWithWorkItems],
+    ) -> Vec<&crate::models::PullRequestWithWorkItems> {
+        let mut sorted: Vec<&crate::models::PullRequestWithWorkItems> = prs.iter().collect();
+        sorted.sort_by(|a, b| {
+            let date_a = a.pr.closed_date.as_deref().unwrap_or("");
+            let date_b = b.pr.closed_date.as_deref().unwrap_or("");
+            date_b.cmp(date_a) // Newest first
+        });
+        sorted
     }
 
     fn next(&mut self, app: &App) {
@@ -512,7 +529,7 @@ impl PullRequestSelectionState {
                         _ => Color::White,
                     };
 
-                    let state_color = get_state_color(state);
+                    let state_color = get_state_color_with_rgb(state, work_item.fields.state_color);
 
                     // Create header content with spans for different colors and proper alignment
                     use ratatui::text::{Line, Span};
@@ -568,7 +585,7 @@ impl PullRequestSelectionState {
                     f.render_widget(header_widget, chunks[0]);
 
                     // Render history section
-                    self.render_work_item_history_linear(f, chunks[1], work_item);
+                    self.render_work_item_history_linear(f, chunks[1], work_item, app);
 
                     // Render description - use repro steps for bugs, description for others
                     let (description_content, description_title) = match work_item_type
@@ -649,6 +666,7 @@ impl PullRequestSelectionState {
         f: &mut Frame,
         area: ratatui::layout::Rect,
         work_item: &crate::models::WorkItem,
+        app: &App,
     ) {
         use ratatui::text::{Line, Span};
 
@@ -790,8 +808,12 @@ impl PullRequestSelectionState {
                             }
                         };
 
-                        // Get color for the state
-                        let state_color = get_state_color(new_state);
+                        // Get color for the state - prefer cached API color, fallback to hardcoded
+                        let state_color = app
+                            .client
+                            .get_cached_state_color(new_state)
+                            .map(|(r, g, b)| Color::Rgb(r, g, b))
+                            .unwrap_or_else(|| get_state_color(new_state));
 
                         history_spans.push(Span::styled(
                             "●",
@@ -1144,15 +1166,37 @@ impl AppState for PullRequestSelectionState {
             return;
         }
 
-        // Add search status line if in search iteration mode
+        // Layout depends on search mode and details panel visibility
         let chunks = if self.search_iteration_mode {
+            if self.show_details {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Length(3),      // Search status line
+                        Constraint::Min(10),        // PR table (fills remaining space)
+                        Constraint::Percentage(40), // Work item details
+                        Constraint::Length(3),      // Help section
+                    ])
+                    .split(f.area())
+            } else {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Length(3), // Search status line
+                        Constraint::Min(10),   // PR table (full height)
+                        Constraint::Length(3), // Help section
+                    ])
+                    .split(f.area())
+            }
+        } else if self.show_details {
             Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Length(3),      // Search status line
-                    Constraint::Percentage(47), // PR table (slightly smaller)
-                    Constraint::Percentage(37), // Work item details (slightly smaller)
+                    Constraint::Min(10),        // PR table (fills remaining space)
+                    Constraint::Percentage(40), // Work item details
                     Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
@@ -1161,9 +1205,8 @@ impl AppState for PullRequestSelectionState {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Percentage(50), // Top half for PR table
-                    Constraint::Percentage(40), // Bottom half for work item details
-                    Constraint::Length(3),      // Help section
+                    Constraint::Min(10),   // PR table (full height)
+                    Constraint::Length(3), // Help section
                 ])
                 .split(f.area())
         };
@@ -1187,12 +1230,19 @@ impl AppState for PullRequestSelectionState {
             });
         let header = Row::new(header_cells).height(1);
 
+        // Sort PRs by closed_date (newest first)
+        let sorted_prs = Self::sort_prs_by_date(&app.pull_requests);
+
         // Create table rows
-        let rows: Vec<Row> = app
-            .pull_requests
+        let rows: Vec<Row> = sorted_prs
             .iter()
-            .enumerate()
-            .map(|(pr_index, pr_with_wi)| {
+            .map(|pr_with_wi| {
+                // Find the original index in app.pull_requests for this PR
+                let pr_index = app
+                    .pull_requests
+                    .iter()
+                    .position(|p| p.pr.id == pr_with_wi.pr.id)
+                    .unwrap_or(0);
                 let selected = if pr_with_wi.selected { "✓" } else { " " };
 
                 let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
@@ -1205,19 +1255,29 @@ impl AppState for PullRequestSelectionState {
                     "Active".to_string()
                 };
 
-                let work_items = if !pr_with_wi.work_items.is_empty() {
-                    pr_with_wi
-                        .work_items
-                        .iter()
-                        .map(|wi| {
+                // Build work items as colored spans instead of a plain string
+                let work_items_spans: Vec<ratatui::text::Span> =
+                    if !pr_with_wi.work_items.is_empty() {
+                        let mut spans = Vec::new();
+                        for (idx, wi) in pr_with_wi.work_items.iter().enumerate() {
+                            if idx > 0 {
+                                spans.push(ratatui::text::Span::raw(", "));
+                            }
                             let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                            format!("#{} ({})", wi.id, state)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    String::new()
-                };
+                            let color = get_state_color_with_rgb(state, wi.fields.state_color);
+                            spans.push(ratatui::text::Span::styled(
+                                format!("#{} ({})", wi.id, state),
+                                Style::default().fg(if pr_with_wi.selected {
+                                    Color::White
+                                } else {
+                                    color
+                                }),
+                            ));
+                        }
+                        spans
+                    } else {
+                        vec![ratatui::text::Span::raw("")]
+                    };
 
                 // Check if this row is a search result
                 let is_search_result = self.search_results.contains(&pr_index);
@@ -1226,9 +1286,9 @@ impl AppState for PullRequestSelectionState {
                     && self.search_results.get(self.current_search_index) == Some(&pr_index);
 
                 // Apply background highlighting for selected items and search results
-                // Selected items use dark green for contrast with DarkGray cursor highlight
+                // Selected items use lighter green for better visibility
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::Rgb(0, 60, 0))
+                    Style::default().bg(Color::Rgb(0, 120, 0))
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
@@ -1270,11 +1330,7 @@ impl AppState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Cell::from(work_items).style(if pr_with_wi.selected {
-                        Style::default().fg(Color::White)
-                    } else {
-                        Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
-                    }),
+                    Cell::from(ratatui::text::Line::from(work_items_spans)),
                 ];
 
                 Row::new(cells).height(1).style(row_style)
@@ -1293,12 +1349,12 @@ impl AppState for PullRequestSelectionState {
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Pull Requests"),
-        )
-        .row_highlight_style(Style::default().bg(Color::DarkGray))
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Pull Requests ({}/{})",
+            app.pull_requests.iter().filter(|pr| pr.selected).count(),
+            app.pull_requests.len()
+        )))
+        .row_highlight_style(Style::default().bg(Color::Rgb(0, 80, 0)))
         .highlight_symbol("→ ");
 
         // Store the table area for mouse hit-testing
@@ -1322,14 +1378,16 @@ impl AppState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details
-        self.render_work_item_details(f, app, chunks[chunk_idx]);
-        chunk_idx += 1;
+        // Render work item details if enabled
+        if self.show_details {
+            self.render_work_item_details(f, app, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
 
         let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Work Items | n/N: Next/Prev result | Esc: Exit search | Space: Toggle | d: Toggle details | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Confirm | p: PR | w: Work Items | s: Multi-select | d: Toggle details | r: Refresh | q: Quit"
         };
 
         let help = List::new(vec![ListItem::new(help_text)])
@@ -1531,6 +1589,11 @@ impl AppState for PullRequestSelectionState {
                     // Refresh: go back to data loading state to re-fetch PRs
                     StateChange::Change(Box::new(DataLoadingState::new()))
                 }
+                KeyCode::Char('d') => {
+                    // Toggle details panel
+                    self.show_details = !self.show_details;
+                    StateChange::Keep
+                }
                 _ => StateChange::Keep,
             }
         }
@@ -1587,27 +1650,15 @@ impl AppState for PullRequestSelectionState {
     }
 }
 
-fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
-    if work_items.is_empty() {
-        return Color::Gray;
+/// Gets a color for a work item state, preferring API color over fallback.
+fn get_state_color_with_rgb(state: &str, api_color: Option<(u8, u8, u8)>) -> Color {
+    // If we have an API color (already converted to RGB), use it
+    if let Some((r, g, b)) = api_color {
+        return Color::Rgb(r, g, b);
     }
 
-    // Return color based on the most important state
-    for wi in work_items {
-        if let Some(state) = &wi.fields.state {
-            match state.as_str() {
-                "Next Merged" | "Next Closed" => return get_state_color(state),
-                _ => {}
-            }
-        }
-    }
-
-    work_items
-        .iter()
-        .filter_map(|wi| wi.fields.state.as_deref())
-        .next()
-        .map(get_state_color)
-        .unwrap_or(Color::White)
+    // Fall back to hardcoded colors
+    get_state_color(state)
 }
 
 fn get_state_color(state: &str) -> Color {
@@ -2915,5 +2966,234 @@ mod tests {
             .await;
         assert!(!state.multi_select_mode);
         assert!(!harness.app.pull_requests[0].selected);
+    }
+
+    // ==================== State Color Tests ====================
+
+    /// # Get State Color With RGB - Uses API Color
+    ///
+    /// Tests that API-provided RGB color takes precedence.
+    ///
+    /// ## Test Scenario
+    /// - Provides both state name and API RGB color
+    ///
+    /// ## Expected Outcome
+    /// - Returns the API-provided RGB color
+    #[test]
+    fn test_get_state_color_with_rgb_uses_api_color() {
+        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)));
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+    }
+
+    /// # Get State Color With RGB - Falls Back to Hardcoded
+    ///
+    /// Tests that hardcoded colors are used when no API color is provided.
+    ///
+    /// ## Test Scenario
+    /// - Provides state name without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns the hardcoded color for that state
+    #[test]
+    fn test_get_state_color_with_rgb_fallback() {
+        assert_eq!(get_state_color_with_rgb("Closed", None), Color::Green);
+        assert_eq!(get_state_color_with_rgb("Active", None), Color::Blue);
+        assert_eq!(get_state_color_with_rgb("New", None), Color::Gray);
+    }
+
+    /// # Get State Color - Known States
+    ///
+    /// Tests hardcoded color mappings for known work item states.
+    ///
+    /// ## Test Scenario
+    /// - Provides various known state names
+    ///
+    /// ## Expected Outcome
+    /// - Returns correct hardcoded color for each state
+    #[test]
+    fn test_get_state_color_known_states() {
+        assert_eq!(get_state_color("Dev Closed"), Color::LightGreen);
+        assert_eq!(get_state_color("Closed"), Color::Green);
+        assert_eq!(get_state_color("Resolved"), Color::Rgb(255, 165, 0));
+        assert_eq!(get_state_color("In Review"), Color::Yellow);
+        assert_eq!(get_state_color("New"), Color::Gray);
+        assert_eq!(get_state_color("Active"), Color::Blue);
+        assert_eq!(get_state_color("Next Merged"), Color::Red);
+        assert_eq!(get_state_color("Next Closed"), Color::Magenta);
+        assert_eq!(get_state_color("Hold"), Color::Cyan);
+    }
+
+    /// # Get State Color - Unknown State
+    ///
+    /// Tests fallback color for unknown states.
+    ///
+    /// ## Test Scenario
+    /// - Provides an unknown state name
+    ///
+    /// ## Expected Outcome
+    /// - Returns white as the default fallback color
+    #[test]
+    fn test_get_state_color_unknown_state() {
+        assert_eq!(get_state_color("Unknown State"), Color::White);
+        assert_eq!(get_state_color(""), Color::White);
+        assert_eq!(get_state_color("Some Random State"), Color::White);
+    }
+
+    // ==================== PR Sorting Tests ====================
+
+    /// # Sort PRs By Date - Newest First
+    ///
+    /// Tests that PRs are sorted by closed_date with newest first.
+    #[test]
+    fn test_sort_prs_by_date_newest_first() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "Oldest".to_string(),
+                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 101,
+                    title: "Newest".to_string(),
+                    closed_date: Some("2024-01-14T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 102,
+                    title: "Middle".to_string(),
+                    closed_date: Some("2024-01-12T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+        ];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].pr.id, 101); // Newest
+        assert_eq!(sorted[1].pr.id, 102); // Middle
+        assert_eq!(sorted[2].pr.id, 100); // Oldest
+    }
+
+    /// # Sort PRs By Date - With None Dates
+    ///
+    /// Tests that PRs without closed_date are sorted last.
+    #[test]
+    fn test_sort_prs_by_date_with_none() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "With date".to_string(),
+                    closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 101,
+                    title: "Without date".to_string(),
+                    closed_date: None,
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 102,
+                    title: "Newer".to_string(),
+                    closed_date: Some("2024-01-15T10:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "User".to_string(),
+                    },
+                    last_merge_commit: None,
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            },
+        ];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 3);
+        assert_eq!(sorted[0].pr.id, 102); // Newest with date
+        assert_eq!(sorted[1].pr.id, 100); // Older with date
+        assert_eq!(sorted[2].pr.id, 101); // No date (last)
+    }
+
+    /// # Sort PRs By Date - Empty List
+    ///
+    /// Tests that sorting empty list doesn't panic.
+    #[test]
+    fn test_sort_prs_by_date_empty() {
+        use crate::models::PullRequestWithWorkItems;
+        let prs: Vec<PullRequestWithWorkItems> = vec![];
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert!(sorted.is_empty());
+    }
+
+    /// # Sort PRs By Date - Single PR
+    ///
+    /// Tests that sorting single PR works.
+    #[test]
+    fn test_sort_prs_by_date_single() {
+        use crate::models::{CreatedBy, PullRequest, PullRequestWithWorkItems};
+
+        let prs = vec![PullRequestWithWorkItems {
+            pr: PullRequest {
+                id: 100,
+                title: "Single".to_string(),
+                closed_date: Some("2024-01-10T10:00:00Z".to_string()),
+                created_by: CreatedBy {
+                    display_name: "User".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            work_items: vec![],
+            selected: false,
+        }];
+
+        let sorted = PullRequestSelectionState::sort_prs_by_date(&prs);
+        assert_eq!(sorted.len(), 1);
+        assert_eq!(sorted[0].pr.id, 100);
     }
 }

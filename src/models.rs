@@ -4,62 +4,68 @@ use chrono::{DateTime, Utc};
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use serde::Deserialize;
 
-/// Shared arguments used by both merge and migrate modes
+/// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default)]
 pub struct SharedArgs {
-    /// Local repository path (optional positional argument)
+    /// Local repository path (positional argument, takes precedence over --local-repo)
     pub path: Option<String>,
 
-    /// Azure DevOps organization
-    #[arg(short, long)]
+    // Azure DevOps Connection
+    /// Azure DevOps organization name
+    #[arg(short, long, help_heading = "Azure DevOps Connection")]
     pub organization: Option<String>,
 
-    /// Azure DevOps project
-    #[arg(short, long)]
+    /// Azure DevOps project name
+    #[arg(short, long, help_heading = "Azure DevOps Connection")]
     pub project: Option<String>,
 
-    /// Repository name
-    #[arg(short, long)]
+    /// Azure DevOps repository name
+    #[arg(short, long, help_heading = "Azure DevOps Connection")]
     pub repository: Option<String>,
 
-    /// Personal Access Token
-    #[arg(short = 't', long)]
+    /// Personal Access Token for Azure DevOps API authentication
+    #[arg(short = 't', long, help_heading = "Azure DevOps Connection")]
     pub pat: Option<String>,
 
-    /// Development branch name
-    #[arg(long)]
+    // Branch Configuration
+    /// Source branch to fetch PRs from [default: dev]
+    #[arg(long, help_heading = "Branch Configuration")]
     pub dev_branch: Option<String>,
 
-    /// Target branch name
-    #[arg(long)]
+    /// Target branch for cherry-picks [default: next]
+    #[arg(long, help_heading = "Branch Configuration")]
     pub target_branch: Option<String>,
 
-    /// Local repository path (if provided, uses git worktree instead of cloning)
-    #[arg(long)]
+    // Repository Options
+    /// Local repository path (alternative to positional argument)
+    #[arg(long, help_heading = "Repository Options")]
     pub local_repo: Option<String>,
 
-    /// Tag prefix for PR tagging
-    #[arg(long, default_value = "merged-")]
+    /// Prefix for tagging processed PRs
+    #[arg(long, default_value = "merged-", help_heading = "Repository Options")]
     pub tag_prefix: Option<String>,
 
-    /// Maximum number of parallel operations for API calls
-    #[arg(long)]
+    // Performance Tuning
+    /// Maximum parallel API requests [default: 300]
+    #[arg(long, help_heading = "Performance Tuning")]
     pub parallel_limit: Option<usize>,
 
-    /// Maximum number of concurrent network operations
-    #[arg(long)]
+    /// Maximum concurrent network operations [default: 100]
+    #[arg(long, help_heading = "Performance Tuning")]
     pub max_concurrent_network: Option<usize>,
 
-    /// Maximum number of concurrent processing operations
-    #[arg(long)]
+    /// Maximum concurrent processing operations [default: 10]
+    #[arg(long, help_heading = "Performance Tuning")]
     pub max_concurrent_processing: Option<usize>,
 
-    /// Limit fetching to items created after this date (e.g., "1mo", "2w", "2025-07-01")
-    #[arg(long)]
+    // Filtering
+    /// Only fetch items created after this date (e.g., "1mo", "2w", "2025-01-15")
+    #[arg(long, help_heading = "Filtering")]
     pub since: Option<String>,
 
-    /// Skip the settings confirmation page and proceed directly
-    #[arg(long)]
+    // Behavior
+    /// Skip the settings confirmation screen and proceed directly
+    #[arg(long, help_heading = "Behavior")]
     pub skip_confirmation: bool,
 }
 
@@ -69,8 +75,8 @@ pub struct MergeArgs {
     #[command(flatten)]
     pub shared: SharedArgs,
 
-    /// Target state for work items after successful merge
-    #[arg(long)]
+    /// State to set work items to after successful merge [default: Next Merged]
+    #[arg(long, help_heading = "Merge Options")]
     pub work_item_state: Option<String>,
 }
 
@@ -80,8 +86,12 @@ pub struct MigrateArgs {
     #[command(flatten)]
     pub shared: SharedArgs,
 
-    /// Terminal work item states (comma-separated)
-    #[arg(long, default_value = "Closed,Next Closed,Next Merged")]
+    /// Comma-separated list of work item states considered terminal
+    #[arg(
+        long,
+        default_value = "Closed,Next Closed,Next Merged",
+        help_heading = "Migration Options"
+    )]
     pub terminal_states: String,
 }
 
@@ -91,8 +101,8 @@ pub struct CleanupArgs {
     #[command(flatten)]
     pub shared: SharedArgs,
 
-    /// Target branch to check for merged patches
-    #[arg(long)]
+    /// Target branch to check for merged patches (defaults to --target-branch)
+    #[arg(long, help_heading = "Cleanup Options")]
     pub target: Option<String>,
 }
 
@@ -135,14 +145,60 @@ impl HasSharedArgs for CleanupArgs {
 /// Available commands
 #[derive(Subcommand, Clone)]
 pub enum Commands {
-    /// Merge mode - merge PRs from dev to target branch
-    #[command(visible_alias = "m")]
+    /// Cherry-pick merged PRs from dev branch to target branch
+    #[command(
+        visible_alias = "m",
+        long_about = "Cherry-pick merged PRs from the dev branch to a target branch.\n\n\
+            This mode fetches completed PRs from Azure DevOps, displays them in an interactive\n\
+            TUI for selection, and cherry-picks the selected commits to your target branch.\n\
+            Work items can be automatically transitioned to a specified state after merge.",
+        after_help = "EXAMPLES:\n    \
+            # Basic merge with all required args\n    \
+            mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
+            # Merge with custom branches and work item state\n    \
+            mergers merge -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
+            --dev-branch develop --target-branch release \\\n      \
+            --work-item-state \"Ready for Test\" /path/to/repo\n\n    \
+            # Merge PRs from the last 2 weeks only\n    \
+            mergers m -o myorg -p proj -r repo -t <PAT> --since 2w"
+    )]
     Merge(MergeArgs),
-    /// Migration mode - analyze PRs for migration eligibility
-    #[command(visible_alias = "mi")]
+
+    /// Analyze PRs to determine migration eligibility
+    #[command(
+        visible_alias = "mi",
+        long_about = "Analyze pull requests to determine which ones are eligible for migration.\n\n\
+            This mode examines PRs and their associated work items to categorize them as:\n  \
+            • Eligible: All work items in terminal states, commit found in target\n  \
+            • Unsure: Mixed signals requiring manual review\n  \
+            • Not merged: PR commits not present in target branch\n\n\
+            Results are displayed in an interactive TUI for review and manual override.",
+        after_help = "EXAMPLES:\n    \
+            # Analyze migrations with default terminal states\n    \
+            mergers migrate -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
+            # Custom terminal states for work items\n    \
+            mergers migrate -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
+            --terminal-states \"Closed,Done,Resolved\"\n\n    \
+            # Analyze only recent PRs\n    \
+            mergers mi -o myorg -p proj -r repo -t <PAT> --since 1mo"
+    )]
     Migrate(MigrateArgs),
-    /// Cleanup mode - clean up merged patch branches
-    #[command(visible_alias = "c")]
+
+    /// Clean up merged patch branches from the repository
+    #[command(
+        visible_alias = "c",
+        long_about = "Clean up patch branches that have been merged to the target branch.\n\n\
+            This mode identifies local branches matching the tag prefix pattern (default: merged-*)\n\
+            that have been fully merged into the target branch, and offers to delete them.\n\
+            Useful for maintaining a clean repository after completing merge operations.",
+        after_help = "EXAMPLES:\n    \
+            # Cleanup branches merged to default target\n    \
+            mergers cleanup -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
+            # Cleanup branches merged to a specific target\n    \
+            mergers cleanup -o myorg -p proj -r repo -t <PAT> --target main\n\n    \
+            # Cleanup with custom tag prefix\n    \
+            mergers c -o myorg -p proj -r repo -t <PAT> --tag-prefix patch-"
+    )]
     Cleanup(CleanupArgs),
 }
 
@@ -167,12 +223,33 @@ impl Commands {
 }
 
 #[derive(Parser, Clone)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Manage Azure DevOps pull request merging and migration workflows",
+    long_about = "A CLI/TUI tool for managing Azure DevOps pull request merging and migration workflows.\n\n\
+        Mergers helps you:\n  \
+        • Cherry-pick merged PRs from dev to target branches\n  \
+        • Analyze PRs for migration eligibility\n  \
+        • Clean up merged patch branches\n\n\
+        Configuration can be provided via CLI arguments, environment variables (MERGERS_*),\n\
+        config file (~/.config/mergers/config.toml), or auto-detected from git remotes.",
+    after_help = "EXAMPLES:\n    \
+        # Merge mode with Azure DevOps credentials\n    \
+        mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
+        # Migration analysis mode\n    \
+        mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo\n\n    \
+        # Cleanup merged branches\n    \
+        mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
+        # Create sample config file\n    \
+        mergers --create-config\n\n\
+        For more information, see: https://github.com/egeapak/mergers"
+)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Create a sample configuration file
+    /// Create a sample configuration file at ~/.config/mergers/config.toml
     #[arg(long)]
     pub create_config: bool,
 }
@@ -189,6 +266,8 @@ impl Args {
     /// Parse arguments with default mode fallback.
     /// If no subcommand is provided, attempts to parse args as MergeArgs.
     pub fn parse_with_default_mode() -> Self {
+        use clap::error::ErrorKind;
+
         // First try normal parsing
         match Args::try_parse() {
             Ok(args) => {
@@ -198,8 +277,16 @@ impl Args {
                 }
                 // No command and no create_config, fall through to try merge mode
             }
-            Err(_) => {
-                // Failed to parse as Args, fall through to try merge mode
+            Err(e) => {
+                // If it's a help or version display, show it and exit
+                match e.kind() {
+                    ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                        e.exit();
+                    }
+                    _ => {
+                        // Other errors: fall through to try merge mode
+                    }
+                }
             }
         }
 
@@ -522,6 +609,9 @@ pub struct WorkItemFields {
     pub description: Option<String>,
     #[serde(rename = "Microsoft.VSTS.TCM.ReproSteps", default)]
     pub repro_steps: Option<String>,
+    /// State color as RGB tuple (r, g, b), populated from Azure DevOps API
+    #[serde(skip_deserializing, default)]
+    pub state_color: Option<(u8, u8, u8)>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -708,6 +798,7 @@ mod tests {
                 iteration_path: Some("Project\\Sprint 1".to_string()),
                 description: Some("Test description".to_string()),
                 repro_steps: Some("Steps to reproduce".to_string()),
+                state_color: None,
             },
             history: vec![],
         }

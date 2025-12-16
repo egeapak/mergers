@@ -81,6 +81,7 @@ impl From<wit_models::WorkItem> for WorkItem {
                 repro_steps: fields
                     .get("Microsoft.VSTS.TCM.ReproSteps")
                     .and_then(|v| v.as_str().map(String::from)),
+                state_color: None, // Populated separately from API
             },
             history: vec![], // History is populated separately
         }

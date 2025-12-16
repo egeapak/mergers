@@ -5,11 +5,11 @@ expression: harness.backend()
 " ✅ Eligible (1) │ ❓ Unsure (0) │ ❌ Not Merged (2)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
 "                                                                                "
 "                                                                                "
-"┌Not Merged PRs - Not ready for migration──────────────────────────────────────┐"
-"│#102 Add analytics tracking → Eligible                                        │"
-"│  By: Carol Martinez | Work Items: 2                                          │"
-"│#100 Fix login bug ❌ [Manual Override] → Eligible                            │" Hidden by multi-width symbols: [(21, " ")]
-"│  By: Alice Johnson | Work Items: 1                                           │"
+"┌Not Merged PRs - Not ready for migration (2)──────────────────────────────────┐"
+"│      PR #     Date         Title           Author          Work Items        │"
+"│→     102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved), │"
+"│  ❌  100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)    │" Hidden by multi-width symbols: [(4, " ")]
+"│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

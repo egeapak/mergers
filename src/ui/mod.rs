@@ -19,6 +19,7 @@ mod app;
 mod app_base;
 mod app_mode;
 pub mod apps;
+pub mod browser;
 mod events;
 #[cfg(test)]
 pub mod snapshot_testing;
