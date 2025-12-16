@@ -3,7 +3,7 @@ source: src/ui/state/default/data_loading.rs
 expression: harness.backend()
 ---
 "┌Loading───────────────────────────────────────────────────────────────────────┐"
-"│                            Fetching work items...                            │"
+"│               Fetching work items and enriching with colors...               │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
