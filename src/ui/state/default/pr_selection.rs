@@ -3038,7 +3038,7 @@ mod tests {
         assert_eq!(get_state_color(""), Color::White);
         assert_eq!(get_state_color("Some Random State"), Color::White);
     }
-
+  
     // ==================== PR Sorting Tests ====================
 
     /// # Sort PRs By Date - Newest First
