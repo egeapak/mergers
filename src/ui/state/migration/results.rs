@@ -286,6 +286,35 @@ impl MigrationState {
                     }
                 };
 
+                // Build work items summary with status
+                let work_items_summary = if pr.work_items.is_empty() {
+                    vec![Span::styled(
+                        "No work items",
+                        Style::default().fg(Color::Gray),
+                    )]
+                } else {
+                    let mut spans = vec![Span::styled("WI: ", Style::default().fg(Color::Gray))];
+                    for (i, wi) in pr.work_items.iter().enumerate() {
+                        if i > 0 {
+                            spans.push(Span::styled(", ", Style::default().fg(Color::Gray)));
+                        }
+                        let state = wi.fields.state.as_deref().unwrap_or("Unknown");
+                        let state_color = get_state_color_with_rgb(
+                            state,
+                            wi.fields.state_color,
+                            &analysis.terminal_states,
+                        );
+                        spans.push(Span::styled(
+                            format!("#{}", wi.id),
+                            Style::default().fg(Color::Cyan),
+                        ));
+                        spans.push(Span::styled("(", Style::default().fg(Color::Gray)));
+                        spans.push(Span::styled(state, Style::default().fg(state_color)));
+                        spans.push(Span::styled(")", Style::default().fg(Color::Gray)));
+                    }
+                    spans
+                };
+
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(
@@ -310,11 +339,12 @@ impl MigrationState {
                             Style::default().fg(Color::Gray),
                         ),
                         Span::raw(" | "),
-                        Span::styled(
-                            format!("Work Items: {}", pr.work_items.len()),
-                            Style::default().fg(Color::Gray),
-                        ),
                     ]),
+                    Line::from({
+                        let mut line_spans = vec![Span::raw("  ")];
+                        line_spans.extend(work_items_summary);
+                        line_spans
+                    }),
                 ])
             })
             .collect();
@@ -367,11 +397,11 @@ impl MigrationState {
                 )]));
                 for work_item in &pr.work_items {
                     let state = work_item.fields.state.as_deref().unwrap_or("Unknown");
-                    let color = if analysis.terminal_states.contains(&state.to_string()) {
-                        Color::Green
-                    } else {
-                        Color::Red
-                    };
+                    let color = get_state_color_with_rgb(
+                        state,
+                        work_item.fields.state_color,
+                        &analysis.terminal_states,
+                    );
                     details.push(Line::from(vec![
                         Span::raw("  "),
                         Span::styled(
@@ -544,6 +574,27 @@ impl AppState for MigrationState {
             }
             _ => StateChange::Keep,
         }
+    }
+}
+
+/// Gets a color for a work item state in migration mode.
+///
+/// Prefers API color (RGB tuple), then falls back to terminal state logic (green if terminal, red if not).
+fn get_state_color_with_rgb(
+    state: &str,
+    api_color: Option<(u8, u8, u8)>,
+    terminal_states: &[String],
+) -> Color {
+    // If we have an API color (already converted to RGB), use it
+    if let Some((r, g, b)) = api_color {
+        return Color::Rgb(r, g, b);
+    }
+
+    // Fall back to terminal state logic
+    if terminal_states.contains(&state.to_string()) {
+        Color::Green
+    } else {
+        Color::Red
     }
 }
 
@@ -1227,5 +1278,97 @@ mod tests {
 
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
+    }
+
+    // ==================== State Color Tests ====================
+
+    /// # Get State Color With RGB - Uses API Color
+    ///
+    /// Tests that API-provided RGB color takes precedence in migration mode.
+    ///
+    /// ## Test Scenario
+    /// - Provides both state name and API RGB color
+    ///
+    /// ## Expected Outcome
+    /// - Returns the API-provided RGB color regardless of terminal state
+    #[test]
+    fn test_migration_get_state_color_with_rgb_uses_api_color() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        let color = get_state_color_with_rgb("Active", Some((0, 122, 204)), &terminal_states);
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+
+        // Even for terminal states, API color takes precedence
+        let color = get_state_color_with_rgb("Closed", Some((255, 100, 50)), &terminal_states);
+        assert_eq!(color, Color::Rgb(255, 100, 50));
+    }
+
+    /// # Get State Color With RGB - Terminal State Fallback
+    ///
+    /// Tests that terminal states get green color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Green color for terminal states
+    #[test]
+    fn test_migration_get_state_color_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Green
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Done", None, &terminal_states),
+            Color::Green
+        );
+    }
+
+    /// # Get State Color With RGB - Non-Terminal State Fallback
+    ///
+    /// Tests that non-terminal states get red color when no API color.
+    ///
+    /// ## Test Scenario
+    /// - Provides non-terminal state without API color
+    ///
+    /// ## Expected Outcome
+    /// - Returns Red color for non-terminal states
+    #[test]
+    fn test_migration_get_state_color_non_terminal_fallback() {
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("In Progress", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("New", None, &terminal_states),
+            Color::Red
+        );
+    }
+
+    /// # Get State Color With RGB - Empty Terminal States
+    ///
+    /// Tests behavior when terminal states list is empty.
+    ///
+    /// ## Test Scenario
+    /// - Provides empty terminal states list
+    ///
+    /// ## Expected Outcome
+    /// - All states should be red (none are terminal)
+    #[test]
+    fn test_migration_get_state_color_empty_terminal_states() {
+        let terminal_states: Vec<String> = vec![];
+        assert_eq!(
+            get_state_color_with_rgb("Closed", None, &terminal_states),
+            Color::Red
+        );
+        assert_eq!(
+            get_state_color_with_rgb("Active", None, &terminal_states),
+            Color::Red
+        );
     }
 }

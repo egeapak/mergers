@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/migration/results.rs
+assertion_line: 891
 expression: harness.backend()
 ---
 " ✅ Eligible (2) │ ❓ Unsure (0) │ ❌ Not Merged (1)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
@@ -7,8 +8,8 @@ expression: harness.backend()
 "                                                                                "
 "┌Not Merged PRs - Not ready for migration──────────────────────────────────────┐"
 "│#102 Add analytics tracking → Eligible                                        │"
-"│  By: Carol Martinez | Work Items: 2                                          │"
-"│                                                                              │"
+"│  By: Carol Martinez |                                                        │"
+"│  WI: #1003(Resolved), #1004(Active)                                          │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"
