@@ -5,7 +5,7 @@ expression: harness.backend()
 " ✅ Eligible (1) │ ❓ Unsure (1) │ ❌ Not Merged (1)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
 "                                                                                "
 "                                                                                "
-"┌Unsure PRs - Require manual review────────────────────────────────────────────┐"
+"┌Unsure PRs - Require manual review (1)────────────────────────────────────────┐"
 "│      PR #     Date         Title           Author          Work Items        │"
 "│→     101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)    │"
 "│                                                                              │"

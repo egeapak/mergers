@@ -253,7 +253,7 @@ impl MigrationState {
     fn render_pr_list(&mut self, f: &mut Frame, app: &App, area: Rect) {
         let analysis = app.migration_analysis.as_ref().unwrap();
 
-        let (prs, title, color) = match self.current_tab {
+        let (prs, title_base, color) = match self.current_tab {
             MigrationTab::Eligible => (
                 &analysis.eligible_prs,
                 "Eligible PRs - Ready for tagging",
@@ -270,6 +270,8 @@ impl MigrationState {
                 Color::Red,
             ),
         };
+
+        let title = format!("{} ({})", title_base, prs.len());
 
         // Sort PRs by closed_date (completion date)
         let sorted_prs = Self::sort_prs_by_date(prs);

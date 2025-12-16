@@ -3,7 +3,7 @@ source: src/ui/state/default/pr_selection.rs
 expression: harness.backend()
 ---
 "                                                                                "
-" ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
+" ┌Pull Requests (6/60)────────────────────────────────────────────────────────┐ "
 " │      PR #     Date         Title           Author          Work Items      ↑ "
 " │      1015     2024-01-15   Pull Request #1 Developer 5     #5015 (New)     ║ "
 " │      1016     2024-01-15   Pull Request #1 Developer 6                     ║ "
