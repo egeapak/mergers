@@ -9,9 +9,11 @@ use super::{
     DataLoadingState, PostCompletionState, PullRequestSelectionState, SetupRepoState,
     VersionInputState,
 };
+use crate::ui::App;
 use crate::ui::apps::MergeApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
 use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -114,23 +116,81 @@ impl MergeState {
     }
 }
 
-// Note: The full TypedAppState implementation for MergeState will be added
-// in Phase 4 when individual states are migrated to use the typed interface.
-// For now, we define the enum structure to establish the state machine.
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+//
+// This implementation allows MergeState to be used with the existing run loop
+// that expects Box<dyn AppState>. It dispatches to inner state implementations.
 
-/// Placeholder implementation for MergeState.
-///
-/// This implementation will be completed in Phase 4 when states are migrated
-/// to the typed interface. Currently, states still use the legacy AppState trait.
+#[async_trait]
+impl AppState for MergeState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        match self {
+            MergeState::SettingsConfirmation(state) => state.ui(f, app),
+            MergeState::DataLoading(state) => state.ui(f, app),
+            MergeState::PullRequestSelection(state) => state.ui(f, app),
+            MergeState::VersionInput(state) => state.ui(f, app),
+            MergeState::SetupRepo(state) => state.ui(f, app),
+            MergeState::CherryPick(state) => state.ui(f, app),
+            MergeState::ConflictResolution(state) => state.ui(f, app),
+            MergeState::CherryPickContinue(state) => state.ui(f, app),
+            MergeState::Completion(state) => state.ui(f, app),
+            MergeState::PostCompletion(state) => state.ui(f, app),
+            MergeState::Error(state) => state.ui(f, app),
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        match self {
+            MergeState::SettingsConfirmation(state) => state.process_key(code, app).await,
+            MergeState::DataLoading(state) => state.process_key(code, app).await,
+            MergeState::PullRequestSelection(state) => state.process_key(code, app).await,
+            MergeState::VersionInput(state) => state.process_key(code, app).await,
+            MergeState::SetupRepo(state) => state.process_key(code, app).await,
+            MergeState::CherryPick(state) => state.process_key(code, app).await,
+            MergeState::ConflictResolution(state) => state.process_key(code, app).await,
+            MergeState::CherryPickContinue(state) => state.process_key(code, app).await,
+            MergeState::Completion(state) => state.process_key(code, app).await,
+            MergeState::PostCompletion(state) => state.process_key(code, app).await,
+            MergeState::Error(state) => state.process_key(code, app).await,
+        }
+    }
+
+    async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
+        match self {
+            MergeState::SettingsConfirmation(state) => state.process_mouse(event, app).await,
+            MergeState::DataLoading(state) => state.process_mouse(event, app).await,
+            MergeState::PullRequestSelection(state) => state.process_mouse(event, app).await,
+            MergeState::VersionInput(state) => state.process_mouse(event, app).await,
+            MergeState::SetupRepo(state) => state.process_mouse(event, app).await,
+            MergeState::CherryPick(state) => state.process_mouse(event, app).await,
+            MergeState::ConflictResolution(state) => state.process_mouse(event, app).await,
+            MergeState::CherryPickContinue(state) => state.process_mouse(event, app).await,
+            MergeState::Completion(state) => state.process_mouse(event, app).await,
+            MergeState::PostCompletion(state) => state.process_mouse(event, app).await,
+            MergeState::Error(state) => state.process_mouse(event, app).await,
+        }
+    }
+}
+
+// ============================================================================
+// TypedAppState Implementation (Future Use)
+// ============================================================================
+//
+// This implementation is for the future typed run loop. Currently placeholder
+// as individual states need to be migrated to implement TypedAppState first.
+
 #[async_trait]
 impl TypedAppState for MergeState {
     type App = MergeApp;
     type StateEnum = MergeState;
 
     fn ui(&mut self, _f: &mut Frame, _app: &MergeApp) {
-        // Placeholder - will delegate to inner state in Phase 4
-        // For now, states are rendered via the legacy AppState trait
-        unimplemented!("MergeState::ui() - states are being migrated. Use legacy AppState for now.")
+        // Future: When individual states implement TypedAppState,
+        // this will delegate to inner states with type-safe app references.
+        // For now, use the legacy AppState implementation above.
+        unimplemented!("Use AppState::ui() with &App for now")
     }
 
     async fn process_key(
@@ -138,10 +198,9 @@ impl TypedAppState for MergeState {
         _code: KeyCode,
         _app: &mut MergeApp,
     ) -> TypedStateChange<MergeState> {
-        // Placeholder - will delegate to inner state in Phase 4
-        unimplemented!(
-            "MergeState::process_key() - states are being migrated. Use legacy AppState for now."
-        )
+        // Future: When individual states implement TypedAppState,
+        // this will delegate to inner states with type-safe app references.
+        unimplemented!("Use AppState::process_key() with &mut App for now")
     }
 
     async fn process_mouse(
@@ -149,7 +208,7 @@ impl TypedAppState for MergeState {
         _event: MouseEvent,
         _app: &mut MergeApp,
     ) -> TypedStateChange<MergeState> {
-        // Placeholder - will delegate to inner state in Phase 4
+        // Future: Will delegate to inner state's TypedAppState implementation
         TypedStateChange::Keep
     }
 

@@ -11,9 +11,11 @@ use super::{
     MigrationDataLoadingState, MigrationResultsState, MigrationTaggingState,
     MigrationVersionInputState,
 };
+use crate::ui::App;
 use crate::ui::apps::MigrationApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
 use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -104,25 +106,67 @@ impl MigrationModeState {
     }
 }
 
-// Note: The full TypedAppState implementation for MigrationModeState will be added
-// in Phase 4 when individual states are migrated to use the typed interface.
-// For now, we define the enum structure to establish the state machine.
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+//
+// This implementation allows MigrationModeState to be used with the existing run loop
+// that expects Box<dyn AppState>. It dispatches to inner state implementations.
 
-/// Placeholder implementation for MigrationModeState.
-///
-/// This implementation will be completed in Phase 4 when states are migrated
-/// to the typed interface. Currently, states still use the legacy AppState trait.
+#[async_trait]
+impl AppState for MigrationModeState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        match self {
+            MigrationModeState::SettingsConfirmation(state) => state.ui(f, app),
+            MigrationModeState::DataLoading(state) => state.ui(f, app),
+            MigrationModeState::Results(state) => state.ui(f, app),
+            MigrationModeState::VersionInput(state) => state.ui(f, app),
+            MigrationModeState::Tagging(state) => state.ui(f, app),
+            MigrationModeState::Error(state) => state.ui(f, app),
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        match self {
+            MigrationModeState::SettingsConfirmation(state) => state.process_key(code, app).await,
+            MigrationModeState::DataLoading(state) => state.process_key(code, app).await,
+            MigrationModeState::Results(state) => state.process_key(code, app).await,
+            MigrationModeState::VersionInput(state) => state.process_key(code, app).await,
+            MigrationModeState::Tagging(state) => state.process_key(code, app).await,
+            MigrationModeState::Error(state) => state.process_key(code, app).await,
+        }
+    }
+
+    async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
+        match self {
+            MigrationModeState::SettingsConfirmation(state) => {
+                state.process_mouse(event, app).await
+            }
+            MigrationModeState::DataLoading(state) => state.process_mouse(event, app).await,
+            MigrationModeState::Results(state) => state.process_mouse(event, app).await,
+            MigrationModeState::VersionInput(state) => state.process_mouse(event, app).await,
+            MigrationModeState::Tagging(state) => state.process_mouse(event, app).await,
+            MigrationModeState::Error(state) => state.process_mouse(event, app).await,
+        }
+    }
+}
+
+// ============================================================================
+// TypedAppState Implementation (Future Use)
+// ============================================================================
+//
+// This implementation is for the future typed run loop. Currently placeholder
+// as individual states need to be migrated to implement TypedAppState first.
+
 #[async_trait]
 impl TypedAppState for MigrationModeState {
     type App = MigrationApp;
     type StateEnum = MigrationModeState;
 
     fn ui(&mut self, _f: &mut Frame, _app: &MigrationApp) {
-        // Placeholder - will delegate to inner state in Phase 4
-        // For now, states are rendered via the legacy AppState trait
-        unimplemented!(
-            "MigrationModeState::ui() - states are being migrated. Use legacy AppState for now."
-        )
+        // Future: When individual states implement TypedAppState,
+        // this will delegate to inner states with type-safe app references.
+        unimplemented!("Use AppState::ui() with &App for now")
     }
 
     async fn process_key(
@@ -130,10 +174,9 @@ impl TypedAppState for MigrationModeState {
         _code: KeyCode,
         _app: &mut MigrationApp,
     ) -> TypedStateChange<MigrationModeState> {
-        // Placeholder - will delegate to inner state in Phase 4
-        unimplemented!(
-            "MigrationModeState::process_key() - states are being migrated. Use legacy AppState for now."
-        )
+        // Future: When individual states implement TypedAppState,
+        // this will delegate to inner states with type-safe app references.
+        unimplemented!("Use AppState::process_key() with &mut App for now")
     }
 
     async fn process_mouse(
@@ -141,7 +184,7 @@ impl TypedAppState for MigrationModeState {
         _event: MouseEvent,
         _app: &mut MigrationApp,
     ) -> TypedStateChange<MigrationModeState> {
-        // Placeholder - will delegate to inner state in Phase 4
+        // Future: Will delegate to inner state's TypedAppState implementation
         TypedStateChange::Keep
     }
 

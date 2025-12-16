@@ -3,7 +3,7 @@
 Track implementation progress for the mode separation refactoring.
 
 **Last Updated:** 2025-12-16
-**Status:** Phases 1-3 Complete, App Enum Converted
+**Status:** Phases 1-4 Complete, State Enum Dispatch Wired
 
 ## Overview
 
@@ -12,18 +12,24 @@ Track implementation progress for the mode separation refactoring.
 | Phase 1: Core Infrastructure | ✅ Complete | 3/3 |
 | Phase 2: Mode-Specific App Types | ✅ Complete | 5/5 |
 | Phase 3: State Infrastructure | ✅ Complete | 5/5 |
-| Phase 4: Mode-Specific States | 🔄 In Progress | 0/3 |
+| Phase 4: Mode-Specific States | ✅ Complete | 3/3 |
 | Phase 5: Run Loop & Entry Points | ⬜ Not Started | 0/2 |
 | Phase 6: Cleanup & Tests | ⬜ Not Started | 0/2 |
 
 ## Recent Updates
+
+- **Phase 4 Complete**: State enum dispatch implementations added:
+  - `MergeState` implements `AppState` to dispatch to inner states
+  - `MigrationModeState` implements `AppState` to dispatch to inner states
+  - `CleanupModeState` implements `AppState` to dispatch to inner states
+  - `TypedAppState` remains placeholder for future typed run loop
+  - All 544 tests passing
 
 - **App Enum Conversion Complete**: Converted `App` from struct to enum wrapping mode-specific types:
   - `App::Merge(MergeApp)` for cherry-picking PRs
   - `App::Migration(MigrationApp)` for migration analysis
   - `App::Cleanup(CleanupApp)` for branch cleanup
   - All state files updated to use method accessors instead of field access
-  - All 515 tests passing
 
 - **Master Merged**: Integrated changes from master including:
   - PR sorting by close date (#42)
@@ -191,43 +197,43 @@ Track implementation progress for the mode separation refactoring.
 
 ---
 
-## Phase 4: Update Mode-Specific States 🔄
+## Phase 4: State Enum Dispatch ✅
 
-**Note:** Phase 4 involves migrating individual states to implement `TypedAppState`.
-This is a significant undertaking as it requires updating the legacy `AppState` trait
-implementations to use mode-specific app types.
+**Approach:** Instead of migrating all individual states to `TypedAppState` (which would
+require changing all state files), we implemented `AppState` dispatch on the state enums.
+This allows the state enums to be used with the existing run loop while maintaining
+backward compatibility with individual states.
 
-### 4.1 Merge/Default States
+### 4.1 Merge State Enum ✅
+- [x] Added `AppState` implementation to `MergeState` enum
+- [x] Dispatches `ui()`, `process_key()`, `process_mouse()` to inner states
+- [x] `TypedAppState` remains placeholder for future typed run loop
 
-| File | Status | Notes |
-|------|--------|-------|
-| `state/default/data_loading.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/setup_repo.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/version_input.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/pr_selection.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/cherry_pick.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/cherry_pick_continue.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/conflict_resolution.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/completion.rs` | ⬜ | `type App = MergeApp` |
-| `state/default/post_completion.rs` | ⬜ | `type App = MergeApp` |
+**Files:** `src/ui/state/default/state_enum.rs` (modify)
 
-### 4.2 Migration States
+### 4.2 Migration State Enum ✅
+- [x] Added `AppState` implementation to `MigrationModeState` enum
+- [x] Dispatches `ui()`, `process_key()`, `process_mouse()` to inner states
+- [x] `TypedAppState` remains placeholder for future typed run loop
 
-| File | Status | Notes |
-|------|--------|-------|
-| `state/migration/data_loading.rs` | ⬜ | `type App = MigrationApp` |
-| `state/migration/version_input.rs` | ⬜ | `type App = MigrationApp` |
-| `state/migration/results.rs` | ⬜ | `type App = MigrationApp` |
-| `state/migration/tagging.rs` | ⬜ | `type App = MigrationApp` |
+**Files:** `src/ui/state/migration/state_enum.rs` (modify)
 
-### 4.3 Cleanup States
+### 4.3 Cleanup State Enum ✅
+- [x] Added `AppState` implementation to `CleanupModeState` enum
+- [x] Dispatches `ui()`, `process_key()`, `process_mouse()` to inner states
+- [x] `TypedAppState` remains placeholder for future typed run loop
 
-| File | Status | Notes |
-|------|--------|-------|
-| `state/cleanup/data_loading.rs` | ⬜ | `type App = CleanupApp` |
-| `state/cleanup/branch_selection.rs` | ⬜ | `type App = CleanupApp` |
-| `state/cleanup/cleanup_execution.rs` | ⬜ | `type App = CleanupApp` |
-| `state/cleanup/results.rs` | ⬜ | `type App = CleanupApp` |
+**Files:** `src/ui/state/cleanup/state_enum.rs` (modify)
+
+### Individual State Migration (Future Work)
+Individual states continue to use the legacy `AppState` trait with `&App`. A future
+phase could migrate them to `TypedAppState` for compile-time mode-specific type safety:
+
+| Mode | States | Status |
+|------|--------|--------|
+| Merge | DataLoading, SetupRepo, VersionInput, PRSelection, CherryPick, etc. | Uses legacy AppState |
+| Migration | DataLoading, Results, VersionInput, Tagging | Uses legacy AppState |
+| Cleanup | DataLoading, BranchSelection, Execution, Results | Uses legacy AppState |
 
 ---
 
