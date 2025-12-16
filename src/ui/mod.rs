@@ -16,6 +16,7 @@ macro_rules! handle_state_change {
 }
 
 mod app;
+pub mod browser;
 mod events;
 #[cfg(test)]
 pub mod snapshot_testing;

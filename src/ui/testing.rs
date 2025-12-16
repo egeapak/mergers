@@ -35,7 +35,12 @@ impl TuiTestHarness {
 
         let config = create_test_config_default();
         let client = create_test_client();
-        let app = App::new(Vec::new(), Arc::new(config), client);
+        let app = App::new_with_browser(
+            Vec::new(),
+            Arc::new(config),
+            client,
+            Box::new(crate::ui::browser::MockBrowserOpener::new()),
+        );
 
         Self { terminal, app }
     }
@@ -46,7 +51,12 @@ impl TuiTestHarness {
         let terminal = Terminal::new(backend).unwrap();
 
         let client = create_test_client();
-        let app = App::new(Vec::new(), Arc::new(config), client);
+        let app = App::new_with_browser(
+            Vec::new(),
+            Arc::new(config),
+            client,
+            Box::new(crate::ui::browser::MockBrowserOpener::new()),
+        );
 
         Self { terminal, app }
     }
