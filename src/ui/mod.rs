@@ -16,17 +16,25 @@ macro_rules! handle_state_change {
 }
 
 mod app;
+mod app_base;
+mod app_mode;
+pub mod apps;
 mod events;
 #[cfg(test)]
 pub mod snapshot_testing;
 pub mod state;
 #[cfg(test)]
 pub mod testing;
+mod worktree_context;
 
 pub use app::App;
+pub use app_base::AppBase;
+pub use app_mode::AppMode;
+pub use apps::{CleanupApp, MergeApp, MigrationApp};
 #[cfg(test)]
 pub use events::testing::MockEventSource;
 pub use events::{CrosstermEventSource, EventSource};
+pub use worktree_context::WorktreeContext;
 
 /// Run the application loop with an injectable event source.
 ///

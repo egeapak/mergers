@@ -2,15 +2,15 @@
 
 Track implementation progress for the mode separation refactoring.
 
-**Last Updated:** 2025-01-XX
-**Status:** Not Started
+**Last Updated:** 2025-12-16
+**Status:** Phase 1-2 Complete
 
 ## Overview
 
 | Phase | Status | Progress |
 |-------|--------|----------|
-| Phase 1: Core Infrastructure | ⬜ Not Started | 0/3 |
-| Phase 2: Mode-Specific App Types | ⬜ Not Started | 0/3 |
+| Phase 1: Core Infrastructure | ✅ Complete | 3/3 |
+| Phase 2: Mode-Specific App Types | ✅ Complete | 4/4 |
 | Phase 3: State Infrastructure | ⬜ Not Started | 0/3 |
 | Phase 4: Mode-Specific States | ⬜ Not Started | 0/3 |
 | Phase 5: Run Loop & Entry Points | ⬜ Not Started | 0/2 |
@@ -20,34 +20,34 @@ Track implementation progress for the mode separation refactoring.
 
 ## Phase 1: Core Infrastructure
 
-### 1.1 Create `src/ui/worktree_context.rs`
-- [ ] Define `WorktreeContext` struct with fields:
+### 1.1 Create `src/ui/worktree_context.rs` ✅
+- [x] Define `WorktreeContext` struct with fields:
   - `repo_path: Option<PathBuf>`
   - `base_repo_path: Option<PathBuf>`
   - `_temp_dir: Option<TempDir>`
   - `worktree_id: Option<String>`
-- [ ] Implement `cleanup()` method
-- [ ] Implement `Drop` trait
-- [ ] Add unit tests
+- [x] Implement `cleanup()` method
+- [x] Implement `Drop` trait
+- [x] Add unit tests (7 tests)
 
 **Files:** `src/ui/worktree_context.rs` (new)
 
-### 1.2 Create `src/ui/app_base.rs`
-- [ ] Define `AppBase` struct with shared fields:
+### 1.2 Create `src/ui/app_base.rs` ✅
+- [x] Define `AppBase` struct with shared fields:
   - `config: Arc<AppConfig>`
   - `pull_requests: Vec<PullRequestWithWorkItems>`
   - `client: AzureDevOpsClient`
   - `version: Option<String>`
   - `worktree: WorktreeContext`
   - `error_message: Option<String>`
-- [ ] Move configuration getter methods from App
-- [ ] Move shared helper methods (open_pr_in_browser, etc.)
-- [ ] Add unit tests
+- [x] Move configuration getter methods from App
+- [x] Move shared helper methods (open_pr_in_browser, etc.)
+- [x] Add unit tests (4 tests)
 
 **Files:** `src/ui/app_base.rs` (new)
 
-### 1.3 Create `src/ui/app_mode.rs`
-- [ ] Define `AppMode` trait with methods:
+### 1.3 Create `src/ui/app_mode.rs` ✅
+- [x] Define `AppMode` trait with methods:
   - `fn base(&self) -> &AppBase`
   - `fn base_mut(&mut self) -> &mut AppBase`
 
