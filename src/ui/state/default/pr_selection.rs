@@ -1235,19 +1235,29 @@ impl AppState for PullRequestSelectionState {
                     "Active".to_string()
                 };
 
-                let work_items = if !pr_with_wi.work_items.is_empty() {
-                    pr_with_wi
-                        .work_items
-                        .iter()
-                        .map(|wi| {
+                // Build work items as colored spans instead of a plain string
+                let work_items_spans: Vec<ratatui::text::Span> =
+                    if !pr_with_wi.work_items.is_empty() {
+                        let mut spans = Vec::new();
+                        for (idx, wi) in pr_with_wi.work_items.iter().enumerate() {
+                            if idx > 0 {
+                                spans.push(ratatui::text::Span::raw(", "));
+                            }
                             let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                            format!("#{} ({})", wi.id, state)
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                } else {
-                    String::new()
-                };
+                            let color = get_state_color_with_rgb(state, wi.fields.state_color);
+                            spans.push(ratatui::text::Span::styled(
+                                format!("#{} ({})", wi.id, state),
+                                Style::default().fg(if pr_with_wi.selected {
+                                    Color::White
+                                } else {
+                                    color
+                                }),
+                            ));
+                        }
+                        spans
+                    } else {
+                        vec![ratatui::text::Span::raw("")]
+                    };
 
                 // Check if this row is a search result
                 let is_search_result = self.search_results.contains(&pr_index);
@@ -1300,11 +1310,7 @@ impl AppState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Cell::from(work_items).style(if pr_with_wi.selected {
-                        Style::default().fg(Color::White)
-                    } else {
-                        Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
-                    }),
+                    Cell::from(ratatui::text::Line::from(work_items_spans)),
                 ];
 
                 Row::new(cells).height(1).style(row_style)
@@ -1622,34 +1628,6 @@ impl AppState for PullRequestSelectionState {
             _ => StateChange::Keep,
         }
     }
-}
-
-fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
-    if work_items.is_empty() {
-        return Color::Gray;
-    }
-
-    // Return color based on the most important state
-    for wi in work_items {
-        if let Some(state) = &wi.fields.state {
-            match state.as_str() {
-                "Next Merged" | "Next Closed" => {
-                    return get_state_color_with_rgb(state, wi.fields.state_color);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    work_items
-        .iter()
-        .find_map(|wi| {
-            wi.fields
-                .state
-                .as_deref()
-                .map(|state| get_state_color_with_rgb(state, wi.fields.state_color))
-        })
-        .unwrap_or(Color::White)
 }
 
 /// Gets a color for a work item state, preferring API color over fallback.
@@ -3039,97 +3017,5 @@ mod tests {
         assert_eq!(get_state_color("Unknown State"), Color::White);
         assert_eq!(get_state_color(""), Color::White);
         assert_eq!(get_state_color("Some Random State"), Color::White);
-    }
-
-    /// # Get Work Items Color - Empty List
-    ///
-    /// Tests color returned for empty work items list.
-    ///
-    /// ## Test Scenario
-    /// - Provides empty work items vector
-    ///
-    /// ## Expected Outcome
-    /// - Returns Gray color
-    #[test]
-    fn test_get_work_items_color_empty() {
-        let work_items: Vec<crate::models::WorkItem> = vec![];
-        assert_eq!(get_work_items_color(&work_items), Color::Gray);
-    }
-
-    /// # Get Work Items Color - Priority States
-    ///
-    /// Tests that "Next Merged" and "Next Closed" states get priority.
-    ///
-    /// ## Test Scenario
-    /// - Provides work items with priority states mixed with others
-    ///
-    /// ## Expected Outcome
-    /// - Returns color for the priority state
-    #[test]
-    fn test_get_work_items_color_priority_states() {
-        use crate::models::{WorkItem, WorkItemFields};
-
-        let work_items = vec![
-            WorkItem {
-                id: 1,
-                fields: WorkItemFields {
-                    title: Some("Test 1".to_string()),
-                    state: Some("Active".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                    state_color: None,
-                },
-                history: vec![],
-            },
-            WorkItem {
-                id: 2,
-                fields: WorkItemFields {
-                    title: Some("Test 2".to_string()),
-                    state: Some("Next Merged".to_string()),
-                    work_item_type: None,
-                    assigned_to: None,
-                    iteration_path: None,
-                    description: None,
-                    repro_steps: None,
-                    state_color: None,
-                },
-                history: vec![],
-            },
-        ];
-        // "Next Merged" should take priority and return Red
-        assert_eq!(get_work_items_color(&work_items), Color::Red);
-    }
-
-    /// # Get Work Items Color - Uses API Color
-    ///
-    /// Tests that API-provided RGB color is used for work items.
-    ///
-    /// ## Test Scenario
-    /// - Provides work item with API color set
-    ///
-    /// ## Expected Outcome
-    /// - Returns the API-provided RGB color
-    #[test]
-    fn test_get_work_items_color_uses_api_color() {
-        use crate::models::{WorkItem, WorkItemFields};
-
-        let work_items = vec![WorkItem {
-            id: 1,
-            fields: WorkItemFields {
-                title: Some("Test".to_string()),
-                state: Some("Active".to_string()),
-                work_item_type: None,
-                assigned_to: None,
-                iteration_path: None,
-                description: None,
-                repro_steps: None,
-                state_color: Some((255, 100, 50)),
-            },
-            history: vec![],
-        }];
-        assert_eq!(get_work_items_color(&work_items), Color::Rgb(255, 100, 50));
     }
 }
