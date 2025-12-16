@@ -147,7 +147,7 @@ impl MigrationState {
         }
     }
 
-    /// Sort PRs by closed_date (completion date), oldest first
+    /// Sort PRs by closed_date (completion date), newest first (same as merge mode)
     fn sort_prs_by_date(
         prs: &[crate::models::PullRequestWithWorkItems],
     ) -> Vec<&crate::models::PullRequestWithWorkItems> {
@@ -155,7 +155,7 @@ impl MigrationState {
         sorted.sort_by(|a, b| {
             let date_a = a.pr.closed_date.as_deref().unwrap_or("");
             let date_b = b.pr.closed_date.as_deref().unwrap_or("");
-            date_a.cmp(date_b)
+            date_b.cmp(date_a) // Newest first
         });
         sorted
     }
@@ -1114,13 +1114,15 @@ mod tests {
 
         harness.app.migration_analysis = Some(create_test_migration_analysis());
 
-        // Get the PR ID before toggling (it will be moved to a different list)
+        // Get the PR ID that will be displayed first after sorting (newest first)
+        // eligible_prs contains PR 100 (2024-01-10) and PR 101 (2024-01-12)
+        // After sorting newest first, PR 101 is displayed first
         let pr_id = harness
             .app
             .migration_analysis
             .as_ref()
             .unwrap()
-            .eligible_prs[0]
+            .eligible_prs[1] // PR 101 - the newest, displayed first after sorting
             .pr
             .id;
 
