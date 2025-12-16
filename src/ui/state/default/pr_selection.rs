@@ -49,6 +49,8 @@ pub struct PullRequestSelectionState {
     last_click_time: Option<Instant>,
     last_click_row: Option<usize>,
     table_area: Option<Rect>,
+    // Details panel toggle
+    pub show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -79,6 +81,8 @@ impl PullRequestSelectionState {
             last_click_time: None,
             last_click_row: None,
             table_area: None,
+            // Details panel toggle - default to shown
+            show_details: true,
         }
     }
 
@@ -1144,15 +1148,37 @@ impl AppState for PullRequestSelectionState {
             return;
         }
 
-        // Add search status line if in search iteration mode
+        // Layout depends on search mode and details panel visibility
         let chunks = if self.search_iteration_mode {
+            if self.show_details {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Length(3),      // Search status line
+                        Constraint::Percentage(47), // PR table (slightly smaller)
+                        Constraint::Percentage(37), // Work item details (slightly smaller)
+                        Constraint::Length(3),      // Help section
+                    ])
+                    .split(f.area())
+            } else {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .margin(1)
+                    .constraints([
+                        Constraint::Length(3), // Search status line
+                        Constraint::Min(10),   // PR table (full height)
+                        Constraint::Length(3), // Help section
+                    ])
+                    .split(f.area())
+            }
+        } else if self.show_details {
             Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Length(3),      // Search status line
-                    Constraint::Percentage(47), // PR table (slightly smaller)
-                    Constraint::Percentage(37), // Work item details (slightly smaller)
+                    Constraint::Percentage(50), // Top half for PR table
+                    Constraint::Percentage(40), // Bottom half for work item details
                     Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
@@ -1161,9 +1187,8 @@ impl AppState for PullRequestSelectionState {
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
-                    Constraint::Percentage(50), // Top half for PR table
-                    Constraint::Percentage(40), // Bottom half for work item details
-                    Constraint::Length(3),      // Help section
+                    Constraint::Min(10),   // PR table (full height)
+                    Constraint::Length(3), // Help section
                 ])
                 .split(f.area())
         };
@@ -1322,14 +1347,16 @@ impl AppState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details
-        self.render_work_item_details(f, app, chunks[chunk_idx]);
-        chunk_idx += 1;
+        // Render work item details if enabled
+        if self.show_details {
+            self.render_work_item_details(f, app, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
 
         let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Work Items | n/N: Next/Prev result | Esc: Exit search | Space: Toggle | d: Toggle details | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Work Items | /: Search | Space: Toggle | Enter: Confirm | p: PR | w: Work Items | s: Multi-select | d: Toggle details | r: Refresh | q: Quit"
         };
 
         let help = List::new(vec![ListItem::new(help_text)])
@@ -1530,6 +1557,11 @@ impl AppState for PullRequestSelectionState {
                 KeyCode::Char('r') => {
                     // Refresh: go back to data loading state to re-fetch PRs
                     StateChange::Change(Box::new(DataLoadingState::new()))
+                }
+                KeyCode::Char('d') => {
+                    // Toggle details panel
+                    self.show_details = !self.show_details;
+                    StateChange::Keep
                 }
                 _ => StateChange::Keep,
             }

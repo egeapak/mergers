@@ -1,13 +1,14 @@
 use crate::ui::App;
 use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
+use chrono::DateTime;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs, Wrap},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,9 +20,9 @@ pub enum MigrationTab {
 
 pub struct MigrationState {
     pub current_tab: MigrationTab,
-    pub eligible_list_state: ListState,
-    pub unsure_list_state: ListState,
-    pub not_merged_list_state: ListState,
+    pub eligible_table_state: TableState,
+    pub unsure_table_state: TableState,
+    pub not_merged_table_state: TableState,
     pub show_details: bool,
 }
 
@@ -33,23 +34,23 @@ impl Default for MigrationState {
 
 impl MigrationState {
     pub fn new() -> Self {
-        let mut eligible_list_state = ListState::default();
-        eligible_list_state.select(Some(0));
+        let mut eligible_table_state = TableState::default();
+        eligible_table_state.select(Some(0));
 
         Self {
             current_tab: MigrationTab::Eligible,
-            eligible_list_state,
-            unsure_list_state: ListState::default(),
-            not_merged_list_state: ListState::default(),
+            eligible_table_state,
+            unsure_table_state: TableState::default(),
+            not_merged_table_state: TableState::default(),
             show_details: false,
         }
     }
 
-    fn get_current_list_state(&mut self) -> &mut ListState {
+    fn get_current_table_state(&mut self) -> &mut TableState {
         match self.current_tab {
-            MigrationTab::Eligible => &mut self.eligible_list_state,
-            MigrationTab::Unsure => &mut self.unsure_list_state,
-            MigrationTab::NotMerged => &mut self.not_merged_list_state,
+            MigrationTab::Eligible => &mut self.eligible_table_state,
+            MigrationTab::Unsure => &mut self.unsure_table_state,
+            MigrationTab::NotMerged => &mut self.not_merged_table_state,
         }
     }
 
@@ -72,8 +73,8 @@ impl MigrationState {
             return;
         }
 
-        let current_list = self.get_current_list_state();
-        let current = current_list.selected().unwrap_or(0);
+        let current_table = self.get_current_table_state();
+        let current = current_table.selected().unwrap_or(0);
         let new_index = if direction > 0 {
             (current + 1) % count
         } else if current == 0 {
@@ -81,7 +82,7 @@ impl MigrationState {
         } else {
             current - 1
         };
-        current_list.select(Some(new_index));
+        current_table.select(Some(new_index));
     }
 
     fn switch_tab(&mut self, app: &App, direction: i32) {
@@ -112,9 +113,9 @@ impl MigrationState {
         // Ensure the new tab has a valid selection
         let count = self.get_current_prs_count(app);
         if count > 0 {
-            let current_list = self.get_current_list_state();
-            if current_list.selected().is_none() {
-                current_list.select(Some(0));
+            let current_table = self.get_current_table_state();
+            if current_table.selected().is_none() {
+                current_table.select(Some(0));
             }
         }
     }
@@ -124,24 +125,39 @@ impl MigrationState {
         app: &'a App,
     ) -> Option<&'a crate::models::PullRequestWithWorkItems> {
         if let Some(analysis) = &app.migration_analysis {
-            let list_state = match self.current_tab {
-                MigrationTab::Eligible => &self.eligible_list_state,
-                MigrationTab::Unsure => &self.unsure_list_state,
-                MigrationTab::NotMerged => &self.not_merged_list_state,
+            let table_state = match self.current_tab {
+                MigrationTab::Eligible => &self.eligible_table_state,
+                MigrationTab::Unsure => &self.unsure_table_state,
+                MigrationTab::NotMerged => &self.not_merged_table_state,
             };
 
-            if let Some(selected) = list_state.selected() {
-                match self.current_tab {
-                    MigrationTab::Eligible => analysis.eligible_prs.get(selected),
-                    MigrationTab::Unsure => analysis.unsure_prs.get(selected),
-                    MigrationTab::NotMerged => analysis.not_merged_prs.get(selected),
-                }
+            if let Some(selected) = table_state.selected() {
+                // Get the sorted PRs for the current tab
+                let sorted_prs = match self.current_tab {
+                    MigrationTab::Eligible => Self::sort_prs_by_date(&analysis.eligible_prs),
+                    MigrationTab::Unsure => Self::sort_prs_by_date(&analysis.unsure_prs),
+                    MigrationTab::NotMerged => Self::sort_prs_by_date(&analysis.not_merged_prs),
+                };
+                sorted_prs.get(selected).copied()
             } else {
                 None
             }
         } else {
             None
         }
+    }
+
+    /// Sort PRs by closed_date (completion date), newest first (same as merge mode)
+    fn sort_prs_by_date(
+        prs: &[crate::models::PullRequestWithWorkItems],
+    ) -> Vec<&crate::models::PullRequestWithWorkItems> {
+        let mut sorted: Vec<&crate::models::PullRequestWithWorkItems> = prs.iter().collect();
+        sorted.sort_by(|a, b| {
+            let date_a = a.pr.closed_date.as_deref().unwrap_or("");
+            let date_b = b.pr.closed_date.as_deref().unwrap_or("");
+            date_b.cmp(date_a) // Newest first
+        });
+        sorted
     }
 
     fn open_current_pr(&self, app: &App) {
@@ -255,111 +271,141 @@ impl MigrationState {
             ),
         };
 
-        let items: Vec<ListItem> = prs
+        // Sort PRs by closed_date (completion date)
+        let sorted_prs = Self::sort_prs_by_date(prs);
+
+        // Create table headers (same as merge mode, with override indicator column)
+        let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
             .iter()
-            .map(|pr| {
-                // Check if this PR has a manual override and show what Space will do
-                let (override_indicator, space_action) = match app.has_manual_override(pr.pr.id) {
-                    Some(true) => {
-                        let action = match self.current_tab {
-                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
-                            MigrationTab::Unsure => " → Reset",          // will reset override
-                            MigrationTab::NotMerged => " → Reset",       // will reset override
-                        };
-                        (" ✅ [Manual]", action)
-                    }
-                    Some(false) => {
-                        let action = match self.current_tab {
-                            MigrationTab::Eligible => " → Reset",     // will reset override
-                            MigrationTab::Unsure => " → Eligible",    // will mark eligible
-                            MigrationTab::NotMerged => " → Eligible", // will mark eligible
-                        };
-                        (" ❌ [Manual Override]", action)
-                    }
-                    None => {
-                        let action = match self.current_tab {
-                            MigrationTab::Eligible => " → Not Eligible", // will mark not eligible
-                            MigrationTab::Unsure => " → Eligible",       // will mark eligible
-                            MigrationTab::NotMerged => " → Eligible",    // will mark eligible
-                        };
-                        ("", action)
-                    }
-                };
+            .map(|h| {
+                Cell::from(*h).style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            });
+        let header = Row::new(header_cells).height(1);
 
-                // Build work items summary with status
-                let work_items_summary = if pr.work_items.is_empty() {
-                    vec![Span::styled(
-                        "No work items",
-                        Style::default().fg(Color::Gray),
-                    )]
+        // Create table rows
+        let rows: Vec<Row> = sorted_prs
+            .iter()
+            .map(|pr_with_wi| {
+                // Format date from closed_date
+                let date = if let Some(closed_date) = &pr_with_wi.pr.closed_date {
+                    if let Ok(date) = DateTime::parse_from_rfc3339(closed_date) {
+                        date.format("%Y-%m-%d").to_string()
+                    } else {
+                        "Active".to_string()
+                    }
                 } else {
-                    let mut spans = vec![Span::styled("WI: ", Style::default().fg(Color::Gray))];
-                    for (i, wi) in pr.work_items.iter().enumerate() {
-                        if i > 0 {
-                            spans.push(Span::styled(", ", Style::default().fg(Color::Gray)));
-                        }
-                        let state = wi.fields.state.as_deref().unwrap_or("Unknown");
-                        let state_color = get_state_color_with_rgb(
-                            state,
-                            wi.fields.state_color,
-                            &analysis.terminal_states,
-                        );
-                        spans.push(Span::styled(
-                            format!("#{}", wi.id),
-                            Style::default().fg(Color::Cyan),
-                        ));
-                        spans.push(Span::styled("(", Style::default().fg(Color::Gray)));
-                        spans.push(Span::styled(state, Style::default().fg(state_color)));
-                        spans.push(Span::styled(")", Style::default().fg(Color::Gray)));
-                    }
-                    spans
+                    "Active".to_string()
                 };
 
-                ListItem::new(vec![
-                    Line::from(vec![
-                        Span::styled(
-                            format!("#{}", pr.pr.id),
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(" "),
-                        Span::raw(&pr.pr.title),
-                        Span::styled(
-                            override_indicator,
-                            Style::default()
-                                .fg(Color::Magenta)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(space_action, Style::default().fg(Color::Cyan)),
-                    ]),
-                    Line::from(vec![
-                        Span::styled(
-                            format!("  By: {}", pr.pr.created_by.display_name),
-                            Style::default().fg(Color::Gray),
-                        ),
-                        Span::raw(" | "),
-                    ]),
-                    Line::from({
-                        let mut line_spans = vec![Span::raw("  ")];
-                        line_spans.extend(work_items_summary);
-                        line_spans
-                    }),
-                ])
+                // Format work items with states
+                let work_items = if !pr_with_wi.work_items.is_empty() {
+                    pr_with_wi
+                        .work_items
+                        .iter()
+                        .map(|wi| {
+                            let state = wi.fields.state.as_deref().unwrap_or("Unknown");
+                            format!("#{} ({})", wi.id, state)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                } else {
+                    String::new()
+                };
+
+                // Check for manual override indicator (leftmost column)
+                let override_indicator = match app.has_manual_override(pr_with_wi.pr.id) {
+                    Some(true) => "✅",
+                    Some(false) => "❌",
+                    None => " ",
+                };
+
+                // Get work items color based on terminal states and API colors
+                let work_items_color =
+                    Self::get_work_items_color(&pr_with_wi.work_items, &analysis.terminal_states);
+
+                let cells = vec![
+                    Cell::from(override_indicator).style(Style::default().fg(Color::Magenta)),
+                    Cell::from(format!("{:<6}", pr_with_wi.pr.id))
+                        .style(Style::default().fg(Color::Cyan)),
+                    Cell::from(date).style(Style::default()),
+                    Cell::from(pr_with_wi.pr.title.clone()).style(Style::default()),
+                    Cell::from(pr_with_wi.pr.created_by.display_name.clone())
+                        .style(Style::default().fg(Color::Yellow)),
+                    Cell::from(work_items).style(Style::default().fg(work_items_color)),
+                ];
+
+                Row::new(cells).height(1)
             })
             .collect();
 
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(title)
-                    .border_style(Style::default().fg(color)),
-            )
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        let table = Table::new(
+            rows,
+            vec![
+                Constraint::Length(3),      // Override indicator
+                Constraint::Length(8),      // PR #
+                Constraint::Length(12),     // Date
+                Constraint::Percentage(30), // Title
+                Constraint::Percentage(20), // Author
+                Constraint::Percentage(25), // Work Items
+            ],
+        )
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(color)),
+        )
+        .row_highlight_style(Style::default().bg(Color::DarkGray))
+        .highlight_symbol("→ ");
 
-        let current_list = self.get_current_list_state();
-        f.render_stateful_widget(list, area, current_list);
+        let current_table = self.get_current_table_state();
+        f.render_stateful_widget(table, area, current_table);
+    }
+
+    /// Get the color for work items based on their states and API colors
+    ///
+    /// Uses API color from the first non-terminal work item if available,
+    /// otherwise falls back to terminal state logic (green if all terminal, red if not).
+    fn get_work_items_color(
+        work_items: &[crate::models::WorkItem],
+        terminal_states: &[String],
+    ) -> Color {
+        if work_items.is_empty() {
+            return Color::Gray;
+        }
+
+        // Check if all work items are in terminal states
+        let all_terminal = work_items.iter().all(|wi| {
+            wi.fields
+                .state
+                .as_ref()
+                .is_some_and(|s| terminal_states.contains(s))
+        });
+
+        if all_terminal {
+            // All terminal - try to use API color from first work item, otherwise green
+            if let Some(wi) = work_items.first()
+                && let Some(state) = wi.fields.state.as_deref()
+            {
+                return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
+            }
+            Color::Green
+        } else {
+            // Find first non-terminal work item and use its color
+            for wi in work_items {
+                if let Some(state) = wi.fields.state.as_deref()
+                    && !terminal_states.contains(&state.to_string())
+                {
+                    return get_state_color_with_rgb(state, wi.fields.state_color, terminal_states);
+                }
+            }
+            Color::Red
+        }
     }
 
     fn render_details(&self, f: &mut Frame, app: &App, area: Rect) {
@@ -496,41 +542,46 @@ impl AppState for MigrationState {
             return;
         }
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Tabs
-                Constraint::Min(10),   // Main content
-                Constraint::Length(9), // Help
-            ])
-            .split(f.area());
+        // Layout with details panel at bottom (like merge mode)
+        let chunks = if self.show_details {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),      // Tabs
+                    Constraint::Percentage(50), // PR table
+                    Constraint::Percentage(35), // Details panel (from bottom)
+                    Constraint::Length(9),      // Help
+                ])
+                .split(f.area())
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Tabs
+                    Constraint::Min(10),   // PR table (full height)
+                    Constraint::Length(9), // Help
+                ])
+                .split(f.area())
+        };
 
         // Render tabs
         self.render_tabs(f, app, chunks[0]);
 
-        // Split main content area
-        let main_chunks = if self.show_details {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                .split(chunks[1])
-        } else {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(100)])
-                .split(chunks[1])
-        };
-
         // Render PR list
-        self.render_pr_list(f, app, main_chunks[0]);
+        self.render_pr_list(f, app, chunks[1]);
 
-        // Render details if enabled
-        if self.show_details && main_chunks.len() > 1 {
-            self.render_details(f, app, main_chunks[1]);
+        // Render details if enabled (from bottom)
+        if self.show_details {
+            self.render_details(f, app, chunks[2]);
         }
 
-        // Render help
-        self.render_help(f, chunks[2]);
+        // Render help (last chunk)
+        let help_chunk = if self.show_details {
+            chunks[3]
+        } else {
+            chunks[2]
+        };
+        self.render_help(f, help_chunk);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
@@ -779,7 +830,7 @@ mod tests {
             let mut state = MigrationState::new();
             // Switch to not-merged tab to see the manual override
             state.current_tab = MigrationTab::NotMerged;
-            state.not_merged_list_state.select(Some(0));
+            state.not_merged_table_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -815,7 +866,7 @@ mod tests {
 
             let mut state = MigrationState::new();
             state.current_tab = MigrationTab::Unsure;
-            state.unsure_list_state.select(Some(0));
+            state.unsure_table_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -873,7 +924,7 @@ mod tests {
 
             let mut state = MigrationState::new();
             state.current_tab = MigrationTab::NotMerged;
-            state.not_merged_list_state.select(Some(0));
+            state.not_merged_table_state.select(Some(0));
 
             harness.render_state(Box::new(state));
 
@@ -899,11 +950,11 @@ mod tests {
         harness.app.migration_analysis = Some(create_test_migration_analysis());
 
         let mut state = MigrationState::new();
-        assert_eq!(state.eligible_list_state.selected(), Some(0));
+        assert_eq!(state.eligible_table_state.selected(), Some(0));
 
         let result = state.process_key(KeyCode::Down, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
-        assert_eq!(state.eligible_list_state.selected(), Some(1));
+        assert_eq!(state.eligible_table_state.selected(), Some(1));
     }
 
     /// # Migration Results State - Navigation Up
@@ -924,12 +975,12 @@ mod tests {
         harness.app.migration_analysis = Some(create_test_migration_analysis());
 
         let mut state = MigrationState::new();
-        assert_eq!(state.eligible_list_state.selected(), Some(0));
+        assert_eq!(state.eligible_table_state.selected(), Some(0));
 
         let result = state.process_key(KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
         // Should wrap to last item (there are 2 eligible PRs)
-        assert_eq!(state.eligible_list_state.selected(), Some(1));
+        assert_eq!(state.eligible_table_state.selected(), Some(1));
     }
 
     /// # Migration Results State - Tab Switch Right
@@ -1102,13 +1153,15 @@ mod tests {
 
         harness.app.migration_analysis = Some(create_test_migration_analysis());
 
-        // Get the PR ID before toggling (it will be moved to a different list)
+        // Get the PR ID that will be displayed first after sorting (newest first)
+        // eligible_prs contains PR 100 (2024-01-10) and PR 101 (2024-01-12)
+        // After sorting newest first, PR 101 is displayed first
         let pr_id = harness
             .app
             .migration_analysis
             .as_ref()
             .unwrap()
-            .eligible_prs[0]
+            .eligible_prs[1] // PR 101 - the newest, displayed first after sorting
             .pr
             .id;
 
@@ -1245,7 +1298,7 @@ mod tests {
     fn test_migration_state_default() {
         let state = MigrationState::default();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
-        assert_eq!(state.eligible_list_state.selected(), Some(0));
+        assert_eq!(state.eligible_table_state.selected(), Some(0));
         assert!(!state.show_details);
     }
 
@@ -1370,5 +1423,152 @@ mod tests {
             get_state_color_with_rgb("Active", None, &terminal_states),
             Color::Red
         );
+    }
+
+    /// # Get Work Items Color - Empty List
+    ///
+    /// Tests that empty work items list returns gray.
+    #[test]
+    fn test_get_work_items_color_empty() {
+        let terminal_states = vec!["Closed".to_string()];
+        let color = MigrationState::get_work_items_color(&[], &terminal_states);
+        assert_eq!(color, Color::Gray);
+    }
+
+    /// # Get Work Items Color - All Terminal States
+    ///
+    /// Tests that all terminal work items returns green (or API color).
+    #[test]
+    fn test_get_work_items_color_all_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string(), "Done".to_string()];
+        let work_items = vec![
+            WorkItem {
+                id: 1,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Closed".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: None,
+                },
+                history: vec![],
+            },
+            WorkItem {
+                id: 2,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Done".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: None,
+                },
+                history: vec![],
+            },
+        ];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Green);
+    }
+
+    /// # Get Work Items Color - Non-Terminal States
+    ///
+    /// Tests that non-terminal work items returns red (or API color).
+    #[test]
+    fn test_get_work_items_color_non_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: None,
+                state: Some("Active".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+                state_color: None,
+            },
+            history: vec![],
+        }];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Red);
+    }
+
+    /// # Get Work Items Color - Uses API Color
+    ///
+    /// Tests that API color is used when available.
+    #[test]
+    fn test_get_work_items_color_uses_api_color() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![WorkItem {
+            id: 1,
+            fields: WorkItemFields {
+                title: None,
+                state: Some("Active".to_string()),
+                work_item_type: None,
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                repro_steps: None,
+                state_color: Some((0, 122, 204)), // Blue API color
+            },
+            history: vec![],
+        }];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        assert_eq!(color, Color::Rgb(0, 122, 204));
+    }
+
+    /// # Get Work Items Color - Mixed States Uses First Non-Terminal API Color
+    ///
+    /// Tests that first non-terminal work item's API color is used for mixed states.
+    #[test]
+    fn test_get_work_items_color_mixed_uses_first_non_terminal() {
+        use crate::models::{WorkItem, WorkItemFields};
+
+        let terminal_states = vec!["Closed".to_string()];
+        let work_items = vec![
+            WorkItem {
+                id: 1,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Closed".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: Some((0, 255, 0)), // Green - terminal
+                },
+                history: vec![],
+            },
+            WorkItem {
+                id: 2,
+                fields: WorkItemFields {
+                    title: None,
+                    state: Some("Active".to_string()),
+                    work_item_type: None,
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: Some((255, 165, 0)), // Orange - non-terminal
+                },
+                history: vec![],
+            },
+        ];
+        let color = MigrationState::get_work_items_color(&work_items, &terminal_states);
+        // Should use the Active (non-terminal) work item's orange color
+        assert_eq!(color, Color::Rgb(255, 165, 0));
     }
 }
