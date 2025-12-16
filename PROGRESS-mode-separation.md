@@ -3,7 +3,7 @@
 Track implementation progress for the mode separation refactoring.
 
 **Last Updated:** 2025-12-16
-**Status:** Phase 1-2 Complete
+**Status:** Phase 1-3 Complete
 
 ## Overview
 
@@ -11,7 +11,7 @@ Track implementation progress for the mode separation refactoring.
 |-------|--------|----------|
 | Phase 1: Core Infrastructure | ✅ Complete | 3/3 |
 | Phase 2: Mode-Specific App Types | ✅ Complete | 4/4 |
-| Phase 3: State Infrastructure | ⬜ Not Started | 0/3 |
+| Phase 3: State Infrastructure | ✅ Complete | 5/5 |
 | Phase 4: Mode-Specific States | ⬜ Not Started | 0/3 |
 | Phase 5: Run Loop & Entry Points | ⬜ Not Started | 0/2 |
 | Phase 6: Cleanup & Tests | ⬜ Not Started | 0/2 |
@@ -111,79 +111,73 @@ Track implementation progress for the mode separation refactoring.
 
 ---
 
-## Phase 3: State Infrastructure
+## Phase 3: State Infrastructure ✅
 
-### 3.1 Update `src/ui/state/mod.rs`
-- [ ] Update `AppState` trait with associated type `type App: AppMode`
-- [ ] Update method signatures to use `Self::App`
-- [ ] Update `StateChange` enum to be generic `StateChange<S>`
+### 3.1 Create `src/ui/state/typed.rs` ✅
+- [x] Define `TypedAppState` trait with associated types:
+  - `type App: AppMode + Send + Sync`
+  - `type StateEnum: Send`
+- [x] Define methods: `ui()`, `process_key()`, `process_mouse()`, `name()`
+- [x] Define `TypedStateChange<S>` generic enum (Keep, Change, Exit)
+- [x] Add helper methods: `is_keep()`, `is_change()`, `is_exit()`, `map()`
+- [x] Add unit tests (5 tests)
 
-**Files:** `src/ui/state/mod.rs` (modify)
+**Files:** `src/ui/state/typed.rs` (new)
 
-### 3.2 Create Mode-Specific State Enums
+### 3.2 Create MergeState enum ✅
+- [x] Define `MergeState` enum in `src/ui/state/default/state_enum.rs`
+- [x] Variants: SettingsConfirmation, DataLoading, PullRequestSelection,
+      VersionInput, SetupRepo, CherryPick, ConflictResolution,
+      CherryPickContinue, Completion, PostCompletion, Error
+- [x] Implement `initial()` and `initial_with_confirmation()` methods
+- [x] Implement `name()` method for debugging
+- [x] Implement manual `Debug` trait
+- [x] Placeholder `TypedAppState` implementation
+- [x] Box larger variants to satisfy clippy
+- [x] Add unit tests (4 tests)
 
-#### MergeState enum (`src/ui/state/default/mod.rs`)
-- [ ] Define `MergeState` enum with variants:
-  - `DataLoading(DataLoadingState)`
-  - `SetupRepo(SetupRepoState)`
-  - `VersionInput(VersionInputState)`
-  - `PrSelection(PrSelectionState)`
-  - `CherryPick(CherryPickState)`
-  - `CherryPickContinue(CherryPickContinueState)`
-  - `ConflictResolution(ConflictResolutionState)`
-  - `Completion(CompletionState)`
-  - `PostCompletion(PostCompletionState)`
-  - `Settings(SettingsState<MergeApp>)`
-  - `SettingsConfirmation(SettingsConfirmationState<MergeApp>)`
-  - `Error(ErrorState<MergeApp>)`
-- [ ] Implement `ui()` method via enum dispatch
-- [ ] Implement `process_key()` method via enum dispatch
+**Files:** `src/ui/state/default/state_enum.rs` (new)
 
-**Files:** `src/ui/state/default/mod.rs` (modify)
+### 3.3 Create MigrationModeState enum ✅
+- [x] Define `MigrationModeState` enum in `src/ui/state/migration/state_enum.rs`
+- [x] Variants: SettingsConfirmation, DataLoading, Results, VersionInput,
+      Tagging, Error
+- [x] Implement `initial()` and `initial_with_confirmation()` methods
+- [x] Implement `name()` method for debugging
+- [x] Implement manual `Debug` trait
+- [x] Placeholder `TypedAppState` implementation
+- [x] Box larger variants to satisfy clippy
+- [x] Add unit tests (4 tests)
 
-#### MigrationState enum (`src/ui/state/migration/mod.rs`)
-- [ ] Define `MigrationState` enum with variants:
-  - `DataLoading(MigrationDataLoadingState)`
-  - `VersionInput(MigrationVersionInputState)`
-  - `Results(MigrationResultsState)`
-  - `Tagging(TaggingState)`
-  - `Settings(SettingsState<MigrationApp>)`
-  - `SettingsConfirmation(SettingsConfirmationState<MigrationApp>)`
-  - `Error(ErrorState<MigrationApp>)`
-- [ ] Implement `ui()` method via enum dispatch
-- [ ] Implement `process_key()` method via enum dispatch
+**Files:** `src/ui/state/migration/state_enum.rs` (new)
 
-**Files:** `src/ui/state/migration/mod.rs` (modify)
+### 3.4 Create CleanupModeState enum ✅
+- [x] Define `CleanupModeState` enum in `src/ui/state/cleanup/state_enum.rs`
+- [x] Variants: SettingsConfirmation, DataLoading, BranchSelection,
+      Execution, Results, Error
+- [x] Implement `initial()` and `initial_with_confirmation()` methods
+- [x] Implement `name()` method for debugging
+- [x] Implement manual `Debug` trait
+- [x] Placeholder `TypedAppState` implementation
+- [x] Box larger variants to satisfy clippy
+- [x] Add unit tests (4 tests)
 
-#### CleanupState enum (`src/ui/state/cleanup/mod.rs`)
-- [ ] Define `CleanupState` enum with variants:
-  - `DataLoading(CleanupDataLoadingState)`
-  - `BranchSelection(BranchSelectionState)`
-  - `CleanupExecution(CleanupExecutionState)`
-  - `Results(CleanupResultsState)`
-  - `Settings(SettingsState<CleanupApp>)`
-  - `SettingsConfirmation(SettingsConfirmationState<CleanupApp>)`
-  - `Error(ErrorState<CleanupApp>)`
-- [ ] Implement `ui()` method via enum dispatch
-- [ ] Implement `process_key()` method via enum dispatch
+**Files:** `src/ui/state/cleanup/state_enum.rs` (new)
 
-**Files:** `src/ui/state/cleanup/mod.rs` (modify)
+### 3.5 Create Typed Shared States ✅
+- [x] Create `TypedErrorState<A, S>` in `src/ui/state/shared/typed_error.rs`
+- [x] Create `TypedSettingsConfirmationState<A, S>` in
+      `src/ui/state/shared/typed_settings_confirmation.rs`
+- [x] Both use `PhantomData` for type parameters
+- [x] Both implement manual `Debug` trait
+- [x] Update module exports
+- [x] Add unit tests (6 tests total)
 
-### 3.3 Update Shared States to be Generic
-
-#### `src/ui/state/shared/settings_confirmation.rs`
-- [ ] Add generic parameter `<A: AppMode>`
-- [ ] Add `PhantomData<A>` field
-- [ ] Update `AppState` impl with `type App = A`
-
-**Files:** `src/ui/state/shared/settings_confirmation.rs` (modify)
-
-#### `src/ui/state/shared/error.rs`
-- [ ] Add generic parameter `<A: AppMode>`
-- [ ] Add `PhantomData<A>` field
-- [ ] Update `AppState` impl with `type App = A`
-
-**Files:** `src/ui/state/shared/error.rs` (modify)
+**Files:**
+- `src/ui/state/shared/typed_error.rs` (new)
+- `src/ui/state/shared/typed_settings_confirmation.rs` (new)
+- `src/ui/state/shared/mod.rs` (modify)
+- `src/ui/state/mod.rs` (modify)
 
 ---
 

@@ -2,12 +2,14 @@ mod cleanup;
 mod default;
 mod migration;
 mod shared;
+pub mod typed;
 
 use async_trait::async_trait;
 pub use cleanup::*;
 pub use default::*;
 pub use migration::*;
 pub use shared::*;
+pub use typed::{TypedAppState, TypedStateChange};
 
 use crate::ui::App;
 use crossterm::event::{KeyCode, MouseEvent};
