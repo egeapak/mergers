@@ -1,14 +1,6 @@
 use crate::{
-    models::AppConfig,
-    parsed_property::ParsedProperty,
-    ui::state::default::DataLoadingState,
-    ui::state::migration::MigrationDataLoadingState,
-    ui::{
-        App,
-        state::{AppState, StateChange},
-    },
+    models::AppConfig, parsed_property::ParsedProperty, ui::state::typed::TypedStateChange,
 };
-use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -25,6 +17,68 @@ pub struct SettingsConfirmationState {
 impl SettingsConfirmationState {
     pub fn new(config: AppConfig) -> Self {
         Self { config }
+    }
+
+    /// Get a reference to the config.
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    /// Render the settings confirmation UI.
+    ///
+    /// This is a mode-agnostic rendering method that can be called from
+    /// any mode's TypedAppState implementation.
+    pub fn render(&mut self, f: &mut Frame) {
+        let area = f.area();
+
+        // Create layout with some margins for better appearance
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0)])
+            .split(area.inner(Margin {
+                horizontal: 2,
+                vertical: 1,
+            }));
+
+        let settings_lines = self.create_settings_display();
+
+        let settings_paragraph = Paragraph::new(settings_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Configuration Settings")
+                    .title_style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+
+        f.render_widget(settings_paragraph, layout[0]);
+    }
+
+    /// Handle a key press and return the typed state change.
+    ///
+    /// This is a mode-agnostic key handler that takes a closure to construct
+    /// the next state when Enter is pressed. Each mode can provide its own
+    /// data loading state constructor.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - The key code pressed
+    /// * `make_next_state` - A closure that takes the config and returns the next state
+    pub fn handle_key<S, F>(&self, code: KeyCode, make_next_state: F) -> TypedStateChange<S>
+    where
+        F: FnOnce(&AppConfig) -> S,
+    {
+        match code {
+            KeyCode::Enter => TypedStateChange::Change(make_next_state(&self.config)),
+            KeyCode::Char('q') | KeyCode::Esc => TypedStateChange::Exit,
+            _ => TypedStateChange::Keep,
+        }
     }
 
     fn format_property_with_source<T: std::fmt::Display>(
@@ -277,58 +331,6 @@ impl SettingsConfirmationState {
     }
 }
 
-#[async_trait]
-impl AppState for SettingsConfirmationState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
-        let area = f.area();
-
-        // Create layout with some margins for better appearance
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0)])
-            .split(area.inner(Margin {
-                horizontal: 2,
-                vertical: 1,
-            }));
-
-        let settings_lines = self.create_settings_display();
-
-        let settings_paragraph = Paragraph::new(settings_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Configuration Settings")
-                    .title_style(
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: true })
-            .alignment(Alignment::Left);
-
-        f.render_widget(settings_paragraph, layout[0]);
-    }
-
-    async fn process_key(&mut self, code: KeyCode, _app: &mut App) -> StateChange {
-        match code {
-            KeyCode::Enter => {
-                // Proceed to appropriate data loading state
-                if self.config.is_migration_mode() {
-                    StateChange::Change(Box::new(MigrationDataLoadingState::new(
-                        self.config.clone(),
-                    )))
-                } else {
-                    StateChange::Change(Box::new(DataLoadingState::new()))
-                }
-            }
-            KeyCode::Char('q') | KeyCode::Esc => StateChange::Exit,
-            _ => StateChange::Keep,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,11 +360,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("default_mode", harness.backend());
         });
     }
@@ -387,11 +388,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("migration_mode", harness.backend());
         });
     }
@@ -418,11 +418,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_all_defaults();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("all_defaults", harness.backend());
         });
     }
@@ -449,11 +448,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_cli_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("cli_values", harness.backend());
         });
     }
@@ -479,11 +477,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_env_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("env_values", harness.backend());
         });
     }
@@ -510,11 +507,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_file_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config.as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("file_values", harness.backend());
         });
     }

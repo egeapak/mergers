@@ -1,8 +1,10 @@
+use super::CleanupModeState;
 use crate::{
     git::{check_patch_merged, list_patch_branches},
     models::AppConfig,
-    ui::App,
-    ui::state::{AppState, CleanupBranchSelectionState, StateChange},
+    ui::apps::CleanupApp,
+    ui::state::CleanupBranchSelectionState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -62,7 +64,7 @@ impl CleanupDataLoadingState {
         }
     }
 
-    fn start_loading(&mut self, app: &App) {
+    fn start_loading(&mut self, app: &CleanupApp) {
         if self.loading_task.is_some() {
             return;
         }
@@ -78,12 +80,12 @@ impl CleanupDataLoadingState {
         }
 
         let repo_path = local_repo.unwrap().to_string();
-        let target_branch =
-            if let crate::models::AppConfig::Cleanup { cleanup, .. } = app.config.as_ref() {
-                cleanup.target.value().to_string()
-            } else {
-                app.target_branch().to_string()
-            };
+        let target_branch = if let crate::models::AppConfig::Cleanup { cleanup, .. } = &*app.config
+        {
+            cleanup.target.value().to_string()
+        } else {
+            app.target_branch().to_string()
+        };
 
         self.status = "Loading patch branches...".to_string();
         self.progress = 0.1;
@@ -150,9 +152,16 @@ async fn load_and_analyze_branches(
     Ok(branches)
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupDataLoadingState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for CleanupDataLoadingState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -220,9 +229,13 @@ impl AppState for CleanupDataLoadingState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Null => {
                 // Poll for task completion
                 if !self.loaded {
@@ -233,29 +246,34 @@ impl AppState for CleanupDataLoadingState {
                     if self.check_loading_status().await {
                         if self.error.is_some() {
                             // Stay in this state to show the error
-                            return StateChange::Keep;
+                            return TypedStateChange::Keep;
                         } else if let Some(task) = self.loading_task.take()
                             && let Ok(Ok(branches)) = task.await
                         {
                             // Update app state with loaded branches
-                            app.cleanup_branches = branches;
+                            *app.cleanup_branches_mut() = branches;
 
                             // Check if we have a local_repo path set
-                            if let Some(local_repo) = app.local_repo() {
-                                app.repo_path = Some(std::path::PathBuf::from(local_repo));
+                            let repo_path = app.local_repo().map(std::path::PathBuf::from);
+                            if let Some(path) = repo_path {
+                                app.set_repo_path(Some(path));
                             }
 
                             // Transition to branch selection
-                            return StateChange::Change(Box::new(
+                            return TypedStateChange::Change(CleanupModeState::BranchSelection(
                                 CleanupBranchSelectionState::new(),
                             ));
                         }
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupDataLoading"
     }
 }
 
@@ -286,9 +304,9 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_cleanup();
             let mut harness = TuiTestHarness::with_config(config.clone());
-            let state = Box::new(CleanupDataLoadingState::new(config));
+            let state = CleanupDataLoadingState::new(config);
 
-            harness.render_state(state);
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("initial", harness.backend());
         });
     }
@@ -319,7 +337,7 @@ mod tests {
             state.status = "Loading patch branches...".to_string();
             state.progress = 0.1;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("in_progress", harness.backend());
         });
     }
@@ -352,7 +370,7 @@ mod tests {
             state.status = "Error loading branches".to_string();
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("error", harness.backend());
         });
     }
@@ -384,7 +402,7 @@ mod tests {
             state.progress = 1.0;
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("complete", harness.backend());
         });
     }
@@ -414,17 +432,17 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Exit
+    /// - Should return TypedStateChange::Exit
     #[tokio::test]
     async fn test_data_loading_quit() {
         let config = create_test_config_cleanup();
         let mut harness = TuiTestHarness::with_config(config.clone());
         let mut state = CleanupDataLoadingState::new(config);
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Cleanup Data Loading Other Keys Ignored
@@ -435,7 +453,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep
+    /// - Should return TypedStateChange::Keep
     #[tokio::test]
     async fn test_data_loading_other_keys() {
         let config = create_test_config_cleanup();
@@ -443,8 +461,9 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = state.process_key(key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result =
+                TypedAppState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -473,7 +492,7 @@ mod tests {
                 Some("No patch branches matching 'patch/*' pattern were found.".to_string());
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("no_branches", harness.backend());
         });
     }
@@ -500,7 +519,7 @@ mod tests {
             state.status = "Analyzing branch merge status...".to_string();
             state.progress = 0.5;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("half_progress", harness.backend());
         });
     }

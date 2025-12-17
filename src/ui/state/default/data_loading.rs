@@ -3,8 +3,9 @@ use crate::ui::state::shared::ErrorState;
 use crate::{
     api,
     models::PullRequestWithWorkItems,
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::MergeApp,
+    ui::state::default::MergeState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -16,11 +17,24 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
+
+#[derive(Debug, Clone)]
+pub struct WorkItemsResult {
+    pub pr_index: usize,
+    pub work_items: Vec<crate::models::WorkItem>,
+}
+
+type WorkItemsTaskHandle = AsyncTaskHandle<WorkItemsResult>;
+
 pub struct DataLoadingState {
     loading_stage: LoadingStage,
     loaded: bool,
+    work_items_fetched: usize,
+    work_items_total: usize,
     commit_info_fetched: usize,
     commit_info_total: usize,
+    work_items_tasks: Option<Vec<WorkItemsTaskHandle>>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +42,7 @@ enum LoadingStage {
     NotStarted,
     FetchingPullRequests,
     FetchingWorkItems,
+    WaitingForWorkItems,
     FetchingCommitInfo,
     Complete,
 }
@@ -43,17 +58,20 @@ impl DataLoadingState {
         Self {
             loading_stage: LoadingStage::NotStarted,
             loaded: false,
+            work_items_fetched: 0,
+            work_items_total: 0,
             commit_info_fetched: 0,
             commit_info_total: 0,
+            work_items_tasks: None,
         }
     }
 
-    async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<()> {
+    async fn fetch_pull_requests(&mut self, app: &mut MergeApp) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingPullRequests;
 
         // Fetch pull requests
         let prs = match app
-            .client
+            .client()
             .fetch_pull_requests(app.dev_branch(), app.since())
             .await
         {
@@ -68,7 +86,7 @@ impl DataLoadingState {
         }
 
         // Initialize PRs with empty work items for now
-        app.pull_requests = filtered_prs
+        *app.pull_requests_mut() = filtered_prs
             .into_iter()
             .map(|pr| PullRequestWithWorkItems {
                 pr,
@@ -80,44 +98,111 @@ impl DataLoadingState {
         Ok(())
     }
 
-    async fn fetch_work_items_with_colors(&mut self, app: &mut App) -> Result<()> {
+    fn start_work_items_fetching(&mut self, app: &MergeApp) {
         self.loading_stage = LoadingStage::FetchingWorkItems;
+        self.work_items_total = app.pull_requests().len();
+        self.work_items_fetched = 0;
 
-        // Extract PRs without work items
-        let prs: Vec<_> = app
-            .pull_requests
-            .iter()
-            .map(|pr_wi| pr_wi.pr.clone())
-            .collect();
+        // Use network processor to throttle network operations
+        use crate::utils::throttle::NetworkProcessor;
 
-        // Use the batch method that fetches work items in parallel AND enriches with colors
-        let prs_with_work_items = app
-            .client
-            .fetch_work_items_for_prs_parallel(
-                &prs,
-                app.max_concurrent_network(),
-                app.max_concurrent_processing(),
-            )
-            .await;
+        let network_processor = NetworkProcessor::new_with_limits(
+            app.max_concurrent_network(),
+            app.max_concurrent_processing(),
+        );
+        let mut tasks = Vec::new();
 
-        // Update app pull requests with fetched work items (already enriched with colors)
-        app.pull_requests = prs_with_work_items;
+        for index in 0..app.pull_requests().len() {
+            if let Some(pr_with_wi) = app.pull_requests().get(index) {
+                let client = app.client().clone();
+                let pr_id = pr_with_wi.pr.id;
+                let processor = network_processor.clone();
 
-        Ok(())
+                let task = tokio::spawn(async move {
+                    let result = processor
+                        .execute_network_operation(|| async {
+                            client
+                                .fetch_work_items_with_history_for_pr(pr_id)
+                                .await
+                                .context("Failed to fetch work items")
+                        })
+                        .await;
+
+                    match result {
+                        Ok(work_items) => Ok(WorkItemsResult {
+                            pr_index: index,
+                            work_items,
+                        }),
+                        Err(e) => Err(e),
+                    }
+                });
+
+                tasks.push(task);
+            }
+        }
+
+        self.work_items_tasks = Some(tasks);
     }
 
-    async fn fetch_commit_info(&mut self, app: &mut App) -> Result<()> {
+    async fn check_work_items_progress(&mut self, app: &mut MergeApp) -> Result<bool> {
+        if let Some(ref mut tasks) = self.work_items_tasks {
+            let mut completed = Vec::new();
+            let mut still_running = Vec::new();
+
+            // Check which tasks have completed
+            for task in tasks.drain(..) {
+                if task.is_finished() {
+                    match task.await {
+                        Ok(Ok(result)) => {
+                            completed.push(result);
+                        }
+                        Ok(Err(e)) => {
+                            return Err(e).context("Failed to fetch work items");
+                        }
+                        Err(e) => {
+                            return Err(e).context("Work items task failed");
+                        }
+                    }
+                } else {
+                    still_running.push(task);
+                }
+            }
+
+            // Update completed work items
+            for result in completed {
+                if let Some(pr_with_wi) = app.pull_requests_mut().get_mut(result.pr_index) {
+                    pr_with_wi.work_items = result.work_items;
+                    self.work_items_fetched += 1;
+                }
+            }
+
+            *tasks = still_running;
+
+            // Check if all tasks are completed
+            if tasks.is_empty() {
+                self.work_items_tasks = None;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(true) // No tasks means we're done
+        }
+    }
+
+    async fn fetch_commit_info(&mut self, app: &mut MergeApp) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingCommitInfo;
         self.commit_info_total = app
-            .pull_requests
+            .pull_requests()
             .iter()
             .filter(|pr| pr.pr.last_merge_commit.is_none())
             .count();
         self.commit_info_fetched = 0;
 
-        for pr_with_wi in &mut app.pull_requests {
+        let client = app.client().clone();
+        for pr_with_wi in app.pull_requests_mut() {
             if pr_with_wi.pr.last_merge_commit.is_none() {
-                match app.client.fetch_pr_commit(pr_with_wi.pr.id).await {
+                match client.fetch_pr_commit(pr_with_wi.pr.id).await {
                     Ok(commit_info) => {
                         pr_with_wi.pr.last_merge_commit = Some(commit_info);
                     }
@@ -139,8 +224,16 @@ impl DataLoadingState {
         match self.loading_stage {
             LoadingStage::NotStarted => "Initializing...".to_string(),
             LoadingStage::FetchingPullRequests => "Fetching pull requests...".to_string(),
-            LoadingStage::FetchingWorkItems => {
-                "Fetching work items and enriching with colors...".to_string()
+            LoadingStage::FetchingWorkItems => "Starting work items fetch...".to_string(),
+            LoadingStage::WaitingForWorkItems => {
+                if self.work_items_total > 0 {
+                    format!(
+                        "Fetching work items ({}/{})",
+                        self.work_items_fetched, self.work_items_total
+                    )
+                } else {
+                    "Fetching work items...".to_string()
+                }
             }
             LoadingStage::FetchingCommitInfo => {
                 if self.commit_info_total > 0 {
@@ -157,9 +250,16 @@ impl DataLoadingState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for DataLoadingState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for DataLoadingState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let loading = Paragraph::new(self.get_loading_message())
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).title("Loading"))
@@ -167,11 +267,15 @@ impl AppState for DataLoadingState {
         f.render_widget(loading, f.area());
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         // Start loading on first render
         if !self.loaded && code == KeyCode::Null {
             self.loaded = true;
-            return StateChange::Keep;
+            return TypedStateChange::Keep;
         }
 
         // Process loading stages
@@ -179,43 +283,67 @@ impl AppState for DataLoadingState {
             match self.loading_stage {
                 LoadingStage::NotStarted => {
                     if let Err(e) = self.fetch_pull_requests(app).await {
-                        app.error_message = Some(e.to_string());
-                        return StateChange::Change(Box::new(ErrorState::new()));
+                        app.set_error_message(Some(e.to_string()));
+                        return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                     }
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingPullRequests => {
-                    // Fetch work items in parallel with color enrichment
-                    if let Err(e) = self.fetch_work_items_with_colors(app).await {
-                        app.error_message = Some(e.to_string());
-                        return StateChange::Change(Box::new(ErrorState::new()));
-                    }
-                    return StateChange::Keep;
+                    // Start parallel work items fetching
+                    self.start_work_items_fetching(app);
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingWorkItems => {
-                    // Work items fetched and enriched, move to commit info
-                    if let Err(e) = self.fetch_commit_info(app).await {
-                        app.error_message = Some(e.to_string());
-                        return StateChange::Change(Box::new(ErrorState::new()));
+                    // Transition to waiting for work items
+                    self.loading_stage = LoadingStage::WaitingForWorkItems;
+                    return TypedStateChange::Keep;
+                }
+                LoadingStage::WaitingForWorkItems => {
+                    // Check progress of work items fetching
+                    match self.check_work_items_progress(app).await {
+                        Ok(true) => {
+                            // All work items fetched, move to commit info
+                            if let Err(e) = self.fetch_commit_info(app).await {
+                                app.set_error_message(Some(e.to_string()));
+                                return TypedStateChange::Change(MergeState::Error(
+                                    ErrorState::new(),
+                                ));
+                            }
+                        }
+                        Ok(false) => {
+                            // Still waiting for work items, continue
+                        }
+                        Err(e) => {
+                            app.set_error_message(Some(e.to_string()));
+                            return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
+                        }
                     }
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingCommitInfo => {
                     // Loading is complete, transition to PR selection
-                    return StateChange::Change(Box::new(PullRequestSelectionState::new()));
+                    return TypedStateChange::Change(MergeState::PullRequestSelection(
+                        PullRequestSelectionState::new(),
+                    ));
                 }
                 LoadingStage::Complete => {
                     // Should not reach here, but transition to PR selection just in case
-                    return StateChange::Change(Box::new(PullRequestSelectionState::new()));
+                    return TypedStateChange::Change(MergeState::PullRequestSelection(
+                        PullRequestSelectionState::new(),
+                    ));
                 }
             }
         }
 
         // Allow quitting during loading
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
-            _ => StateChange::Keep,
+            KeyCode::Char('q') => TypedStateChange::Exit,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "DataLoading"
     }
 }
 
@@ -246,8 +374,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(DataLoadingState::new());
-            harness.render_state(state);
+            let mut state = DataLoadingState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("not_started", harness.backend());
         });
@@ -273,7 +401,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingPullRequests;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_prs", harness.backend());
         });
@@ -281,15 +409,16 @@ mod tests {
 
     /// # Data Loading State - Fetching Work Items
     ///
-    /// Tests the loading display when fetching work items.
+    /// Tests the loading display when fetching work items with progress.
     ///
     /// ## Test Scenario
     /// - Creates a data loading state
-    /// - Sets stage to FetchingWorkItems
+    /// - Sets stage to WaitingForWorkItems with progress counters
     /// - Renders the loading display
     ///
     /// ## Expected Outcome
-    /// - Should display "Fetching work items and enriching with colors..." message
+    /// - Should display "Fetching work items (5/10)" progress message
+    /// - Should show current progress out of total
     #[test]
     fn test_data_loading_fetching_work_items() {
         with_settings_and_module_path(module_path!(), || {
@@ -297,8 +426,10 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut state = DataLoadingState::new();
-            state.loading_stage = LoadingStage::FetchingWorkItems;
-            harness.render_state(Box::new(state));
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_fetched = 5;
+            state.work_items_total = 10;
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_work_items", harness.backend());
         });
@@ -326,7 +457,7 @@ mod tests {
             state.loading_stage = LoadingStage::FetchingCommitInfo;
             state.commit_info_fetched = 2;
             state.commit_info_total = 3;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_commit_info", harness.backend());
         });
@@ -351,7 +482,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::Complete;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("complete", harness.backend());
         });
@@ -374,10 +505,10 @@ mod tests {
 
         let mut state = DataLoadingState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Data Loading State - First Null Key Sets Loaded
@@ -399,8 +530,9 @@ mod tests {
         let mut state = DataLoadingState::new();
         assert!(!state.loaded);
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.loaded);
     }
 
@@ -427,8 +559,8 @@ mod tests {
             KeyCode::Enter,
             KeyCode::Char('x'),
         ] {
-            let result = state.process_key(key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -445,8 +577,8 @@ mod tests {
     fn test_data_loading_default() {
         let state = DataLoadingState::default();
         assert!(!state.loaded);
-        assert_eq!(state.commit_info_fetched, 0);
-        assert_eq!(state.commit_info_total, 0);
+        assert_eq!(state.work_items_fetched, 0);
+        assert_eq!(state.work_items_total, 0);
     }
 
     /// # Data Loading State - Starting Work Items
@@ -468,7 +600,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingWorkItems;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("starting_work_items", harness.backend());
         });
@@ -476,14 +608,14 @@ mod tests {
 
     /// # Data Loading State - Work Items No Total
     ///
-    /// Tests work items loading displays the same message.
+    /// Tests work items loading with zero total (fallback message).
     ///
     /// ## Test Scenario
     /// - Creates a data loading state
-    /// - Sets stage to FetchingWorkItems
+    /// - Sets stage to WaitingForWorkItems with 0 total
     ///
     /// ## Expected Outcome
-    /// - Should display "Fetching work items and enriching with colors..." message
+    /// - Should display fallback "Fetching work items..." message
     #[test]
     fn test_data_loading_work_items_no_total() {
         with_settings_and_module_path(module_path!(), || {
@@ -491,8 +623,9 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut state = DataLoadingState::new();
-            state.loading_stage = LoadingStage::FetchingWorkItems;
-            harness.render_state(Box::new(state));
+            state.loading_stage = LoadingStage::WaitingForWorkItems;
+            state.work_items_total = 0;
+            harness.render_state(&mut state);
 
             assert_snapshot!("work_items_no_total", harness.backend());
         });
@@ -517,7 +650,7 @@ mod tests {
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingCommitInfo;
             state.commit_info_total = 0;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("commit_info_no_total", harness.backend());
         });
@@ -543,8 +676,9 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::Complete;
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Data Loading State - FetchingCommitInfo Stage Key Processing
@@ -567,7 +701,8 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::FetchingCommitInfo;
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 }

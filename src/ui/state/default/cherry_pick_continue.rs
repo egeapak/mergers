@@ -1,8 +1,10 @@
+use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
-    ui::App,
-    ui::state::{AppState, CherryPickState, ConflictResolutionState, StateChange},
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::{CherryPickState, ConflictResolutionState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -121,9 +123,16 @@ impl CherryPickContinueState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for CherryPickContinueState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CherryPickContinueState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let is_complete = *self.is_complete.lock().unwrap();
         let success = *self.success.lock().unwrap();
 
@@ -193,8 +202,8 @@ impl AppState for CherryPickContinueState {
         // Right pane: Commit and PR details
         let mut details_text = vec![];
 
-        if app.current_cherry_pick_index < app.cherry_pick_items.len() {
-            let current_item = &app.cherry_pick_items[app.current_cherry_pick_index];
+        if app.current_cherry_pick_index() < app.cherry_pick_items().len() {
+            let current_item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
 
             // Shortened commit hash
             let short_hash = if current_item.commit_id.len() >= 8 {
@@ -290,12 +299,16 @@ impl AppState for CherryPickContinueState {
         f.render_widget(instructions_widget, main_chunks[2]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         let is_complete = *self.is_complete.lock().unwrap();
 
         // Don't process keys until the command is complete
         if !is_complete {
-            return StateChange::Keep;
+            return TypedStateChange::Keep;
         }
 
         let success = *self.success.lock().unwrap();
@@ -303,48 +316,61 @@ impl AppState for CherryPickContinueState {
         match success {
             Some(true) => {
                 // Success - mark as successful and continue to next commit
-                app.cherry_pick_items[app.current_cherry_pick_index].status =
-                    CherryPickStatus::Success;
-                app.current_cherry_pick_index += 1;
-                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                let current_index = app.current_cherry_pick_index();
+                app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Success;
+                app.set_current_cherry_pick_index(current_index + 1);
+                TypedStateChange::Change(MergeState::CherryPick(
+                    CherryPickState::continue_after_conflict(),
+                ))
             }
             Some(false) => {
                 // Failed - allow retry, skip, or abort
                 match code {
                     KeyCode::Char('r') => {
                         // Retry - go back to conflict resolution
-                        StateChange::Change(Box::new(ConflictResolutionState::new(
-                            self.conflicted_files.clone(),
-                        )))
+                        TypedStateChange::Change(MergeState::ConflictResolution(
+                            ConflictResolutionState::new(self.conflicted_files.clone()),
+                        ))
                     }
                     KeyCode::Char('s') => {
                         // Skip - mark as skipped and continue to next commit
-                        app.cherry_pick_items[app.current_cherry_pick_index].status =
+                        let current_index = app.current_cherry_pick_index();
+                        app.cherry_pick_items_mut()[current_index].status =
                             CherryPickStatus::Skipped;
-                        app.current_cherry_pick_index += 1;
-                        StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                        app.set_current_cherry_pick_index(current_index + 1);
+                        TypedStateChange::Change(MergeState::CherryPick(
+                            CherryPickState::continue_after_conflict(),
+                        ))
                     }
                     KeyCode::Char('a') => {
                         // Abort entire process with cleanup
-                        let repo_path = app.repo_path.as_ref().unwrap();
-                        let version = app.version.as_ref().unwrap();
+                        let repo_path_opt = app.repo_path();
+                        let repo_path = repo_path_opt.as_ref().unwrap();
+                        let version_opt = app.version();
+                        let version = version_opt.as_ref().unwrap();
                         let target_branch = app.target_branch().to_string();
                         let _ = git::cleanup_cherry_pick(
-                            app.base_repo_path.as_deref(),
+                            None, // base_repo_path is no longer stored in App
                             repo_path,
                             version,
                             &target_branch,
                         );
-                        StateChange::Change(Box::new(super::CompletionState::new()))
+                        TypedStateChange::Change(MergeState::Completion(
+                            super::CompletionState::new(),
+                        ))
                     }
-                    _ => StateChange::Keep,
+                    _ => TypedStateChange::Keep,
                 }
             }
             None => {
                 // Should not happen, but handle it
-                StateChange::Keep
+                TypedStateChange::Keep
             }
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "CherryPickContinue"
     }
 }
 
@@ -402,17 +428,19 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Set up cherry-pick items
-            harness.app.cherry_pick_items = vec![CherryPickItem {
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
                 commit_id: "abc123def456".to_string(),
                 pr_id: 100,
                 pr_title: "Fix authentication vulnerability".to_string(),
                 status: CherryPickStatus::Conflict,
             }];
-            harness.app.current_cherry_pick_index = 0;
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            harness.app.set_current_cherry_pick_index(0);
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
             // Set up PR data for details display
-            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
                 pr: crate::models::PullRequest {
                     id: 100,
                     title: "Fix authentication vulnerability".to_string(),
@@ -440,15 +468,15 @@ mod tests {
                 "Running clippy...".to_string(),
             ];
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 false, // Not complete
                 None,
                 None,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("processing", harness.backend());
         });
     }
@@ -473,17 +501,19 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Set up cherry-pick items
-            harness.app.cherry_pick_items = vec![CherryPickItem {
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
                 commit_id: "abc123def456".to_string(),
                 pr_id: 200,
                 pr_title: "Add new feature for user management".to_string(),
                 status: CherryPickStatus::Conflict,
             }];
-            harness.app.current_cherry_pick_index = 0;
-            harness.app.repo_path = Some(PathBuf::from("/home/user/project"));
+            harness.app.set_current_cherry_pick_index(0);
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/home/user/project")));
 
             // Set up PR data
-            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
                 pr: crate::models::PullRequest {
                     id: 200,
                     title: "Add new feature for user management".to_string(),
@@ -511,15 +541,15 @@ mod tests {
                 " 1 file changed, 45 insertions(+), 12 deletions(-)".to_string(),
             ];
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 true,       // Complete
                 Some(true), // Success
                 None,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("success", harness.backend());
         });
     }
@@ -544,17 +574,19 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Set up cherry-pick items
-            harness.app.cherry_pick_items = vec![CherryPickItem {
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
                 commit_id: "def456ghi789".to_string(),
                 pr_id: 300,
                 pr_title: "Update database schema for performance".to_string(),
                 status: CherryPickStatus::Conflict,
             }];
-            harness.app.current_cherry_pick_index = 0;
-            harness.app.repo_path = Some(PathBuf::from("/opt/project"));
+            harness.app.set_current_cherry_pick_index(0);
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/opt/project")));
 
             // Set up PR data
-            harness.app.pull_requests = vec![PullRequestWithWorkItems {
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
                 pr: crate::models::PullRequest {
                     id: 300,
                     title: "Update database schema for performance".to_string(),
@@ -593,15 +625,15 @@ mod tests {
 
             let error_message = Some(output.join("\n"));
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 true,        // Complete
                 Some(false), // Failed
                 error_message,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("failure", harness.backend());
         });
     }
@@ -800,8 +832,10 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-        harness.app.cherry_pick_items = vec![
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+        *harness.app.cherry_pick_items_mut() = vec![
             CherryPickItem {
                 commit_id: "abc123".to_string(),
                 pr_id: 100,
@@ -815,7 +849,7 @@ mod tests {
                 status: CherryPickStatus::Pending,
             },
         ];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let error_message = Some("Pre-commit hook failed".to_string());
@@ -829,21 +863,21 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Should mark the commit as Skipped
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Skipped
         ));
 
         // Should increment index
-        assert_eq!(harness.app.current_cherry_pick_index, 1);
+        assert_eq!(harness.app.current_cherry_pick_index(), 1);
     }
 
     /// # Cherry Pick Continue - Abort After Failure
@@ -864,16 +898,17 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/nonexistent/path"));
-        harness.app.version = Some("v1.0.0".to_string());
-        harness.app.base_repo_path = None;
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/nonexistent/path")));
+        harness.app.set_version(Some("v1.0.0".to_string()));
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
         let error_message = Some("Pre-commit hook failed".to_string());
@@ -887,12 +922,12 @@ mod tests {
         );
 
         // Press 'a' to abort
-        let result = state
-            .process_key(KeyCode::Char('a'), &mut harness.app)
-            .await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CompletionState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Cherry Pick Continue - Skip Does Not Trigger When Successful
@@ -913,14 +948,16 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
 
@@ -933,16 +970,16 @@ mod tests {
         );
 
         // Press 's' (any key continues on success)
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Should mark as Success, NOT Skipped
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Success
         ));
     }
@@ -965,8 +1002,10 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-        harness.app.cherry_pick_items = vec![
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+        *harness.app.cherry_pick_items_mut() = vec![
             CherryPickItem {
                 commit_id: "abc123".to_string(),
                 pr_id: 100,
@@ -986,7 +1025,7 @@ mod tests {
                 status: CherryPickStatus::Pending,
             },
         ];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
 
@@ -999,30 +1038,30 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // First commit should be Skipped
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Skipped
         ));
 
         // Second and third commits should still be Pending
         assert!(matches!(
-            harness.app.cherry_pick_items[1].status,
+            harness.app.cherry_pick_items()[1].status,
             CherryPickStatus::Pending
         ));
         assert!(matches!(
-            harness.app.cherry_pick_items[2].status,
+            harness.app.cherry_pick_items()[2].status,
             CherryPickStatus::Pending
         ));
 
         // Index should be at second commit
-        assert_eq!(harness.app.current_cherry_pick_index, 1);
+        assert_eq!(harness.app.current_cherry_pick_index(), 1);
     }
 
     /// # Cherry Pick Continue - Retry Keeps Same Index
@@ -1043,14 +1082,16 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
-        harness.app.cherry_pick_items = vec![CherryPickItem {
+        harness
+            .app
+            .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+        *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
             commit_id: "abc123".to_string(),
             pr_id: 100,
             pr_title: "Test PR".to_string(),
             status: CherryPickStatus::Conflict,
         }];
-        harness.app.current_cherry_pick_index = 0;
+        harness.app.set_current_cherry_pick_index(0);
 
         let conflicted_files = vec!["test.rs".to_string()];
 
@@ -1063,19 +1104,19 @@ mod tests {
         );
 
         // Press 'r' to retry
-        let result = state
-            .process_key(KeyCode::Char('r'), &mut harness.app)
-            .await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
+                .await;
 
         // Should transition to ConflictResolutionState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Index should still be 0
-        assert_eq!(harness.app.current_cherry_pick_index, 0);
+        assert_eq!(harness.app.current_cherry_pick_index(), 0);
 
         // Status should still be Conflict (not changed)
         assert!(matches!(
-            harness.app.cherry_pick_items[0].status,
+            harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Conflict
         ));
     }

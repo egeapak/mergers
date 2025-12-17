@@ -1,7 +1,8 @@
 use crate::{
     models::CherryPickStatus,
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::MergeApp,
+    ui::state::default::MergeState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -32,7 +33,7 @@ impl CompletionState {
         state
     }
 
-    fn next(&mut self, app: &App) {
+    fn next(&mut self, app: &MergeApp) {
         if app.cherry_pick_items.is_empty() {
             return;
         }
@@ -49,7 +50,7 @@ impl CompletionState {
         self.list_state.select(Some(i));
     }
 
-    fn previous(&mut self, app: &App) {
+    fn previous(&mut self, app: &MergeApp) {
         if app.cherry_pick_items.is_empty() {
             return;
         }
@@ -68,8 +69,11 @@ impl CompletionState {
 }
 
 #[async_trait]
-impl AppState for CompletionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CompletionState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -259,7 +263,7 @@ impl AppState for CompletionState {
             Span::styled(branch_name, Style::default().fg(Color::Cyan)),
         ]));
 
-        if let Some(repo_path) = &app.repo_path {
+        if let Some(repo_path) = app.repo_path() {
             summary_text.push(Line::from(vec![
                 Span::raw("Location: "),
                 Span::styled(
@@ -299,16 +303,20 @@ impl AppState for CompletionState {
         f.render_widget(summary, content_chunks[1]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Up => {
                 self.previous(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('p') => {
                 if let Some(i) = self.list_state.selected()
@@ -316,7 +324,7 @@ impl AppState for CompletionState {
                 {
                     app.open_pr_in_browser(item.pr_id);
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
@@ -329,13 +337,17 @@ impl AppState for CompletionState {
                         app.open_work_items_in_browser(&pr.work_items);
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            KeyCode::Char('t') => {
-                StateChange::Change(Box::new(crate::ui::state::PostCompletionState::new()))
-            }
-            _ => StateChange::Keep,
+            KeyCode::Char('t') => TypedStateChange::Change(MergeState::PostCompletion(
+                crate::ui::state::PostCompletionState::new(),
+            )),
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "Completion"
     }
 }
 
@@ -375,12 +387,14 @@ mod tests {
             for item in &mut items {
                 item.status = CherryPickStatus::Success;
             }
-            harness.app.cherry_pick_items = items;
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = items;
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("success", harness.backend());
         });
@@ -404,12 +418,14 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.cherry_pick_items = create_test_cherry_pick_items();
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_conflicts", harness.backend());
         });
@@ -430,14 +446,15 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.list_state.selected(), Some(1));
     }
 
@@ -456,18 +473,19 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         // Should wrap to last item
         assert_eq!(
             state.list_state.selected(),
-            Some(harness.app.cherry_pick_items.len() - 1)
+            Some(harness.app.cherry_pick_items().len() - 1)
         );
     }
 
@@ -485,15 +503,15 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Completion State - Tag PRs Key
@@ -510,15 +528,15 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('t'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Completion State - Open PR Key
@@ -535,15 +553,15 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('p'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - Open Work Items Key
@@ -562,16 +580,16 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.pull_requests = create_test_pull_requests();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('w'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - Other Keys Ignored
@@ -588,14 +606,14 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
-            let result = state.process_key(key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -630,16 +648,18 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         // Leave cherry_pick_items empty
-        harness.app.version = Some("v1.0.0".to_string());
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
 
         // Should not panic
-        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
 
-        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - With Skipped Items
@@ -664,12 +684,14 @@ mod tests {
             items[1].status = CherryPickStatus::Skipped;
             items[2].status = CherryPickStatus::Success;
             items[3].status = CherryPickStatus::Skipped;
-            harness.app.cherry_pick_items = items;
-            harness.app.version = Some("v1.0.0".to_string());
-            harness.app.repo_path = Some(PathBuf::from("/path/to/repo"));
+            *harness.app.cherry_pick_items_mut() = items;
+            harness.app.set_version(Some("v1.0.0".to_string()));
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_skipped", harness.backend());
         });
@@ -691,21 +713,21 @@ mod tests {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
-        harness.app.cherry_pick_items = create_test_cherry_pick_items();
-        harness.app.version = Some("v1.0.0".to_string());
+        *harness.app.cherry_pick_items_mut() = create_test_cherry_pick_items();
+        harness.app.set_version(Some("v1.0.0".to_string()));
 
         let mut state = CompletionState::new();
-        let item_count = harness.app.cherry_pick_items.len();
+        let item_count = harness.app.cherry_pick_items().len();
 
         // Navigate to end
         for _ in 0..item_count {
-            state.process_key(KeyCode::Down, &mut harness.app).await;
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         }
         // Should wrap to 0
         assert_eq!(state.list_state.selected(), Some(0));
 
         // Navigate up from 0
-        state.process_key(KeyCode::Up, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         // Should wrap to last item
         assert_eq!(state.list_state.selected(), Some(item_count - 1));
     }

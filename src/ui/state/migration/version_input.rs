@@ -1,7 +1,7 @@
-use super::MigrationResultsState;
+use super::{MigrationModeState, MigrationResultsState};
 use crate::{
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::MigrationApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -31,9 +31,16 @@ impl MigrationVersionInputState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for MigrationVersionInputState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for MigrationVersionInputState {
+    type App = MigrationApp;
+    type StateEnum = MigrationModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -70,7 +77,7 @@ impl AppState for MigrationVersionInputState {
         f.render_widget(input_block, chunks[2]);
 
         // Summary info
-        let (eligible_count, not_marked_prs) = if let Some(analysis) = &app.migration_analysis {
+        let (eligible_count, not_marked_prs) = if let Some(analysis) = &app.migration_analysis() {
             let eligible_count = analysis.eligible_prs.len();
             let mut not_marked = Vec::new();
 
@@ -180,34 +187,44 @@ impl AppState for MigrationVersionInputState {
         f.render_widget(help, chunks[6]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MigrationApp,
+    ) -> TypedStateChange<MigrationModeState> {
         match code {
             KeyCode::Char(c) => {
                 self.input.push(c);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Enter => {
                 if !self.input.trim().is_empty() {
-                    app.version = Some(self.input.trim().to_string());
+                    app.set_version(Some(self.input.trim().to_string()));
                     // Transition to tagging state
-                    StateChange::Change(Box::new(super::MigrationTaggingState::new(
-                        self.input.trim().to_string(),
-                        app.tag_prefix().to_string(),
-                    )))
+                    TypedStateChange::Change(MigrationModeState::Tagging(
+                        super::MigrationTaggingState::new(
+                            self.input.trim().to_string(),
+                            app.tag_prefix().to_string(),
+                        ),
+                    ))
                 } else {
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 }
             }
             KeyCode::Esc => {
                 // Go back to results to continue reviewing PRs
-                StateChange::Change(Box::new(MigrationResultsState::new()))
+                TypedStateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "MigrationVersionInput"
     }
 }
 
@@ -238,8 +255,8 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(MigrationVersionInputState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::VersionInput(MigrationVersionInputState::new());
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("empty", harness.backend());
         });
@@ -264,7 +281,8 @@ mod tests {
 
             let mut state = MigrationVersionInputState::new();
             state.input = "v2.0.0".to_string();
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::VersionInput(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("with_version", harness.backend());
         });
@@ -312,11 +330,12 @@ mod tests {
             // Keep PR 102 in not_merged_prs (has manual override to eligible)
             // This simulates a state where user has made manual changes
 
-            harness.app.migration_analysis = Some(analysis);
+            harness.app.set_migration_analysis(Some(analysis));
 
             let mut state = MigrationVersionInputState::new();
             state.input = "v2.0.0".to_string();
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::VersionInput(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("with_manual_overrides", harness.backend());
         });

@@ -5,9 +5,9 @@ expression: harness.backend()
 " ✅ Eligible (2) │ ❓ Unsure (0) │ ❌ Not Merged (1)                            " Hidden by multi-width symbols: [(2, " "), (20, " "), (36, " ")]
 "                                                                                "
 "                                                                                "
-"┌Not Merged PRs - Not ready for migration (1)──────────────────────────────────┐"
-"│      PR #     Date         Title           Author          Work Items        │"
-"│→     102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved), │"
+"┌Not Merged PRs - Not ready for migration──────────────────────────────────────┐"
+"│#102 Add analytics tracking → Eligible                                        │"
+"│  By: Carol Martinez | Work Items: 2                                          │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

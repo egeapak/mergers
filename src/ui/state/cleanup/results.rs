@@ -1,7 +1,8 @@
+use super::CleanupModeState;
 use crate::{
     models::CleanupStatus,
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::CleanupApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -53,21 +54,27 @@ impl CleanupResultsState {
         };
     }
 
-    fn get_success_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
-        app.cleanup_branches
+    fn get_success_branches<'a>(
+        &self,
+        app: &'a CleanupApp,
+    ) -> Vec<&'a crate::models::CleanupBranch> {
+        app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Success))
             .collect()
     }
 
-    fn get_failed_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
-        app.cleanup_branches
+    fn get_failed_branches<'a>(
+        &self,
+        app: &'a CleanupApp,
+    ) -> Vec<&'a crate::models::CleanupBranch> {
+        app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Failed(_)))
             .collect()
     }
 
-    fn next(&mut self, app: &App) {
+    fn next(&mut self, app: &CleanupApp) {
         let count = match self.current_tab {
             ResultTab::Success => self.get_success_branches(app).len(),
             ResultTab::Failed => self.get_failed_branches(app).len(),
@@ -95,7 +102,7 @@ impl CleanupResultsState {
         list_state.select(Some(i));
     }
 
-    fn previous(&mut self, app: &App) {
+    fn previous(&mut self, app: &CleanupApp) {
         let count = match self.current_tab {
             ResultTab::Success => self.get_success_branches(app).len(),
             ResultTab::Failed => self.get_failed_branches(app).len(),
@@ -124,9 +131,16 @@ impl CleanupResultsState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupResultsState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CleanupResultsState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -260,23 +274,31 @@ impl AppState for CleanupResultsState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Tab => {
                 self.switch_tab();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Up => {
                 self.previous(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupResults"
     }
 }
 
@@ -309,7 +331,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with success status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -336,8 +358,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupResultsState::new());
-            harness.render_state(state);
+            let state = CleanupResultsState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("success_tab", harness.backend());
         });
     }
@@ -366,7 +388,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with failed status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -388,7 +410,7 @@ mod tests {
             let mut state = CleanupResultsState::new();
             state.current_tab = ResultTab::Failed;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("failed_tab", harness.backend());
         });
     }
@@ -415,7 +437,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with mixed statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -442,8 +464,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupResultsState::new());
-            harness.render_state(state);
+            let state = CleanupResultsState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("mixed_results", harness.backend());
         });
     }
@@ -470,7 +492,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with only success status
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -492,7 +514,7 @@ mod tests {
             let mut state = CleanupResultsState::new();
             state.current_tab = ResultTab::Failed;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("no_failures", harness.backend());
         });
     }

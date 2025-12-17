@@ -1,11 +1,13 @@
 // Allow deprecated RepositorySetupError usage until full migration to GitError
 #![allow(deprecated)]
 
+use super::MergeState;
 use crate::{
     git,
     models::CherryPickItem,
-    ui::App,
-    ui::state::{AppState, CherryPickState, ErrorState, StateChange},
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::{CherryPickState, ErrorState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -77,95 +79,121 @@ impl SetupRepoState {
         };
     }
 
-    async fn setup_repository(&mut self, app: &mut App) -> StateChange {
+    async fn setup_repository(&mut self, app: &mut MergeApp) -> TypedStateChange<MergeState> {
         // Get SSH URL if needed
         let ssh_url = if app.local_repo().is_none() {
             self.set_status("Fetching repository details...".to_string());
-            match app.client.fetch_repo_details().await {
+            match app.client().fetch_repo_details().await {
                 Ok(details) => details.ssh_url,
                 Err(e) => {
-                    app.error_message = Some(format!("Failed to fetch repository details: {}", e));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    app.set_error_message(Some(format!(
+                        "Failed to fetch repository details: {}",
+                        e
+                    )));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
         } else {
             String::new()
         };
 
-        let version = app.version.as_ref().unwrap();
-
-        self.set_status(if app.local_repo().is_some() {
+        // Get status message before any setup operations
+        let status_msg = if app.local_repo().is_some() {
             "Creating worktree...".to_string()
         } else {
             "Cloning repository...".to_string()
-        });
+        };
+        self.set_status(status_msg);
 
-        // Setup repository
-        match git::setup_repository(app.local_repo(), &ssh_url, app.target_branch(), version) {
+        // Extract ALL immutable data before any mutations
+        let version: String;
+        let target_branch: String;
+        let local_repo_path: Option<std::path::PathBuf>;
+        let setup_result: Result<git::RepositorySetup, git::RepositorySetupError>;
+        let cherry_pick_items_data: Vec<(String, i32, String)>; // (commit_id, pr_id, pr_title)
+
+        {
+            version = app.version().as_ref().unwrap().to_string();
+            target_branch = app.target_branch().to_string();
+            local_repo_path = app.local_repo().map(std::path::PathBuf::from);
+            let local_repo = app.local_repo();
+            setup_result = git::setup_repository(local_repo, &ssh_url, &target_branch, &version);
+
+            // Extract cherry-pick data
+            let selected_prs = app.get_selected_prs();
+            cherry_pick_items_data = selected_prs
+                .iter()
+                .filter_map(|pr| {
+                    pr.pr
+                        .last_merge_commit
+                        .as_ref()
+                        .map(|commit| (commit.commit_id.clone(), pr.pr.id, pr.pr.title.clone()))
+                })
+                .collect();
+        }
+
+        // Now handle the result with mutable access to app
+        match setup_result {
             Ok(setup) => {
                 match setup {
                     git::RepositorySetup::Local(path) => {
                         // Store the base repo path for cleanup (worktree case)
-                        if let Some(local_repo) = app.local_repo() {
-                            app.base_repo_path = Some(std::path::PathBuf::from(local_repo));
+                        if let Some(local_repo) = local_repo_path {
+                            app.worktree.base_repo_path = Some(local_repo);
                         }
-                        app.repo_path = Some(path);
+                        app.set_repo_path(Some(path));
                     }
                     git::RepositorySetup::Clone(path, temp_dir) => {
-                        app.repo_path = Some(path);
-                        app._temp_dir = Some(temp_dir);
+                        app.set_repo_path(Some(path));
+                        app.worktree.set_temp_dir(Some(temp_dir));
                         // base_repo_path stays None for cloned repos
                     }
                 }
 
                 // Prepare cherry-pick items
-                let selected_prs = app.get_selected_prs();
-                let mut cherry_pick_items = Vec::new();
-
-                for pr in selected_prs {
-                    if let Some(commit) = &pr.pr.last_merge_commit {
-                        cherry_pick_items.push(CherryPickItem {
-                            commit_id: commit.commit_id.clone(),
-                            pr_id: pr.pr.id,
-                            pr_title: pr.pr.title.clone(),
-                            status: crate::models::CherryPickStatus::Pending,
-                        });
-                    }
-                }
+                let cherry_pick_items: Vec<CherryPickItem> = cherry_pick_items_data
+                    .into_iter()
+                    .map(|(commit_id, pr_id, pr_title)| CherryPickItem {
+                        commit_id,
+                        pr_id,
+                        pr_title,
+                        status: crate::models::CherryPickStatus::Pending,
+                    })
+                    .collect();
 
                 if cherry_pick_items.is_empty() {
-                    app.error_message = Some("No commits found to cherry-pick".to_string());
-                    StateChange::Change(Box::new(ErrorState::new()))
+                    app.set_error_message(Some("No commits found to cherry-pick".to_string()));
+                    TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                 } else {
-                    app.cherry_pick_items = cherry_pick_items;
+                    *app.cherry_pick_items_mut() = cherry_pick_items;
 
                     // Create branch for cherry-picking
                     self.set_status("Creating branch...".to_string());
-                    let branch_name = format!("patch/{}-{}", app.target_branch(), version);
+                    let branch_name = format!("patch/{}-{}", target_branch, version);
 
                     if let Err(e) =
-                        git::create_branch(app.repo_path.as_ref().unwrap(), &branch_name)
+                        git::create_branch(app.repo_path().as_ref().unwrap(), &branch_name)
                     {
-                        app.error_message = Some(format!("Failed to create branch: {}", e));
-                        StateChange::Change(Box::new(ErrorState::new()))
+                        app.set_error_message(Some(format!("Failed to create branch: {}", e)));
+                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                     } else {
-                        StateChange::Change(Box::new(CherryPickState::new()))
+                        TypedStateChange::Change(MergeState::CherryPick(CherryPickState::new()))
                     }
                 }
             }
             Err(e) => {
                 self.set_error(e);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
         }
     }
 
     async fn force_resolve_error(
         &mut self,
-        app: &mut App,
+        app: &mut MergeApp,
         error: git::RepositorySetupError,
-    ) -> StateChange {
-        let version = app.version.as_ref().unwrap();
+    ) -> TypedStateChange<MergeState> {
+        let version = app.version().unwrap();
 
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
@@ -174,8 +202,8 @@ impl SetupRepoState {
                     && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                 {
-                    app.error_message = Some(format!("Failed to force delete branch: {}", e));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    app.set_error_message(Some(format!("Failed to force delete branch: {}", e)));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
@@ -184,8 +212,8 @@ impl SetupRepoState {
                     && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {
-                    app.error_message = Some(format!("Failed to force remove worktree: {}", e));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    app.set_error_message(Some(format!("Failed to force remove worktree: {}", e)));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::Other(_) => {
@@ -198,9 +226,16 @@ impl SetupRepoState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for SetupRepoState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for SetupRepoState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -262,7 +297,11 @@ impl AppState for SetupRepoState {
         }
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match &self.state {
             SetupState::Error { error, .. } => {
                 match code {
@@ -279,9 +318,9 @@ impl AppState for SetupRepoState {
                     }
                     KeyCode::Esc => {
                         // Go back to previous state or exit
-                        StateChange::Change(Box::new(ErrorState::new()))
+                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                     }
-                    _ => StateChange::Keep,
+                    _ => TypedStateChange::Keep,
                 }
             }
             _ => {
@@ -289,10 +328,14 @@ impl AppState for SetupRepoState {
                     self.started = true;
                     self.setup_repository(app).await
                 } else {
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 }
             }
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "SetupRepo"
     }
 }
 
@@ -323,8 +366,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(SetupRepoState::new());
-            harness.render_state(state);
+            let mut state = MergeState::SetupRepo(SetupRepoState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("initializing", harness.backend());
         });
@@ -348,9 +391,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.state = SetupState::InProgress("Cloning repository...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.state = SetupState::InProgress("Cloning repository...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("cloning", harness.backend());
         });
@@ -373,9 +417,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.state = SetupState::InProgress("Creating worktree...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.state = SetupState::InProgress("Creating worktree...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("creating_worktree", harness.backend());
         });
@@ -401,11 +446,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::BranchExists(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::BranchExists(
                 "patch/main-v1.0.0".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("branch_exists_error", harness.backend());
         });
@@ -429,11 +475,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::WorktreeExists(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::WorktreeExists(
                 "/path/to/repo/.worktrees/v1.0.0".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("worktree_exists_error", harness.backend());
         });
@@ -457,11 +504,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::Other(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::Other(
                 "Failed to fetch repository details from Azure DevOps".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("other_error", harness.backend());
         });
@@ -492,7 +540,7 @@ mod tests {
     /// - Processes Escape key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Change (to ErrorState)
+    /// - Should return TypedStateChange::Change (to ErrorState)
     #[tokio::test]
     async fn test_setup_repo_escape_in_error() {
         let config = create_test_config_default();
@@ -501,8 +549,9 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
-        let result = state.process_key(KeyCode::Esc, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Setup Repo State - Other Keys in Error State
@@ -514,7 +563,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep
+    /// - Should return TypedStateChange::Keep
     #[tokio::test]
     async fn test_setup_repo_other_keys_in_error() {
         let config = create_test_config_default();
@@ -524,8 +573,8 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
-            let result = state.process_key(key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -539,7 +588,7 @@ mod tests {
     /// - Processes a key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep (already started)
+    /// - Should return TypedStateChange::Keep (already started)
     #[tokio::test]
     async fn test_setup_repo_key_when_started() {
         let config = create_test_config_default();
@@ -548,8 +597,9 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.started = true;
 
-        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Setup Repo State - Creating Branch Status
@@ -569,9 +619,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_status("Creating branch...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_status("Creating branch...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("creating_branch", harness.backend());
         });
@@ -594,9 +645,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_status("Fetching repository details...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_status("Fetching repository details...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("fetching_details", harness.backend());
         });

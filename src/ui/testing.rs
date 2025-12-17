@@ -6,7 +6,10 @@ use crate::{
         PullRequestWithWorkItems, SharedConfig, WorkItem, WorkItemFields,
     },
     parsed_property::ParsedProperty,
-    ui::{App, state::AppState},
+    ui::{
+        App,
+        state::{CleanupModeState, MergeState, MigrationModeState},
+    },
 };
 use ratatui::{Terminal, backend::TestBackend};
 use std::{path::PathBuf, sync::Arc};
@@ -15,10 +18,25 @@ use std::{path::PathBuf, sync::Arc};
 pub const TEST_TERMINAL_WIDTH: u16 = 80;
 pub const TEST_TERMINAL_HEIGHT: u16 = 30;
 
+/// Typed initial state for the test harness.
+///
+/// This enum allows the harness to store a typed initial state
+/// for any mode while maintaining compile-time type safety.
+pub enum TypedInitialState {
+    /// Merge mode state
+    Merge(MergeState),
+    /// Migration mode state
+    Migration(MigrationModeState),
+    /// Cleanup mode state
+    Cleanup(CleanupModeState),
+}
+
 /// Test harness for TUI components with fixed terminal size
 pub struct TuiTestHarness {
     pub terminal: Terminal<TestBackend>,
     pub app: App,
+    /// Typed initial state for the state machine (used by run_with_events)
+    typed_initial_state: Option<TypedInitialState>,
 }
 
 impl Default for TuiTestHarness {
@@ -42,7 +60,11 @@ impl TuiTestHarness {
             Box::new(crate::ui::browser::MockBrowserOpener::new()),
         );
 
-        Self { terminal, app }
+        Self {
+            terminal,
+            app,
+            typed_initial_state: None,
+        }
     }
 
     /// Create a test harness with a specific configuration
@@ -58,18 +80,72 @@ impl TuiTestHarness {
             Box::new(crate::ui::browser::MockBrowserOpener::new()),
         );
 
-        Self { terminal, app }
+        Self {
+            terminal,
+            app,
+            typed_initial_state: None,
+        }
     }
 
     /// Set an error message on the app (for error state testing)
     pub fn with_error_message(mut self, message: impl Into<String>) -> Self {
-        self.app.error_message = Some(message.into());
+        self.app.set_error_message(Some(message.into()));
         self
     }
 
-    /// Render a state to the terminal
-    pub fn render_state(&mut self, mut state: Box<dyn AppState>) {
-        self.terminal.draw(|f| state.ui(f, &self.app)).unwrap();
+    /// Render a typed state to the terminal (for snapshot testing)
+    pub fn render_state<S>(&mut self, state: &mut S)
+    where
+        S: crate::ui::state::typed::TypedAppState<
+                App = crate::ui::apps::MergeApp,
+                StateEnum = MergeState,
+            > + ?Sized,
+    {
+        match &mut self.app {
+            App::Merge(app) => {
+                self.terminal.draw(|f| state.ui(f, app)).unwrap();
+            }
+            _ => panic!("render_state called but app is not in Merge mode"),
+        }
+    }
+
+    /// Render a typed merge state to the terminal
+    pub fn render_merge_state(&mut self, state: &mut crate::ui::state::MergeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Merge(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_merge_state called but app is not in Merge mode"),
+        }
+    }
+
+    /// Render a typed migration state to the terminal
+    pub fn render_migration_state(&mut self, state: &mut crate::ui::state::MigrationModeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Migration(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_migration_state called but app is not in Migration mode"),
+        }
+    }
+
+    /// Render a typed cleanup state to the terminal
+    pub fn render_cleanup_state(&mut self, state: &mut crate::ui::state::CleanupModeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Cleanup(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_cleanup_state called but app is not in Cleanup mode"),
+        }
     }
 
     /// Get the terminal backend for snapshot testing
@@ -77,15 +153,84 @@ impl TuiTestHarness {
         self.terminal.backend()
     }
 
-    /// Set the initial state for the app
-    pub fn with_initial_state(mut self, state: Box<dyn AppState>) -> Self {
-        self.app.initial_state = Some(state);
+    /// Get a reference to the inner MergeApp (panics if not in Merge mode)
+    pub fn merge_app(&self) -> &crate::ui::apps::MergeApp {
+        match &self.app {
+            App::Merge(app) => app,
+            _ => panic!("TuiTestHarness::merge_app called but app is not in Merge mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner MergeApp (panics if not in Merge mode)
+    pub fn merge_app_mut(&mut self) -> &mut crate::ui::apps::MergeApp {
+        match &mut self.app {
+            App::Merge(app) => app,
+            _ => panic!("TuiTestHarness::merge_app_mut called but app is not in Merge mode"),
+        }
+    }
+
+    /// Get a reference to the inner MigrationApp (panics if not in Migration mode)
+    pub fn migration_app(&self) -> &crate::ui::apps::MigrationApp {
+        match &self.app {
+            App::Migration(app) => app,
+            _ => panic!("TuiTestHarness::migration_app called but app is not in Migration mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner MigrationApp (panics if not in Migration mode)
+    pub fn migration_app_mut(&mut self) -> &mut crate::ui::apps::MigrationApp {
+        match &mut self.app {
+            App::Migration(app) => app,
+            _ => {
+                panic!("TuiTestHarness::migration_app_mut called but app is not in Migration mode")
+            }
+        }
+    }
+
+    /// Get a reference to the inner CleanupApp (panics if not in Cleanup mode)
+    pub fn cleanup_app(&self) -> &crate::ui::apps::CleanupApp {
+        match &self.app {
+            App::Cleanup(app) => app,
+            _ => panic!("TuiTestHarness::cleanup_app called but app is not in Cleanup mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner CleanupApp (panics if not in Cleanup mode)
+    pub fn cleanup_app_mut(&mut self) -> &mut crate::ui::apps::CleanupApp {
+        match &mut self.app {
+            App::Cleanup(app) => app,
+            _ => panic!("TuiTestHarness::cleanup_app_mut called but app is not in Cleanup mode"),
+        }
+    }
+
+    /// Set the initial merge state for the app (used by run_with_events).
+    ///
+    /// This method should only be called when the harness is in merge mode.
+    pub fn with_merge_state(mut self, state: MergeState) -> Self {
+        self.typed_initial_state = Some(TypedInitialState::Merge(state));
+        self
+    }
+
+    /// Set the initial migration state for the app (used by run_with_events).
+    ///
+    /// This method should only be called when the harness is in migration mode.
+    pub fn with_migration_state(mut self, state: MigrationModeState) -> Self {
+        self.typed_initial_state = Some(TypedInitialState::Migration(state));
+        self
+    }
+
+    /// Set the initial cleanup state for the app (used by run_with_events).
+    ///
+    /// This method should only be called when the harness is in cleanup mode.
+    pub fn with_cleanup_state(mut self, state: CleanupModeState) -> Self {
+        self.typed_initial_state = Some(TypedInitialState::Cleanup(state));
         self
     }
 
     /// Run the app loop with mock events until exit or events exhausted.
     ///
-    /// This method is useful for integration testing the full app loop.
+    /// This method dispatches to the appropriate typed run loop based on the app mode
+    /// and the initial state set.
     ///
     /// # Arguments
     ///
@@ -103,7 +248,85 @@ impl TuiTestHarness {
         &mut self,
         event_source: &crate::ui::MockEventSource,
     ) -> anyhow::Result<()> {
-        crate::ui::run_app_with_events(&mut self.terminal, &mut self.app, event_source).await
+        use crate::ui::state::{DataLoadingState, SettingsConfirmationState};
+
+        match (&mut self.app, self.typed_initial_state.take()) {
+            (App::Merge(app), Some(TypedInitialState::Merge(state))) => {
+                crate::ui::run_merge_app_with_state(&mut self.terminal, app, event_source, state)
+                    .await
+            }
+            (App::Merge(app), None) => {
+                // Default: use SettingsConfirmation or DataLoading based on config
+                let config = app.config.as_ref().clone();
+                let state = if config.shared().skip_confirmation {
+                    MergeState::DataLoading(DataLoadingState::new())
+                } else {
+                    MergeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
+                        config,
+                    )))
+                };
+                crate::ui::run_merge_app_with_state(&mut self.terminal, app, event_source, state)
+                    .await
+            }
+            (App::Migration(app), Some(TypedInitialState::Migration(state))) => {
+                crate::ui::run_migration_app_with_state(
+                    &mut self.terminal,
+                    app,
+                    event_source,
+                    state,
+                )
+                .await
+            }
+            (App::Migration(app), None) => {
+                // Default: use SettingsConfirmation or DataLoading based on config
+                let config = app.config.as_ref().clone();
+                let state = if config.shared().skip_confirmation {
+                    MigrationModeState::DataLoading(Box::new(
+                        crate::ui::state::MigrationDataLoadingState::new(config),
+                    ))
+                } else {
+                    MigrationModeState::SettingsConfirmation(Box::new(
+                        SettingsConfirmationState::new(config),
+                    ))
+                };
+                crate::ui::run_migration_app_with_state(
+                    &mut self.terminal,
+                    app,
+                    event_source,
+                    state,
+                )
+                .await
+            }
+            (App::Cleanup(app), Some(TypedInitialState::Cleanup(state))) => {
+                crate::ui::run_cleanup_app_with_state(&mut self.terminal, app, event_source, state)
+                    .await
+            }
+            (App::Cleanup(app), None) => {
+                // Default: use SettingsConfirmation or DataLoading based on config
+                let config = app.config.as_ref().clone();
+                let state = if config.shared().skip_confirmation {
+                    CleanupModeState::DataLoading(crate::ui::state::CleanupDataLoadingState::new(
+                        config,
+                    ))
+                } else {
+                    CleanupModeState::SettingsConfirmation(Box::new(
+                        SettingsConfirmationState::new(config),
+                    ))
+                };
+                crate::ui::run_cleanup_app_with_state(&mut self.terminal, app, event_source, state)
+                    .await
+            }
+            // Mismatched state and app mode
+            (App::Merge(_), Some(_)) => {
+                panic!("Mismatched state type: expected MergeState for Merge mode")
+            }
+            (App::Migration(_), Some(_)) => {
+                panic!("Mismatched state type: expected MigrationModeState for Migration mode")
+            }
+            (App::Cleanup(_), Some(_)) => {
+                panic!("Mismatched state type: expected CleanupModeState for Cleanup mode")
+            }
+        }
     }
 
     /// Run the app with a sequence of key codes.

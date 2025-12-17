@@ -1,7 +1,7 @@
-use super::SetupRepoState;
+use super::{MergeState, SetupRepoState};
 use crate::{
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -30,9 +30,16 @@ impl VersionInputState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for VersionInputState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for VersionInputState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -59,27 +66,37 @@ impl AppState for VersionInputState {
         f.render_widget(help, chunks[2]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match code {
             KeyCode::Char(c) => {
                 self.input.push(c);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Enter => {
                 if !self.input.is_empty() {
-                    app.version = Some(self.input.clone());
-                    StateChange::Change(Box::new(SetupRepoState::new()))
+                    app.set_version(Some(self.input.clone()));
+                    TypedStateChange::Change(MergeState::SetupRepo(SetupRepoState::new()))
                 } else {
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 }
             }
-            KeyCode::Esc => StateChange::Change(Box::new(super::PullRequestSelectionState::new())),
-            _ => StateChange::Keep,
+            KeyCode::Esc => TypedStateChange::Change(MergeState::PullRequestSelection(
+                super::PullRequestSelectionState::new(),
+            )),
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "VersionInput"
     }
 }
 
@@ -110,8 +127,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(VersionInputState::new());
-            harness.render_state(state);
+            let mut state = MergeState::VersionInput(VersionInputState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("empty_input", harness.backend());
         });
@@ -135,9 +152,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = VersionInputState::new();
-            state.input = "v1.2.3".to_string();
-            harness.render_state(Box::new(state));
+            let mut inner_state = VersionInputState::new();
+            inner_state.input = "v1.2.3".to_string();
+            let mut state = MergeState::VersionInput(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_version", harness.backend());
         });
@@ -161,9 +179,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = VersionInputState::new();
-            state.input = "v2.5.0-alpha.1+build.123".to_string();
-            harness.render_state(Box::new(state));
+            let mut inner_state = VersionInputState::new();
+            inner_state.input = "v2.5.0-alpha.1+build.123".to_string();
+            let mut state = MergeState::VersionInput(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_long_version", harness.backend());
         });

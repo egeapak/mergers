@@ -1,6 +1,8 @@
+use super::CleanupModeState;
 use crate::{
-    ui::App,
-    ui::state::{AppState, CleanupExecutionState, StateChange},
+    ui::apps::CleanupApp,
+    ui::state::CleanupExecutionState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -31,10 +33,10 @@ impl CleanupBranchSelectionState {
         state
     }
 
-    fn next(&mut self, app: &App) {
+    fn next(&mut self, app: &CleanupApp) {
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= app.cleanup_branches.len() - 1 {
+                if i >= app.cleanup_branches().len() - 1 {
                     0
                 } else {
                     i + 1
@@ -45,11 +47,11 @@ impl CleanupBranchSelectionState {
         self.table_state.select(Some(i));
     }
 
-    fn previous(&mut self, app: &App) {
+    fn previous(&mut self, app: &CleanupApp) {
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    app.cleanup_branches.len() - 1
+                    app.cleanup_branches().len() - 1
                 } else {
                     i - 1
                 }
@@ -59,36 +61,43 @@ impl CleanupBranchSelectionState {
         self.table_state.select(Some(i));
     }
 
-    fn toggle_selection(&mut self, app: &mut App) {
+    fn toggle_selection(&mut self, app: &mut CleanupApp) {
         if let Some(i) = self.table_state.selected()
-            && i < app.cleanup_branches.len()
+            && i < app.cleanup_branches().len()
         {
-            app.cleanup_branches[i].selected = !app.cleanup_branches[i].selected;
+            app.cleanup_branches_mut()[i].selected = !app.cleanup_branches()[i].selected;
         }
     }
 
-    fn select_all_merged(&mut self, app: &mut App) {
-        for branch in &mut app.cleanup_branches {
+    fn select_all_merged(&mut self, app: &mut CleanupApp) {
+        for branch in app.cleanup_branches_mut() {
             if branch.is_merged {
                 branch.selected = true;
             }
         }
     }
 
-    fn deselect_all(&mut self, app: &mut App) {
-        for branch in &mut app.cleanup_branches {
+    fn deselect_all(&mut self, app: &mut CleanupApp) {
+        for branch in app.cleanup_branches_mut() {
             branch.selected = false;
         }
     }
 
-    fn get_selected_count(&self, app: &App) -> usize {
-        app.cleanup_branches.iter().filter(|b| b.selected).count()
+    fn get_selected_count(&self, app: &CleanupApp) -> usize {
+        app.cleanup_branches().iter().filter(|b| b.selected).count()
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupBranchSelectionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CleanupBranchSelectionState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -126,7 +135,7 @@ impl AppState for CleanupBranchSelectionState {
             });
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
-        let rows = app.cleanup_branches.iter().map(|branch| {
+        let rows = app.cleanup_branches().iter().map(|branch| {
             let checkbox = if branch.selected { "☑" } else { "☐" };
             let status = if branch.is_merged {
                 Span::styled("Merged", Style::default().fg(Color::Green))
@@ -192,41 +201,51 @@ impl AppState for CleanupBranchSelectionState {
         f.render_widget(help, chunks[2]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Up => {
                 self.previous(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char(' ') => {
                 self.toggle_selection(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('a') => {
                 self.select_all_merged(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('d') => {
                 self.deselect_all(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Enter => {
                 let selected_count = self.get_selected_count(app);
                 if selected_count == 0 {
                     // No branches selected, stay in this state
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 } else {
                     // Proceed to cleanup execution
-                    StateChange::Change(Box::new(CleanupExecutionState::new()))
+                    TypedStateChange::Change(CleanupModeState::Execution(
+                        CleanupExecutionState::new(),
+                    ))
                 }
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupBranchSelection"
     }
 }
 
@@ -256,9 +275,9 @@ mod tests {
             let config = create_test_config_cleanup();
             let mut harness = TuiTestHarness::with_config(config);
             // Leave cleanup_branches empty
-            let state = Box::new(CleanupBranchSelectionState::new());
+            let state = CleanupBranchSelectionState::new();
 
-            harness.render_state(state);
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("empty", harness.backend());
         });
     }
@@ -286,7 +305,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add sample branches
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -313,8 +332,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupBranchSelectionState::new());
-            harness.render_state(state);
+            let state = CleanupBranchSelectionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("with_branches", harness.backend());
         });
     }
@@ -341,7 +360,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add sample branches with some selected
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -368,8 +387,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupBranchSelectionState::new());
-            harness.render_state(state);
+            let state = CleanupBranchSelectionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("with_selections", harness.backend());
         });
     }

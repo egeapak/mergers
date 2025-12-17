@@ -1,6 +1,7 @@
+use super::{MigrationModeState, MigrationResultsState};
 use crate::{
-    ui::App,
-    ui::state::{AppState, StateChange},
+    ui::apps::MigrationApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -54,12 +55,12 @@ impl MigrationTaggingState {
         }
     }
 
-    pub async fn start_tagging(&mut self, app: &App) {
+    pub async fn start_tagging(&mut self, app: &MigrationApp) {
         if self.started {
             return;
         }
         self.started = true;
-        if let Some(analysis) = &app.migration_analysis {
+        if let Some(analysis) = &app.migration_analysis() {
             let eligible_prs = &analysis.eligible_prs;
             self.total_prs = eligible_prs.len();
 
@@ -84,7 +85,7 @@ impl MigrationTaggingState {
             let mut tasks = Vec::new();
 
             for batch in batches.into_iter() {
-                let client = app.client.clone();
+                let client = app.client().clone();
                 let tag_name = self.tag_name.clone();
 
                 let task = tokio::spawn(async move {
@@ -398,9 +399,16 @@ impl MigrationTaggingState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for MigrationTaggingState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for MigrationTaggingState {
+    type App = MigrationApp;
+    type StateEnum = MigrationModeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MigrationApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -418,10 +426,14 @@ impl AppState for MigrationTaggingState {
         self.render_help(f, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MigrationApp,
+    ) -> TypedStateChange<MigrationModeState> {
         match code {
-            KeyCode::Char('q') if self.is_complete => StateChange::Exit,
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') if self.is_complete => TypedStateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Null => {
                 // Auto-start tagging and check progress (but don't transition)
                 if !self.is_complete {
@@ -433,14 +445,18 @@ impl AppState for MigrationTaggingState {
                         self.check_progress().await;
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             _ if self.is_complete => {
                 // Any actual key press returns to results when complete
-                StateChange::Change(Box::new(super::MigrationResultsState::new()))
+                TypedStateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "MigrationTagging"
     }
 }
 
@@ -472,12 +488,13 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 3;
             state.tagged_prs = 1;
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Tagging(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("in_progress", harness.backend());
         });
@@ -503,13 +520,14 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 5;
             state.tagged_prs = 5;
             state.is_complete = true;
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Tagging(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("success", harness.backend());
         });
@@ -537,7 +555,7 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            harness.app.version = Some("v1.0.0".to_string());
+            harness.app.set_version(Some("v1.0.0".to_string()));
 
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 5;
@@ -555,7 +573,8 @@ mod tests {
                     error: "Permission denied".to_string(),
                 },
             ];
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Tagging(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("success_with_errors", harness.backend());
         });
@@ -577,10 +596,10 @@ mod tests {
 
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Migration Tagging State - Quit Key When Complete
@@ -601,10 +620,10 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
         state.is_complete = true;
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Migration Tagging State - Any Key When Complete
@@ -625,8 +644,10 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
         state.is_complete = true;
 
-        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Migration Tagging State - Other Keys During Tagging
@@ -647,8 +668,9 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
 
         for key in [KeyCode::Enter, KeyCode::Up, KeyCode::Down] {
-            let result = state.process_key(key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result =
+                TypedAppState::process_key(&mut state, key, harness.migration_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -671,7 +693,8 @@ mod tests {
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 10;
             state.tagged_prs = 0;
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Tagging(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("zero_progress", harness.backend());
         });
@@ -696,7 +719,8 @@ mod tests {
             let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
             state.total_prs = 10;
             state.tagged_prs = 5;
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Tagging(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("half_progress", harness.backend());
         });

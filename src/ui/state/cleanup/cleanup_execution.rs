@@ -1,8 +1,10 @@
+use super::CleanupModeState;
 use crate::{
     git::force_delete_branch,
     models::CleanupStatus,
-    ui::App,
-    ui::state::{AppState, CleanupResultsState, StateChange},
+    ui::apps::CleanupApp,
+    ui::state::CleanupResultsState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -37,19 +39,21 @@ impl CleanupExecutionState {
         }
     }
 
-    fn start_cleanup(&mut self, app: &mut App) {
+    fn start_cleanup(&mut self, app: &mut CleanupApp) {
         if self.deletion_tasks.is_some() {
             return;
         }
 
         self.start_time = Some(Instant::now());
 
-        // Get repo path
-        let repo_path = match &app.repo_path {
-            Some(path) => path.clone(),
+        // Get repo path (clone it to avoid borrow issues)
+        let repo_path_opt = app.repo_path().map(|p| p.to_path_buf());
+
+        let repo_path = match repo_path_opt {
+            Some(path) => path,
             None => {
                 // This shouldn't happen, but handle it gracefully
-                for branch in &mut app.cleanup_branches {
+                for branch in app.cleanup_branches_mut() {
                     if branch.selected {
                         branch.status =
                             CleanupStatus::Failed("No repository path available".to_string());
@@ -62,7 +66,7 @@ impl CleanupExecutionState {
 
         // Spawn deletion tasks for selected branches
         let mut tasks = Vec::new();
-        for (idx, branch) in app.cleanup_branches.iter_mut().enumerate() {
+        for (idx, branch) in app.cleanup_branches_mut().iter_mut().enumerate() {
             if branch.selected {
                 branch.status = CleanupStatus::InProgress;
                 let branch_name = branch.name.clone();
@@ -81,7 +85,7 @@ impl CleanupExecutionState {
         self.deletion_tasks = Some(tasks);
     }
 
-    async fn check_progress(&mut self, app: &mut App) -> bool {
+    async fn check_progress(&mut self, app: &mut CleanupApp) -> bool {
         if let Some(tasks) = &mut self.deletion_tasks {
             let mut all_complete = true;
 
@@ -93,9 +97,9 @@ impl CleanupExecutionState {
 
                 // Process completed task
                 if let Ok((idx, result)) = task.await
-                    && idx < app.cleanup_branches.len()
+                    && idx < app.cleanup_branches().len()
                 {
-                    app.cleanup_branches[idx].status = match result {
+                    app.cleanup_branches_mut()[idx].status = match result {
                         Ok(_) => CleanupStatus::Success,
                         Err(e) => CleanupStatus::Failed(e),
                     };
@@ -111,10 +115,10 @@ impl CleanupExecutionState {
         false
     }
 
-    fn get_progress(&self, app: &App) -> (usize, usize) {
-        let total = app.cleanup_branches.iter().filter(|b| b.selected).count();
+    fn get_progress(&self, app: &CleanupApp) -> (usize, usize) {
+        let total = app.cleanup_branches().iter().filter(|b| b.selected).count();
         let completed = app
-            .cleanup_branches
+            .cleanup_branches()
             .iter()
             .filter(|b| {
                 b.selected && matches!(b.status, CleanupStatus::Success | CleanupStatus::Failed(_))
@@ -124,9 +128,16 @@ impl CleanupExecutionState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupExecutionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CleanupExecutionState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -169,7 +180,7 @@ impl AppState for CleanupExecutionState {
 
         // Branch status list
         let items: Vec<ListItem> = app
-            .cleanup_branches
+            .cleanup_branches()
             .iter()
             .filter(|b| b.selected)
             .map(|branch| {
@@ -209,11 +220,15 @@ impl AppState for CleanupExecutionState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Enter if self.is_complete => {
-                StateChange::Change(Box::new(CleanupResultsState::new()))
+                TypedStateChange::Change(CleanupModeState::Results(CleanupResultsState::new()))
             }
             KeyCode::Null => {
                 // Poll for task completion
@@ -224,14 +239,19 @@ impl AppState for CleanupExecutionState {
 
                     if self.check_progress(app).await {
                         // Auto-transition to results after a brief moment
-                        // (in real impl, we might want to add a small delay here)
-                        return StateChange::Change(Box::new(CleanupResultsState::new()));
+                        return TypedStateChange::Change(CleanupModeState::Results(
+                            CleanupResultsState::new(),
+                        ));
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupExecution"
     }
 }
 
@@ -264,7 +284,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches for cleanup
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.2".to_string(),
                     target: "main".to_string(),
@@ -283,8 +303,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupExecutionState::new());
-            harness.render_state(state);
+            let state = CleanupExecutionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("initial", harness.backend());
         });
     }
@@ -312,7 +332,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with mixed statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -339,8 +359,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupExecutionState::new());
-            harness.render_state(state);
+            let state = CleanupExecutionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("in_progress", harness.backend());
         });
     }
@@ -370,7 +390,7 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             // Add branches with final statuses
-            harness.app.cleanup_branches = vec![
+            *harness.app.cleanup_branches_mut() = vec![
                 CleanupBranch {
                     name: "patch/main-6.6.3".to_string(),
                     target: "main".to_string(),
@@ -400,7 +420,7 @@ mod tests {
             let mut state = CleanupExecutionState::new();
             state.is_complete = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("complete", harness.backend());
         });
     }

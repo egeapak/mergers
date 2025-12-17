@@ -6,6 +6,7 @@ mod data_loading;
 mod post_completion;
 mod pr_selection;
 mod setup_repo;
+mod state_enum;
 mod version_input;
 
 pub use cherry_pick::CherryPickState;
@@ -18,4 +19,5 @@ pub use post_completion::{
 };
 pub use pr_selection::PullRequestSelectionState;
 pub use setup_repo::SetupRepoState;
+pub use state_enum::MergeState;
 pub use version_input::VersionInputState;
