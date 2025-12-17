@@ -26,6 +26,7 @@ pub mod snapshot_testing;
 pub mod state;
 #[cfg(test)]
 pub mod testing;
+pub mod typed_run;
 mod worktree_context;
 
 pub use app::App;
