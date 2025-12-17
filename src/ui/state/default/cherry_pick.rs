@@ -2,10 +2,9 @@ use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CompletionState, ConflictResolutionState, ErrorState, StateChange},
+    ui::state::{CompletionState, ConflictResolutionState, ErrorState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -260,31 +259,6 @@ impl TypedAppState for CherryPickState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for CherryPickState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            TypedAppState::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
     // Skip already processed commits
     while app.current_cherry_pick_index() < app.cherry_pick_items().len() {
@@ -382,8 +356,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(1);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("in_progress", harness.backend());
         });
@@ -414,8 +388,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(3); // Conflict item
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_conflict", harness.backend());
         });
@@ -447,8 +421,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(2);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_failed", harness.backend());
         });
@@ -481,8 +455,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(3);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_skipped", harness.backend());
         });
@@ -515,8 +489,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(4);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("all_success", harness.backend());
         });
@@ -593,8 +567,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(0);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("initial_index", harness.backend());
         });
@@ -629,8 +603,8 @@ mod tests {
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
             harness.app.set_current_cherry_pick_index(4);
 
-            let state = Box::new(CherryPickState::new());
-            harness.render_state(state);
+            let mut state = CherryPickState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("mixed_end", harness.backend());
         });

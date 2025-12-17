@@ -1,13 +1,11 @@
 use crate::{
     models::CherryPickStatus,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
-use crossterm::event::{KeyCode, MouseEvent};
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -353,39 +351,6 @@ impl TypedAppState for CompletionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (for backward compatibility during migration)
-// ============================================================================
-
-#[async_trait]
-impl AppState for CompletionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        // Delegate to TypedAppState by extracting MergeApp
-        if let App::Merge(merge_app) = app {
-            <Self as TypedAppState>::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => {
-                    // Convert MergeState to Box<dyn AppState>
-                    StateChange::Change(Box::new(new_state))
-                }
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-
-    async fn process_mouse(&mut self, _event: MouseEvent, _app: &mut App) -> StateChange {
-        StateChange::Keep
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,8 +393,8 @@ mod tests {
                 .app
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("success", harness.backend());
         });
@@ -459,8 +424,8 @@ mod tests {
                 .app
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_conflicts", harness.backend());
         });
@@ -487,8 +452,9 @@ mod tests {
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.list_state.selected(), Some(1));
     }
 
@@ -513,8 +479,9 @@ mod tests {
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         // Should wrap to last item
         assert_eq!(
             state.list_state.selected(),
@@ -541,8 +508,10 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Completion State - Tag PRs Key
@@ -564,8 +533,10 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('t'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Completion State - Open PR Key
@@ -587,8 +558,10 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('p'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - Open Work Items Key
@@ -613,8 +586,10 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('w'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - Other Keys Ignored
@@ -637,8 +612,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -678,11 +653,13 @@ mod tests {
         let mut state = CompletionState::new();
 
         // Should not panic
-        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
 
-        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Completion State - With Skipped Items
@@ -713,8 +690,8 @@ mod tests {
                 .app
                 .set_repo_path(Some(PathBuf::from("/path/to/repo")));
 
-            let state = Box::new(CompletionState::new());
-            harness.render_state(state);
+            let mut state = CompletionState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("with_skipped", harness.backend());
         });
@@ -744,13 +721,13 @@ mod tests {
 
         // Navigate to end
         for _ in 0..item_count {
-            AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         }
         // Should wrap to 0
         assert_eq!(state.list_state.selected(), Some(0));
 
         // Navigate up from 0
-        AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         // Should wrap to last item
         assert_eq!(state.list_state.selected(), Some(item_count - 1));
     }

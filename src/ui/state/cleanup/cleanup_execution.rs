@@ -2,10 +2,9 @@ use super::CleanupModeState;
 use crate::{
     git::force_delete_branch,
     models::CleanupStatus,
-    ui::App,
     ui::apps::CleanupApp,
+    ui::state::CleanupResultsState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CleanupResultsState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -256,31 +255,6 @@ impl TypedAppState for CleanupExecutionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for CleanupExecutionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Cleanup(cleanup_app) = app {
-            TypedAppState::ui(self, f, cleanup_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Cleanup(cleanup_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,8 +303,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupExecutionState::new());
-            harness.render_state(state);
+            let state = CleanupExecutionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("initial", harness.backend());
         });
     }
@@ -385,8 +359,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupExecutionState::new());
-            harness.render_state(state);
+            let state = CleanupExecutionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("in_progress", harness.backend());
         });
     }
@@ -446,7 +420,7 @@ mod tests {
             let mut state = CleanupExecutionState::new();
             state.is_complete = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Execution(state));
             assert_snapshot!("complete", harness.backend());
         });
     }

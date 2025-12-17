@@ -1,9 +1,8 @@
 use super::CleanupModeState;
 use crate::{
-    ui::App,
     ui::apps::CleanupApp,
+    ui::state::CleanupExecutionState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CleanupExecutionState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -250,31 +249,6 @@ impl TypedAppState for CleanupBranchSelectionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for CleanupBranchSelectionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Cleanup(cleanup_app) = app {
-            TypedAppState::ui(self, f, cleanup_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Cleanup(cleanup_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,9 +275,9 @@ mod tests {
             let config = create_test_config_cleanup();
             let mut harness = TuiTestHarness::with_config(config);
             // Leave cleanup_branches empty
-            let state = Box::new(CleanupBranchSelectionState::new());
+            let state = CleanupBranchSelectionState::new();
 
-            harness.render_state(state);
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("empty", harness.backend());
         });
     }
@@ -358,8 +332,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupBranchSelectionState::new());
-            harness.render_state(state);
+            let state = CleanupBranchSelectionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("with_branches", harness.backend());
         });
     }
@@ -413,8 +387,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupBranchSelectionState::new());
-            harness.render_state(state);
+            let state = CleanupBranchSelectionState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::BranchSelection(state));
             assert_snapshot!("with_selections", harness.backend());
         });
     }

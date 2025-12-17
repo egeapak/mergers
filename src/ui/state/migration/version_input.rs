@@ -1,9 +1,7 @@
 use super::{MigrationModeState, MigrationResultsState};
 use crate::{
-    ui::App,
     ui::apps::MigrationApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -230,31 +228,6 @@ impl TypedAppState for MigrationVersionInputState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for MigrationVersionInputState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Migration(migration_app) = app {
-            TypedAppState::ui(self, f, migration_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Migration(migration_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, migration_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,8 +255,8 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(MigrationVersionInputState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::VersionInput(MigrationVersionInputState::new());
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("empty", harness.backend());
         });
@@ -308,7 +281,8 @@ mod tests {
 
             let mut state = MigrationVersionInputState::new();
             state.input = "v2.0.0".to_string();
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::VersionInput(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("with_version", harness.backend());
         });
@@ -360,7 +334,8 @@ mod tests {
 
             let mut state = MigrationVersionInputState::new();
             state.input = "v2.0.0".to_string();
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::VersionInput(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("with_manual_overrides", harness.backend());
         });

@@ -7,10 +7,8 @@ use crate::{
     },
     migration::MigrationAnalyzer,
     models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
-    ui::App,
     ui::apps::MigrationApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
     utils::throttle::NetworkProcessor,
 };
 use anyhow::{Context, Result, bail};
@@ -837,31 +835,6 @@ impl TypedAppState for MigrationDataLoadingState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for MigrationDataLoadingState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Migration(migration_app) = app {
-            TypedAppState::ui(self, f, migration_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Migration(migration_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, migration_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -996,8 +969,9 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let state = Box::new(MigrationDataLoadingState::new(config));
-            harness.render_state(state);
+            let mut state =
+                MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(config)));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("initial", harness.backend());
         });
@@ -1027,9 +1001,10 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let mut state = MigrationDataLoadingState::new(config);
-            state.loading_stage = LoadingStage::FetchingPullRequests;
-            harness.render_state(Box::new(state));
+            let mut inner_state = MigrationDataLoadingState::new(config);
+            inner_state.loading_stage = LoadingStage::FetchingPullRequests;
+            let mut state = MigrationModeState::DataLoading(Box::new(inner_state));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("fetching_prs", harness.backend());
         });
@@ -1059,16 +1034,17 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let mut state = MigrationDataLoadingState::new(config);
-            state.loading_stage = LoadingStage::RunningAnalysis;
-            harness.render_state(Box::new(state));
+            let mut inner_state = MigrationDataLoadingState::new(config);
+            inner_state.loading_stage = LoadingStage::RunningAnalysis;
+            let mut state = MigrationModeState::DataLoading(Box::new(inner_state));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("analyzing", harness.backend());
         });
     }
 
     /// Helper to create a test app for async tests
-    fn create_test_app(config: AppConfig) -> App {
+    fn create_test_migration_app(config: AppConfig) -> MigrationApp {
         let client = crate::api::AzureDevOpsClient::new(
             "test-org".to_string(),
             "test-project".to_string(),
@@ -1076,7 +1052,7 @@ mod tests {
             "test-pat".to_string(),
         )
         .unwrap();
-        App::new(Vec::new(), std::sync::Arc::new(config), client)
+        MigrationApp::new(config.into(), client)
     }
 
     /// # Quit Command Returns Exit
@@ -1095,20 +1071,20 @@ mod tests {
 
         let config = create_test_config_migration();
         let mut state = MigrationDataLoadingState::new(config.clone());
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Test quit at various stages
         state.loading_stage = LoadingStage::NotStarted;
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, TypedStateChange::Exit));
 
         state.loading_stage = LoadingStage::FetchingPullRequests;
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, TypedStateChange::Exit));
 
         state.loading_stage = LoadingStage::RunningAnalysis;
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Retry Resets State When Error Exists
@@ -1140,13 +1116,13 @@ mod tests {
         state.work_items_fetched = 5;
         state.prs = vec![create_test_pull_request()];
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Press 'r' to retry
-        let result = AppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // Verify state was reset
-        assert!(matches!(result, StateChange::Keep));
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.error.is_none());
         assert_eq!(state.loading_stage, LoadingStage::NotStarted);
         assert_eq!(state.progress, 0.0);
@@ -1182,13 +1158,13 @@ mod tests {
         state.progress = 0.5;
         state.loaded = true;
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Press 'r' without error
-        let result = AppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // State should be unchanged
-        assert!(matches!(result, StateChange::Keep));
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
         assert_eq!(state.progress, 0.5);
         assert!(state.loaded);
@@ -1215,16 +1191,16 @@ mod tests {
         state.loading_stage = LoadingStage::Complete;
         state.loaded = true;
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Press Enter to continue
-        let result = AppState::process_key(&mut state, KeyCode::Enter, &mut app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Enter, &mut app).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Reset and test with space
         state.loading_stage = LoadingStage::Complete;
-        let result = AppState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Loading Message for All Stages
@@ -1362,13 +1338,13 @@ mod tests {
         assert!(!state.loaded);
         assert_eq!(state.loading_stage, LoadingStage::NotStarted);
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Trigger initial load
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
 
         // Verify state after trigger
-        assert!(matches!(result, StateChange::Keep));
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.loaded);
         assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
         assert!(state.pr_fetch_task.is_some());
@@ -1395,11 +1371,11 @@ mod tests {
         state.loading_stage = LoadingStage::Complete;
         state.loaded = true;
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // KeyCode::Null at Complete should transition
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Migration Data Loading - Error State
@@ -1425,10 +1401,11 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let mut state = MigrationDataLoadingState::new(config);
-            state.error = Some("Failed to connect to Azure DevOps API".to_string());
-            state.loading_stage = LoadingStage::FetchingPullRequests;
-            harness.render_state(Box::new(state));
+            let mut inner_state = MigrationDataLoadingState::new(config);
+            inner_state.error = Some("Failed to connect to Azure DevOps API".to_string());
+            inner_state.loading_stage = LoadingStage::FetchingPullRequests;
+            let mut state = MigrationModeState::DataLoading(Box::new(inner_state));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("error_state", harness.backend());
         });
@@ -1458,10 +1435,11 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let mut state = MigrationDataLoadingState::new(config);
-            state.loading_stage = LoadingStage::Complete;
-            state.progress = 1.0;
-            harness.render_state(Box::new(state));
+            let mut inner_state = MigrationDataLoadingState::new(config);
+            inner_state.loading_stage = LoadingStage::Complete;
+            inner_state.progress = 1.0;
+            let mut state = MigrationModeState::DataLoading(Box::new(inner_state));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("complete_state", harness.backend());
         });
@@ -1491,12 +1469,13 @@ mod tests {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config.clone());
 
-            let mut state = MigrationDataLoadingState::new(config);
-            state.loading_stage = LoadingStage::WaitingForWorkItems;
-            state.work_items_total = 25;
-            state.work_items_fetched = 12;
-            state.progress = 0.45;
-            harness.render_state(Box::new(state));
+            let mut inner_state = MigrationDataLoadingState::new(config);
+            inner_state.loading_stage = LoadingStage::WaitingForWorkItems;
+            inner_state.work_items_total = 25;
+            inner_state.work_items_fetched = 12;
+            inner_state.progress = 0.45;
+            let mut state = MigrationModeState::DataLoading(Box::new(inner_state));
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("work_items_progress", harness.backend());
         });
@@ -1523,11 +1502,11 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::NotStarted;
 
-        let mut app = create_test_app(config);
+        let mut app = create_test_migration_app(config);
 
         // Should handle gracefully
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # State Constructor Initializes Correctly

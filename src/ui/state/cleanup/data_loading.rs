@@ -2,10 +2,9 @@ use super::CleanupModeState;
 use crate::{
     git::{check_patch_merged, list_patch_branches},
     models::AppConfig,
-    ui::App,
     ui::apps::CleanupApp,
+    ui::state::CleanupBranchSelectionState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CleanupBranchSelectionState, StateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -278,31 +277,6 @@ impl TypedAppState for CleanupDataLoadingState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for CleanupDataLoadingState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Cleanup(cleanup_app) = app {
-            TypedAppState::ui(self, f, cleanup_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Cleanup(cleanup_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,9 +304,9 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_cleanup();
             let mut harness = TuiTestHarness::with_config(config.clone());
-            let state = Box::new(CleanupDataLoadingState::new(config));
+            let state = CleanupDataLoadingState::new(config);
 
-            harness.render_state(state);
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("initial", harness.backend());
         });
     }
@@ -363,7 +337,7 @@ mod tests {
             state.status = "Loading patch branches...".to_string();
             state.progress = 0.1;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("in_progress", harness.backend());
         });
     }
@@ -396,7 +370,7 @@ mod tests {
             state.status = "Error loading branches".to_string();
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("error", harness.backend());
         });
     }
@@ -428,7 +402,7 @@ mod tests {
             state.progress = 1.0;
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("complete", harness.backend());
         });
     }
@@ -458,15 +432,17 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Exit
+    /// - Should return TypedStateChange::Exit
     #[tokio::test]
     async fn test_data_loading_quit() {
         let config = create_test_config_cleanup();
         let mut harness = TuiTestHarness::with_config(config.clone());
         let mut state = CleanupDataLoadingState::new(config);
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Cleanup Data Loading Other Keys Ignored
@@ -477,7 +453,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep
+    /// - Should return TypedStateChange::Keep
     #[tokio::test]
     async fn test_data_loading_other_keys() {
         let config = create_test_config_cleanup();
@@ -485,8 +461,9 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result =
+                TypedAppState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -515,7 +492,7 @@ mod tests {
                 Some("No patch branches matching 'patch/*' pattern were found.".to_string());
             state.loaded = true;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("no_branches", harness.backend());
         });
     }
@@ -542,7 +519,7 @@ mod tests {
             state.status = "Analyzing branch merge status...".to_string();
             state.progress = 0.5;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("half_progress", harness.backend());
         });
     }

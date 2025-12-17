@@ -2,10 +2,9 @@ use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CherryPickContinueState, CherryPickState, StateChange},
+    ui::state::{CherryPickContinueState, CherryPickState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -389,31 +388,6 @@ impl TypedAppState for ConflictResolutionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for ConflictResolutionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            TypedAppState::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,8 +432,8 @@ mod tests {
             harness.app.set_current_cherry_pick_index(0);
 
             let conflicted_files = vec!["src/database/migrations.rs".to_string()];
-            let state = Box::new(ConflictResolutionState::new(conflicted_files));
-            harness.render_state(state);
+            let mut state = ConflictResolutionState::new(conflicted_files);
+            harness.render_state(&mut state);
 
             assert_snapshot!("conflict_display", harness.backend());
         });
@@ -500,10 +474,12 @@ mod tests {
         let mut state = ConflictResolutionState::new(conflicted_files);
 
         // Press 'c' to attempt continue
-        let result = AppState::process_key(&mut state, KeyCode::Char('c'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut())
+                .await;
 
         // Should stay in same state because git operation fails
-        assert!(matches!(result, StateChange::Keep));
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Conflict Resolution - Abort Cherry-Pick
@@ -541,10 +517,12 @@ mod tests {
         let mut state = ConflictResolutionState::new(conflicted_files);
 
         // Press 'a' to abort
-        let result = AppState::process_key(&mut state, KeyCode::Char('a'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CompletionState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Conflict Resolution - Other Key Press
@@ -585,8 +563,8 @@ mod tests {
             KeyCode::Esc,
             KeyCode::Up,
         ] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -633,10 +611,12 @@ mod tests {
         let mut state = ConflictResolutionState::new(conflicted_files);
 
         // Press 's' to skip
-        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Should mark the commit as Skipped
         assert!(matches!(
@@ -695,9 +675,11 @@ mod tests {
         let mut state = ConflictResolutionState::new(conflicted_files);
 
         // Press 's' to skip
-        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // First commit should be Skipped
         assert!(matches!(
@@ -763,8 +745,8 @@ mod tests {
                 "Cargo.toml".to_string(),
                 "README.md".to_string(),
             ];
-            let state = Box::new(ConflictResolutionState::new(conflicted_files));
-            harness.render_state(state);
+            let mut state = ConflictResolutionState::new(conflicted_files);
+            harness.render_state(&mut state);
 
             assert_snapshot!("multiple_files", harness.backend());
         });

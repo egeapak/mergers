@@ -1,9 +1,7 @@
 use super::{MergeState, SetupRepoState};
 use crate::{
-    ui::App,
     ui::apps::MergeApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -102,31 +100,6 @@ impl TypedAppState for VersionInputState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for VersionInputState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            TypedAppState::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,8 +127,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(VersionInputState::new());
-            harness.render_state(state);
+            let mut state = MergeState::VersionInput(VersionInputState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("empty_input", harness.backend());
         });
@@ -179,9 +152,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = VersionInputState::new();
-            state.input = "v1.2.3".to_string();
-            harness.render_state(Box::new(state));
+            let mut inner_state = VersionInputState::new();
+            inner_state.input = "v1.2.3".to_string();
+            let mut state = MergeState::VersionInput(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_version", harness.backend());
         });
@@ -205,9 +179,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = VersionInputState::new();
-            state.input = "v2.5.0-alpha.1+build.123".to_string();
-            harness.render_state(Box::new(state));
+            let mut inner_state = VersionInputState::new();
+            inner_state.input = "v2.5.0-alpha.1+build.123".to_string();
+            let mut state = MergeState::VersionInput(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_long_version", harness.backend());
         });

@@ -3,11 +3,9 @@ use crate::ui::state::shared::ErrorState;
 use crate::{
     api,
     models::PullRequestWithWorkItems,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -349,31 +347,6 @@ impl TypedAppState for DataLoadingState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (for backward compatibility)
-// ============================================================================
-
-#[async_trait]
-impl AppState for DataLoadingState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            <Self as TypedAppState>::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,8 +374,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(DataLoadingState::new());
-            harness.render_state(state);
+            let mut state = DataLoadingState::new();
+            harness.render_state(&mut state);
 
             assert_snapshot!("not_started", harness.backend());
         });
@@ -428,7 +401,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingPullRequests;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_prs", harness.backend());
         });
@@ -456,7 +429,7 @@ mod tests {
             state.loading_stage = LoadingStage::WaitingForWorkItems;
             state.work_items_fetched = 5;
             state.work_items_total = 10;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_work_items", harness.backend());
         });
@@ -484,7 +457,7 @@ mod tests {
             state.loading_stage = LoadingStage::FetchingCommitInfo;
             state.commit_info_fetched = 2;
             state.commit_info_total = 3;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("fetching_commit_info", harness.backend());
         });
@@ -509,7 +482,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::Complete;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("complete", harness.backend());
         });
@@ -532,8 +505,10 @@ mod tests {
 
         let mut state = DataLoadingState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Data Loading State - First Null Key Sets Loaded
@@ -555,8 +530,9 @@ mod tests {
         let mut state = DataLoadingState::new();
         assert!(!state.loaded);
 
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.loaded);
     }
 
@@ -583,8 +559,8 @@ mod tests {
             KeyCode::Enter,
             KeyCode::Char('x'),
         ] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -624,7 +600,7 @@ mod tests {
 
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingWorkItems;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("starting_work_items", harness.backend());
         });
@@ -649,7 +625,7 @@ mod tests {
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::WaitingForWorkItems;
             state.work_items_total = 0;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("work_items_no_total", harness.backend());
         });
@@ -674,7 +650,7 @@ mod tests {
             let mut state = DataLoadingState::new();
             state.loading_stage = LoadingStage::FetchingCommitInfo;
             state.commit_info_total = 0;
-            harness.render_state(Box::new(state));
+            harness.render_state(&mut state);
 
             assert_snapshot!("commit_info_no_total", harness.backend());
         });
@@ -700,8 +676,9 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::Complete;
 
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Data Loading State - FetchingCommitInfo Stage Key Processing
@@ -724,7 +701,8 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::FetchingCommitInfo;
 
-        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 }

@@ -1,15 +1,6 @@
 use crate::{
-    models::AppConfig,
-    parsed_property::ParsedProperty,
-    ui::state::default::DataLoadingState,
-    ui::state::migration::MigrationDataLoadingState,
-    ui::state::typed::TypedStateChange,
-    ui::{
-        App,
-        state::{AppState, StateChange},
-    },
+    models::AppConfig, parsed_property::ParsedProperty, ui::state::typed::TypedStateChange,
 };
-use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -340,30 +331,6 @@ impl SettingsConfirmationState {
     }
 }
 
-#[async_trait]
-impl AppState for SettingsConfirmationState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
-        self.render(f);
-    }
-
-    async fn process_key(&mut self, code: KeyCode, _app: &mut App) -> StateChange {
-        match code {
-            KeyCode::Enter => {
-                // Proceed to appropriate data loading state
-                if self.config.is_migration_mode() {
-                    StateChange::Change(Box::new(MigrationDataLoadingState::new(
-                        self.config.clone(),
-                    )))
-                } else {
-                    StateChange::Change(Box::new(DataLoadingState::new()))
-                }
-            }
-            KeyCode::Char('q') | KeyCode::Esc => StateChange::Exit,
-            _ => StateChange::Keep,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,11 +360,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("default_mode", harness.backend());
         });
     }
@@ -422,11 +388,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_migration();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("migration_mode", harness.backend());
         });
     }
@@ -453,11 +418,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_all_defaults();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("all_defaults", harness.backend());
         });
     }
@@ -484,11 +448,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_cli_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("cli_values", harness.backend());
         });
     }
@@ -514,11 +477,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_env_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("env_values", harness.backend());
         });
     }
@@ -545,11 +507,10 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_file_values();
             let mut harness = TuiTestHarness::with_config(config);
-            let state = Box::new(SettingsConfirmationState::new(
-                harness.app.config().as_ref().clone(),
-            ));
+            let config_clone = harness.app.config().as_ref().clone();
+            let mut state = SettingsConfirmationState::new(config_clone);
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("file_values", harness.backend());
         });
     }

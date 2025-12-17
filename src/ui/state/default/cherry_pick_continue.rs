@@ -2,10 +2,9 @@ use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CherryPickState, ConflictResolutionState, StateChange},
+    ui::state::{CherryPickState, ConflictResolutionState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -375,31 +374,6 @@ impl TypedAppState for CherryPickContinueState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for CherryPickContinueState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            TypedAppState::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 impl CherryPickContinueState {
     #[cfg(test)]
     fn new_test(
@@ -494,15 +468,15 @@ mod tests {
                 "Running clippy...".to_string(),
             ];
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 false, // Not complete
                 None,
                 None,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("processing", harness.backend());
         });
     }
@@ -567,15 +541,15 @@ mod tests {
                 " 1 file changed, 45 insertions(+), 12 deletions(-)".to_string(),
             ];
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 true,       // Complete
                 Some(true), // Success
                 None,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("success", harness.backend());
         });
     }
@@ -651,15 +625,15 @@ mod tests {
 
             let error_message = Some(output.join("\n"));
 
-            let state = Box::new(CherryPickContinueState::new_test(
+            let mut state = CherryPickContinueState::new_test(
                 conflicted_files,
                 output,
                 true,        // Complete
                 Some(false), // Failed
                 error_message,
-            ));
+            );
 
-            harness.render_state(state);
+            harness.render_state(&mut state);
             assert_snapshot!("failure", harness.backend());
         });
     }
@@ -889,10 +863,12 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Should mark the commit as Skipped
         assert!(matches!(
@@ -946,10 +922,12 @@ mod tests {
         );
 
         // Press 'a' to abort
-        let result = AppState::process_key(&mut state, KeyCode::Char('a'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CompletionState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Cherry Pick Continue - Skip Does Not Trigger When Successful
@@ -992,10 +970,12 @@ mod tests {
         );
 
         // Press 's' (any key continues on success)
-        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Should mark as Success, NOT Skipped
         assert!(matches!(
@@ -1058,9 +1038,11 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+                .await;
 
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // First commit should be Skipped
         assert!(matches!(
@@ -1122,10 +1104,12 @@ mod tests {
         );
 
         // Press 'r' to retry
-        let result = AppState::process_key(&mut state, KeyCode::Char('r'), &mut harness.app).await;
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
+                .await;
 
         // Should transition to ConflictResolutionState
-        assert!(matches!(result, StateChange::Change(_)));
+        assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Index should still be 0
         assert_eq!(harness.app.current_cherry_pick_index(), 0);

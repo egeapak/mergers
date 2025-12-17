@@ -1,10 +1,8 @@
 use super::CleanupModeState;
 use crate::{
     models::CleanupStatus,
-    ui::App,
     ui::apps::CleanupApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -304,31 +302,6 @@ impl TypedAppState for CleanupResultsState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for CleanupResultsState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Cleanup(cleanup_app) = app {
-            TypedAppState::ui(self, f, cleanup_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Cleanup(cleanup_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,8 +358,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupResultsState::new());
-            harness.render_state(state);
+            let state = CleanupResultsState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("success_tab", harness.backend());
         });
     }
@@ -437,7 +410,7 @@ mod tests {
             let mut state = CleanupResultsState::new();
             state.current_tab = ResultTab::Failed;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("failed_tab", harness.backend());
         });
     }
@@ -491,8 +464,8 @@ mod tests {
                 },
             ];
 
-            let state = Box::new(CleanupResultsState::new());
-            harness.render_state(state);
+            let state = CleanupResultsState::new();
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("mixed_results", harness.backend());
         });
     }
@@ -541,7 +514,7 @@ mod tests {
             let mut state = CleanupResultsState::new();
             state.current_tab = ResultTab::Failed;
 
-            harness.render_state(Box::new(state));
+            harness.render_cleanup_state(&mut CleanupModeState::Results(state));
             assert_snapshot!("no_failures", harness.backend());
         });
     }

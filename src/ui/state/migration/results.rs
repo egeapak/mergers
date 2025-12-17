@@ -1,8 +1,6 @@
 use super::MigrationModeState;
-use crate::ui::App;
 use crate::ui::apps::MigrationApp;
 use crate::ui::state::typed::{TypedAppState, TypedStateChange};
-use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -570,31 +568,6 @@ impl TypedAppState for MigrationState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-
-#[async_trait]
-impl AppState for MigrationState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Migration(migration_app) = app {
-            TypedAppState::ui(self, f, migration_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Migration(migration_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, migration_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,8 +601,8 @@ mod tests {
                 .app
                 .set_migration_analysis(Some(create_test_migration_analysis()));
 
-            let state = Box::new(MigrationState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::Results(MigrationState::new());
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("display", harness.backend());
         });
@@ -660,8 +633,8 @@ mod tests {
                 .app
                 .set_migration_analysis(Some(create_test_migration_analysis()));
 
-            let state = Box::new(MigrationState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::Results(MigrationState::new());
+            harness.render_migration_state(&mut state);
 
             // Get the rendered output
             let output = harness.backend().to_string();
@@ -729,8 +702,8 @@ mod tests {
 
             harness.app.set_migration_analysis(Some(analysis));
 
-            let state = Box::new(MigrationState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::Results(MigrationState::new());
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("manual_eligible_override", harness.backend());
         });
@@ -782,7 +755,8 @@ mod tests {
             state.current_tab = MigrationTab::NotMerged;
             state.not_merged_list_state.select(Some(0));
 
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Results(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("manual_not_eligible_override", harness.backend());
         });
@@ -818,7 +792,8 @@ mod tests {
             state.current_tab = MigrationTab::Unsure;
             state.unsure_list_state.select(Some(0));
 
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Results(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("unsure_tab", harness.backend());
         });
@@ -849,7 +824,8 @@ mod tests {
             let mut state = MigrationState::new();
             state.show_details = true;
 
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Results(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("with_details", harness.backend());
         });
@@ -880,7 +856,8 @@ mod tests {
             state.current_tab = MigrationTab::NotMerged;
             state.not_merged_list_state.select(Some(0));
 
-            harness.render_state(Box::new(state));
+            let mut mode_state = MigrationModeState::Results(state);
+            harness.render_migration_state(&mut mode_state);
 
             assert_snapshot!("not_merged_tab", harness.backend());
         });
@@ -908,8 +885,10 @@ mod tests {
         let mut state = MigrationState::new();
         assert_eq!(state.eligible_list_state.selected(), Some(0));
 
-        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.eligible_list_state.selected(), Some(1));
     }
 
@@ -935,8 +914,9 @@ mod tests {
         let mut state = MigrationState::new();
         assert_eq!(state.eligible_list_state.selected(), Some(0));
 
-        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
         // Should wrap to last item (there are 2 eligible PRs)
         assert_eq!(state.eligible_list_state.selected(), Some(1));
     }
@@ -963,8 +943,10 @@ mod tests {
         let mut state = MigrationState::new();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
 
-        let result = AppState::process_key(&mut state, KeyCode::Right, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.current_tab, MigrationTab::Unsure);
     }
 
@@ -990,8 +972,10 @@ mod tests {
         let mut state = MigrationState::new();
         assert_eq!(state.current_tab, MigrationTab::Eligible);
 
-        let result = AppState::process_key(&mut state, KeyCode::Left, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.current_tab, MigrationTab::NotMerged);
     }
 
@@ -1017,13 +1001,17 @@ mod tests {
         let mut state = MigrationState::new();
         assert!(!state.show_details);
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('d'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('d'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.show_details);
 
         // Toggle back
-        let result = AppState::process_key(&mut state, KeyCode::Char('d'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('d'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
         assert!(!state.show_details);
     }
 
@@ -1047,8 +1035,10 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Migration Results State - Enter to Proceed
@@ -1071,8 +1061,10 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Enter, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Migration Results State - Open PR in Browser
@@ -1095,8 +1087,10 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('o'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('o'), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Migration Results State - Space Toggle Eligibility
@@ -1129,8 +1123,10 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result = AppState::process_key(&mut state, KeyCode::Char(' '), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char(' '), harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
 
         // Check that the override was applied
         assert!(harness.app.has_manual_override(pr_id).is_some());
@@ -1157,8 +1153,9 @@ mod tests {
         let mut state = MigrationState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Tab] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result =
+                TypedAppState::process_key(&mut state, key, harness.migration_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -1180,8 +1177,8 @@ mod tests {
 
             // No migration_analysis set
             let mut harness = harness;
-            let state = Box::new(MigrationState::new());
-            harness.render_state(state);
+            let mut state = MigrationModeState::Results(MigrationState::new());
+            harness.render_migration_state(&mut state);
 
             assert_snapshot!("empty_analysis", harness.backend());
         });
@@ -1211,15 +1208,15 @@ mod tests {
         let mut state = MigrationState::new();
 
         // Eligible -> Unsure
-        AppState::process_key(&mut state, KeyCode::Right, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Unsure);
 
         // Unsure -> NotMerged
-        AppState::process_key(&mut state, KeyCode::Right, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::NotMerged);
 
         // NotMerged -> Eligible (wrap)
-        AppState::process_key(&mut state, KeyCode::Right, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Eligible);
     }
 
@@ -1246,7 +1243,7 @@ mod tests {
         state.current_tab = MigrationTab::Unsure;
 
         // Unsure -> Eligible
-        AppState::process_key(&mut state, KeyCode::Left, &mut harness.app).await;
+        TypedAppState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Eligible);
     }
 
@@ -1292,10 +1289,13 @@ mod tests {
         state.current_tab = MigrationTab::Unsure;
 
         // Try navigating in empty list - should not panic
-        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Keep));
 
-        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 }

@@ -1,9 +1,4 @@
 use crate::ui::state::typed::TypedStateChange;
-use crate::ui::{
-    App,
-    state::{AppState, StateChange},
-};
-use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -70,20 +65,6 @@ impl ErrorState {
     }
 }
 
-#[async_trait]
-impl AppState for ErrorState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        self.render(f, app.error_message());
-    }
-
-    async fn process_key(&mut self, code: KeyCode, _app: &mut App) -> StateChange {
-        match code {
-            KeyCode::Char('q') => StateChange::Exit,
-            _ => StateChange::Keep,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,12 +91,13 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.set_error_message(Some(
-                "Connection failed: Unable to reach Azure DevOps API".to_string(),
-            ));
-            let state = Box::new(ErrorState::new());
+            let error_msg = "Connection failed: Unable to reach Azure DevOps API";
+            let mut state = ErrorState::new();
 
-            harness.render_state(state);
+            harness
+                .terminal
+                .draw(|f| state.render(f, Some(error_msg)))
+                .unwrap();
             assert_snapshot!("with_message", harness.backend());
         });
     }
@@ -140,15 +122,15 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.set_error_message(Some(
-                "Authentication failed: The Personal Access Token (PAT) provided is invalid or has expired. \
+            let error_msg = "Authentication failed: The Personal Access Token (PAT) provided is invalid or has expired. \
                 Please verify that your PAT has the required permissions (Code: Read, Work Items: Read) and \
-                has not been revoked. You can generate a new PAT from Azure DevOps user settings."
-                    .to_string(),
-            ));
-            let state = Box::new(ErrorState::new());
+                has not been revoked. You can generate a new PAT from Azure DevOps user settings.";
+            let mut state = ErrorState::new();
 
-            harness.render_state(state);
+            harness
+                .terminal
+                .draw(|f| state.render(f, Some(error_msg)))
+                .unwrap();
             assert_snapshot!("with_long_message", harness.backend());
         });
     }
@@ -173,10 +155,9 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.set_error_message(None);
-            let state = Box::new(ErrorState::new());
+            let mut state = ErrorState::new();
 
-            harness.render_state(state);
+            harness.terminal.draw(|f| state.render(f, None)).unwrap();
             assert_snapshot!("no_message", harness.backend());
         });
     }
@@ -201,18 +182,18 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.set_error_message(Some(
-                "Git operation failed:\n\
+            let error_msg = "Git operation failed:\n\
                 Command: git cherry-pick abc123\n\
                 Exit code: 1\n\
                 \n\
                 Error: CONFLICT (content): Merge conflict in src/main.rs\n\
-                Please resolve conflicts and continue."
-                    .to_string(),
-            ));
-            let state = Box::new(ErrorState::new());
+                Please resolve conflicts and continue.";
+            let mut state = ErrorState::new();
 
-            harness.render_state(state);
+            harness
+                .terminal
+                .draw(|f| state.render(f, Some(error_msg)))
+                .unwrap();
             assert_snapshot!("multiline_error", harness.backend());
         });
     }
@@ -237,13 +218,13 @@ mod tests {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
-            harness.app.set_error_message(Some(
-                r#"Parse error: Unexpected character '"' at position 42. Expected one of: ['{', '[', 'true', 'false', 'null']. The JSON response from the API appears malformed. 🔧 Check API version compatibility."#
-                    .to_string(),
-            ));
-            let state = Box::new(ErrorState::new());
+            let error_msg = r#"Parse error: Unexpected character '"' at position 42. Expected one of: ['{', '[', 'true', 'false', 'null']. The JSON response from the API appears malformed. 🔧 Check API version compatibility."#;
+            let mut state = ErrorState::new();
 
-            harness.render_state(state);
+            harness
+                .terminal
+                .draw(|f| state.render(f, Some(error_msg)))
+                .unwrap();
             assert_snapshot!("special_characters", harness.backend());
         });
     }

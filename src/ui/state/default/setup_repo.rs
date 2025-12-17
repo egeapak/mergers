@@ -5,10 +5,9 @@ use super::MergeState;
 use crate::{
     git,
     models::CherryPickItem,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, CherryPickState, ErrorState, StateChange},
+    ui::state::{CherryPickState, ErrorState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -340,31 +339,6 @@ impl TypedAppState for SetupRepoState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (delegates to TypedAppState)
-// ============================================================================
-
-#[async_trait]
-impl AppState for SetupRepoState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            TypedAppState::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,8 +366,8 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let state = Box::new(SetupRepoState::new());
-            harness.render_state(state);
+            let mut state = MergeState::SetupRepo(SetupRepoState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("initializing", harness.backend());
         });
@@ -417,9 +391,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.state = SetupState::InProgress("Cloning repository...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.state = SetupState::InProgress("Cloning repository...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("cloning", harness.backend());
         });
@@ -442,9 +417,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.state = SetupState::InProgress("Creating worktree...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.state = SetupState::InProgress("Creating worktree...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("creating_worktree", harness.backend());
         });
@@ -470,11 +446,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::BranchExists(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::BranchExists(
                 "patch/main-v1.0.0".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("branch_exists_error", harness.backend());
         });
@@ -498,11 +475,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::WorktreeExists(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::WorktreeExists(
                 "/path/to/repo/.worktrees/v1.0.0".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("worktree_exists_error", harness.backend());
         });
@@ -526,11 +504,12 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_error(git::RepositorySetupError::Other(
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_error(git::RepositorySetupError::Other(
                 "Failed to fetch repository details from Azure DevOps".to_string(),
             ));
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("other_error", harness.backend());
         });
@@ -561,7 +540,7 @@ mod tests {
     /// - Processes Escape key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Change (to ErrorState)
+    /// - Should return TypedStateChange::Change (to ErrorState)
     #[tokio::test]
     async fn test_setup_repo_escape_in_error() {
         let config = create_test_config_default();
@@ -570,8 +549,9 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
-        let result = AppState::process_key(&mut state, KeyCode::Esc, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Change(_)));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
     /// # Setup Repo State - Other Keys in Error State
@@ -583,7 +563,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep
+    /// - Should return TypedStateChange::Keep
     #[tokio::test]
     async fn test_setup_repo_other_keys_in_error() {
         let config = create_test_config_default();
@@ -593,8 +573,8 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 
@@ -608,7 +588,7 @@ mod tests {
     /// - Processes a key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep (already started)
+    /// - Should return TypedStateChange::Keep (already started)
     #[tokio::test]
     async fn test_setup_repo_key_when_started() {
         let config = create_test_config_default();
@@ -617,8 +597,9 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.started = true;
 
-        let result = AppState::process_key(&mut state, KeyCode::Enter, &mut harness.app).await;
-        assert!(matches!(result, StateChange::Keep));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+        assert!(matches!(result, TypedStateChange::Keep));
     }
 
     /// # Setup Repo State - Creating Branch Status
@@ -638,9 +619,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_status("Creating branch...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_status("Creating branch...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("creating_branch", harness.backend());
         });
@@ -663,9 +645,10 @@ mod tests {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            let mut state = SetupRepoState::new();
-            state.set_status("Fetching repository details...".to_string());
-            harness.render_state(Box::new(state));
+            let mut inner_state = SetupRepoState::new();
+            inner_state.set_status("Fetching repository details...".to_string());
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("fetching_details", harness.backend());
         });

@@ -1,11 +1,9 @@
 use super::{DataLoadingState, VersionInputState};
 use crate::{
     models::WorkItemHistory,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
     utils::html_to_lines,
 };
 use anyhow::{Result, bail};
@@ -1609,43 +1607,6 @@ impl TypedAppState for PullRequestSelectionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (for backward compatibility)
-// ============================================================================
-
-#[async_trait]
-impl AppState for PullRequestSelectionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            <Self as TypedAppState>::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-
-    async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_mouse(self, event, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 fn get_work_items_color(work_items: &[crate::models::WorkItem]) -> Color {
     if work_items.is_empty() {
         return Color::Gray;
@@ -1714,8 +1675,8 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let state = Box::new(PullRequestSelectionState::new());
-            harness.render_state(state);
+            let mut state = MergeState::PullRequestSelection(PullRequestSelectionState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("normal_display", harness.backend());
         });
@@ -1741,8 +1702,8 @@ mod tests {
 
             // Leave pull_requests empty
 
-            let state = Box::new(PullRequestSelectionState::new());
-            harness.render_state(state);
+            let mut state = MergeState::PullRequestSelection(PullRequestSelectionState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("empty_list", harness.backend());
         });
@@ -1773,8 +1734,8 @@ mod tests {
             prs[2].selected = true;
             *harness.app.pull_requests_mut() = prs;
 
-            let state = Box::new(PullRequestSelectionState::new());
-            harness.render_state(state);
+            let mut state = MergeState::PullRequestSelection(PullRequestSelectionState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_selections", harness.backend());
         });
@@ -1802,12 +1763,13 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.search_iteration_mode = true;
-            state.last_search_query = "login".to_string();
-            state.search_results = vec![0];
-            state.current_search_index = 0;
-            harness.render_state(Box::new(state));
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.search_iteration_mode = true;
+            inner_state.last_search_query = "login".to_string();
+            inner_state.search_results = vec![0];
+            inner_state.current_search_index = 0;
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("search_mode", harness.backend());
         });
@@ -1837,16 +1799,17 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.multi_select_mode = true;
-            state.available_states = crate::ui::testing::create_test_work_item_states();
-            state.selected_filter_states = ["Resolved".to_string(), "Closed".to_string()]
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.multi_select_mode = true;
+            inner_state.available_states = crate::ui::testing::create_test_work_item_states();
+            inner_state.selected_filter_states = ["Resolved".to_string(), "Closed".to_string()]
                 .iter()
                 .cloned()
                 .collect();
-            state.state_selection_index = 1;
+            inner_state.state_selection_index = 1;
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("state_dialog_with_selections", harness.backend());
         });
@@ -1876,13 +1839,14 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.multi_select_mode = true;
-            state.available_states = crate::ui::testing::create_test_work_item_states();
-            state.selected_filter_states = std::collections::HashSet::new();
-            state.state_selection_index = 0;
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.multi_select_mode = true;
+            inner_state.available_states = crate::ui::testing::create_test_work_item_states();
+            inner_state.selected_filter_states = std::collections::HashSet::new();
+            inner_state.state_selection_index = 0;
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("state_dialog_no_selections", harness.backend());
         });
@@ -1911,11 +1875,12 @@ mod tests {
 
             *harness.app.pull_requests_mut() = crate::ui::testing::create_large_pr_list();
 
-            let mut state = PullRequestSelectionState::new();
+            let mut inner_state = PullRequestSelectionState::new();
             // Scroll to middle of list to show scrolling behavior
-            state.table_state.select(Some(25));
+            inner_state.table_state.select(Some(25));
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("scrollable_many_items", harness.backend());
         });
@@ -1946,13 +1911,14 @@ mod tests {
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
             let states = crate::ui::testing::create_test_work_item_states();
-            let mut state = PullRequestSelectionState::new();
-            state.multi_select_mode = true;
-            state.available_states = states.clone();
-            state.selected_filter_states = states.iter().cloned().collect();
-            state.state_selection_index = 2;
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.multi_select_mode = true;
+            inner_state.available_states = states.clone();
+            inner_state.selected_filter_states = states.iter().cloned().collect();
+            inner_state.state_selection_index = 2;
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("state_dialog_all_selected", harness.backend());
         });
@@ -2100,14 +2066,13 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.table_state.select(Some(0));
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0));
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
             // First render to populate table_area
-            harness
-                .terminal
-                .draw(|f| AppState::ui(&mut state, f, &harness.app))
-                .unwrap();
+            harness.render_merge_state(&mut state);
 
             // Simulate scroll down within table area
             let event = MouseEvent {
@@ -2120,11 +2085,12 @@ mod tests {
             // Process mouse event
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                AppState::process_mouse(&mut state, event, &mut harness.app).await;
+                let app = harness.merge_app_mut();
+                state.process_mouse(event, app).await;
             });
 
             // Re-render after mouse event
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("mouse_scroll_down", harness.backend());
         });
@@ -2149,14 +2115,13 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.table_state.select(Some(1)); // Start at second item
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(1)); // Start at second item
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
             // First render to populate table_area
-            harness
-                .terminal
-                .draw(|f| AppState::ui(&mut state, f, &harness.app))
-                .unwrap();
+            harness.render_merge_state(&mut state);
 
             // Simulate scroll up within table area
             let event = MouseEvent {
@@ -2168,10 +2133,11 @@ mod tests {
 
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                AppState::process_mouse(&mut state, event, &mut harness.app).await;
+                let app = harness.merge_app_mut();
+                state.process_mouse(event, app).await;
             });
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("mouse_scroll_up", harness.backend());
         });
@@ -2196,14 +2162,13 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.table_state.select(Some(0));
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0));
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
             // First render to populate table_area
-            harness
-                .terminal
-                .draw(|f| AppState::ui(&mut state, f, &harness.app))
-                .unwrap();
+            harness.render_merge_state(&mut state);
 
             // Calculate row position: table starts at y=1 (after margin), +2 for border+header
             // So first data row is at y=3, second at y=4, third at y=5
@@ -2218,10 +2183,11 @@ mod tests {
 
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                AppState::process_mouse(&mut state, event, &mut harness.app).await;
+                let app = harness.merge_app_mut();
+                state.process_mouse(event, app).await;
             });
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("mouse_click_highlight", harness.backend());
         });
@@ -2245,14 +2211,13 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.table_state.select(Some(0));
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0));
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
             // First render to populate table_area
-            harness
-                .terminal
-                .draw(|f| AppState::ui(&mut state, f, &harness.app))
-                .unwrap();
+            harness.render_merge_state(&mut state);
 
             let click_y = 3; // First row (index 0)
 
@@ -2266,7 +2231,8 @@ mod tests {
 
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                AppState::process_mouse(&mut state, event1, &mut harness.app).await;
+                let app = harness.merge_app_mut();
+                state.process_mouse(event1, app).await;
             });
 
             // Second click (same position, within 500ms - simulated by not changing last_click_time)
@@ -2278,10 +2244,11 @@ mod tests {
             };
 
             rt.block_on(async {
-                AppState::process_mouse(&mut state, event2, &mut harness.app).await;
+                let app = harness.merge_app_mut();
+                state.process_mouse(event2, app).await;
             });
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("mouse_double_click_toggle", harness.backend());
         });
@@ -2763,11 +2730,12 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.search_mode = true;
-            state.search_input = "login".to_string();
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.search_mode = true;
+            inner_state.search_input = "login".to_string();
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("search_dialog", harness.backend());
         });
@@ -2792,12 +2760,13 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.search_mode = true;
-            state.search_input = "login".to_string();
-            state.search_results = vec![0, 1];
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.search_mode = true;
+            inner_state.search_input = "login".to_string();
+            inner_state.search_results = vec![0, 1];
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("search_with_results", harness.backend());
         });
@@ -2822,12 +2791,13 @@ mod tests {
 
             *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-            let mut state = PullRequestSelectionState::new();
-            state.search_mode = true;
-            state.search_input = "!abc".to_string();
-            state.search_error_message = Some("Invalid PR ID format".to_string());
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.search_mode = true;
+            inner_state.search_input = "!abc".to_string();
+            inner_state.search_error_message = Some("Invalid PR ID format".to_string());
 
-            harness.render_state(Box::new(state));
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("search_error", harness.backend());
         });

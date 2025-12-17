@@ -11,11 +11,9 @@ use super::{
     MigrationDataLoadingState, MigrationResultsState, MigrationTaggingState,
     MigrationVersionInputState,
 };
-use crate::ui::App;
 use crate::ui::apps::MigrationApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
 use crate::ui::state::typed::{TypedAppState, TypedStateChange};
-use crate::ui::state::{AppState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -102,59 +100,6 @@ impl MigrationModeState {
             MigrationModeState::VersionInput(_) => "VersionInput",
             MigrationModeState::Tagging(_) => "Tagging",
             MigrationModeState::Error(_) => "Error",
-        }
-    }
-}
-
-// ============================================================================
-// Legacy AppState Implementation
-// ============================================================================
-//
-// This implementation allows MigrationModeState to be used with the existing run loop
-// that expects Box<dyn AppState>. It dispatches to inner state implementations.
-
-#[async_trait]
-impl AppState for MigrationModeState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        match self {
-            MigrationModeState::SettingsConfirmation(state) => state.ui(f, app),
-            MigrationModeState::DataLoading(state) => AppState::ui(state.as_mut(), f, app),
-            MigrationModeState::Results(state) => AppState::ui(state, f, app),
-            MigrationModeState::VersionInput(state) => AppState::ui(state, f, app),
-            MigrationModeState::Tagging(state) => AppState::ui(state, f, app),
-            MigrationModeState::Error(state) => state.ui(f, app),
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        match self {
-            MigrationModeState::SettingsConfirmation(state) => state.process_key(code, app).await,
-            MigrationModeState::DataLoading(state) => {
-                AppState::process_key(state.as_mut(), code, app).await
-            }
-            MigrationModeState::Results(state) => AppState::process_key(state, code, app).await,
-            MigrationModeState::VersionInput(state) => {
-                AppState::process_key(state, code, app).await
-            }
-            MigrationModeState::Tagging(state) => AppState::process_key(state, code, app).await,
-            MigrationModeState::Error(state) => state.process_key(code, app).await,
-        }
-    }
-
-    async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
-        match self {
-            MigrationModeState::SettingsConfirmation(state) => {
-                AppState::process_mouse(state.as_mut(), event, app).await
-            }
-            MigrationModeState::DataLoading(state) => {
-                AppState::process_mouse(state.as_mut(), event, app).await
-            }
-            MigrationModeState::Results(state) => AppState::process_mouse(state, event, app).await,
-            MigrationModeState::VersionInput(state) => {
-                AppState::process_mouse(state, event, app).await
-            }
-            MigrationModeState::Tagging(state) => AppState::process_mouse(state, event, app).await,
-            MigrationModeState::Error(state) => AppState::process_mouse(state, event, app).await,
         }
     }
 }

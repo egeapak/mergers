@@ -1,10 +1,8 @@
 use crate::{
     models::CherryPickStatus,
-    ui::App,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{TypedAppState, TypedStateChange},
-    ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -376,31 +374,6 @@ impl TypedAppState for PostCompletionState {
     }
 }
 
-// ============================================================================
-// Legacy AppState Implementation (for backward compatibility)
-// ============================================================================
-
-#[async_trait]
-impl AppState for PostCompletionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
-        if let App::Merge(merge_app) = app {
-            <Self as TypedAppState>::ui(self, f, merge_app);
-        }
-    }
-
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
-        if let App::Merge(merge_app) = app {
-            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
-                TypedStateChange::Keep => StateChange::Keep,
-                TypedStateChange::Exit => StateChange::Exit,
-                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
-            }
-        } else {
-            StateChange::Keep
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,8 +407,8 @@ mod tests {
             *harness.app.pull_requests_mut() = prs;
             harness.app.set_version(Some("v1.0.0".to_string()));
 
-            let state = Box::new(PostCompletionState::new());
-            harness.render_state(state);
+            let mut state = MergeState::PostCompletion(PostCompletionState::new());
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("display", harness.backend());
         });
@@ -468,13 +441,14 @@ mod tests {
             harness.app.set_version(Some("v1.0.0".to_string()));
 
             let tasks = crate::ui::testing::create_test_post_completion_tasks();
-            let mut state = PostCompletionState::new();
-            state.tasks = tasks;
-            state.current_task_index = 3;
-            state.total_tasks = 7;
-            state.completed = false;
+            let mut inner_state = PostCompletionState::new();
+            inner_state.tasks = tasks;
+            inner_state.current_task_index = 3;
+            inner_state.total_tasks = 7;
+            inner_state.completed = false;
+            let mut state = MergeState::PostCompletion(inner_state);
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("partially_updated", harness.backend());
         });
@@ -521,13 +495,14 @@ mod tests {
                 TaskStatus::Failed("403 Forbidden: Access denied for tag creation".to_string());
             tasks[6].status = TaskStatus::Success;
 
-            let mut state = PostCompletionState::new();
-            state.tasks = tasks;
-            state.current_task_index = 7;
-            state.total_tasks = 7;
-            state.completed = true;
+            let mut inner_state = PostCompletionState::new();
+            inner_state.tasks = tasks;
+            inner_state.current_task_index = 7;
+            inner_state.total_tasks = 7;
+            inner_state.completed = true;
+            let mut state = MergeState::PostCompletion(inner_state);
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("permission_errors", harness.backend());
         });
@@ -572,13 +547,14 @@ mod tests {
                 TaskStatus::Failed("Invalid request: Work item ID not found".to_string());
             tasks[6].status = TaskStatus::Success;
 
-            let mut state = PostCompletionState::new();
-            state.tasks = tasks;
-            state.current_task_index = 7;
-            state.total_tasks = 7;
-            state.completed = true;
+            let mut inner_state = PostCompletionState::new();
+            inner_state.tasks = tasks;
+            inner_state.current_task_index = 7;
+            inner_state.total_tasks = 7;
+            inner_state.completed = true;
+            let mut state = MergeState::PostCompletion(inner_state);
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("mixed_errors", harness.backend());
         });
@@ -615,13 +591,14 @@ mod tests {
                 );
             }
 
-            let mut state = PostCompletionState::new();
-            state.tasks = tasks;
-            state.current_task_index = 7;
-            state.total_tasks = 7;
-            state.completed = true;
+            let mut inner_state = PostCompletionState::new();
+            inner_state.tasks = tasks;
+            inner_state.current_task_index = 7;
+            inner_state.total_tasks = 7;
+            inner_state.completed = true;
+            let mut state = MergeState::PostCompletion(inner_state);
 
-            harness.render_state(Box::new(state));
+            harness.render_merge_state(&mut state);
 
             assert_snapshot!("all_failed", harness.backend());
         });
@@ -636,7 +613,7 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Exit
+    /// - Should return TypedStateChange::Exit
     #[tokio::test]
     async fn test_post_completion_quit() {
         let config = create_test_config_default();
@@ -645,8 +622,10 @@ mod tests {
         let mut state = PostCompletionState::new();
         state.completed = true;
 
-        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
-        assert!(matches!(result, StateChange::Exit));
+        let result =
+            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+                .await;
+        assert!(matches!(result, TypedStateChange::Exit));
     }
 
     /// # Post Completion State - Other Keys
@@ -657,7 +636,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep
+    /// - Should return TypedStateChange::Keep
     #[tokio::test]
     async fn test_post_completion_other_keys() {
         let config = create_test_config_default();
@@ -666,8 +645,8 @@ mod tests {
         let mut state = PostCompletionState::new();
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
-            assert!(matches!(result, StateChange::Keep));
+            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, TypedStateChange::Keep));
         }
     }
 

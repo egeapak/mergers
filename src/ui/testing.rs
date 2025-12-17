@@ -8,7 +8,7 @@ use crate::{
     parsed_property::ParsedProperty,
     ui::{
         App,
-        state::{AppState, CleanupModeState, MergeState, MigrationModeState},
+        state::{CleanupModeState, MergeState, MigrationModeState},
     },
 };
 use ratatui::{Terminal, backend::TestBackend};
@@ -93,9 +93,20 @@ impl TuiTestHarness {
         self
     }
 
-    /// Render a state to the terminal (legacy AppState - for snapshot testing)
-    pub fn render_state(&mut self, mut state: Box<dyn AppState>) {
-        self.terminal.draw(|f| state.ui(f, &self.app)).unwrap();
+    /// Render a typed state to the terminal (for snapshot testing)
+    pub fn render_state<S>(&mut self, state: &mut S)
+    where
+        S: crate::ui::state::typed::TypedAppState<
+                App = crate::ui::apps::MergeApp,
+                StateEnum = MergeState,
+            > + ?Sized,
+    {
+        match &mut self.app {
+            App::Merge(app) => {
+                self.terminal.draw(|f| state.ui(f, app)).unwrap();
+            }
+            _ => panic!("render_state called but app is not in Merge mode"),
+        }
     }
 
     /// Render a typed merge state to the terminal
