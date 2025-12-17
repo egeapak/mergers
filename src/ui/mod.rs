@@ -1,19 +1,8 @@
-use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
-use state::{AppState, DataLoadingState, StateChange};
-
-/// Macro to process state changes and handle Keep/Change/Exit
-macro_rules! handle_state_change {
-    ($result:expr, $current_state:expr) => {
-        match $result {
-            StateChange::Keep => {}
-            StateChange::Change(new_state) => {
-                $current_state = new_state;
-            }
-            StateChange::Exit => break,
-        }
-    };
-}
+use state::{
+    CleanupDataLoadingState, CleanupModeState, DataLoadingState, MergeState,
+    MigrationDataLoadingState, MigrationModeState, SettingsConfirmationState,
+};
 
 mod app;
 mod app_base;
@@ -41,10 +30,9 @@ pub use worktree_context::WorktreeContext;
 /// Run the application loop with an injectable event source.
 ///
 /// This is the core application loop that:
-/// 1. Draws the current state to the terminal
-/// 2. Polls for events using the provided event source
-/// 3. Processes events through the state machine
-/// 4. Handles state transitions until `StateChange::Exit`
+/// 1. Determines the mode from the App enum
+/// 2. Creates the appropriate typed initial state
+/// 3. Dispatches to the mode-specific typed run loop
 ///
 /// # Arguments
 ///
@@ -67,49 +55,40 @@ pub async fn run_app_with_events<B: ratatui::backend::Backend>(
     app: &mut App,
     event_source: &dyn EventSource,
 ) -> anyhow::Result<()> {
-    run_app_with_events_and_state(terminal, app, event_source, None).await
-}
-
-/// Run the application loop with an injectable event source and initial state.
-pub async fn run_app_with_events_and_state<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut App,
-    event_source: &dyn EventSource,
-    initial_state: Option<Box<dyn AppState>>,
-) -> anyhow::Result<()> {
-    let mut current_state: Box<dyn AppState> =
-        initial_state.unwrap_or_else(|| Box::new(DataLoadingState::new()));
-
-    loop {
-        terminal.draw(|f| current_state.ui(f, app))?;
-
-        // Use poll with timeout to allow states to execute immediately
-        if event_source.poll(std::time::Duration::from_millis(50))? {
-            match event_source.read()? {
-                Event::Key(key) => {
-                    handle_state_change!(
-                        current_state.process_key(key.code, app).await,
-                        current_state
-                    );
-                }
-                Event::Mouse(mouse) => {
-                    handle_state_change!(
-                        current_state.process_mouse(mouse, app).await,
-                        current_state
-                    );
-                }
-                _ => {}
-            }
-        } else {
-            // No event, but still allow state to process (for immediate execution)
-            handle_state_change!(
-                current_state.process_key(KeyCode::Null, app).await,
-                current_state
-            );
+    match app {
+        App::Merge(merge_app) => {
+            let config = merge_app.config.as_ref().clone();
+            let initial_state = if config.shared().skip_confirmation {
+                MergeState::DataLoading(DataLoadingState::new())
+            } else {
+                MergeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(config)))
+            };
+            typed_run::run_merge_mode(terminal, merge_app, event_source, initial_state).await
+        }
+        App::Migration(migration_app) => {
+            let config = migration_app.config.as_ref().clone();
+            let initial_state = if config.shared().skip_confirmation {
+                MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(config)))
+            } else {
+                MigrationModeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
+                    config,
+                )))
+            };
+            typed_run::run_migration_mode(terminal, migration_app, event_source, initial_state)
+                .await
+        }
+        App::Cleanup(cleanup_app) => {
+            let config = cleanup_app.config.as_ref().clone();
+            let initial_state = if config.shared().skip_confirmation {
+                CleanupModeState::DataLoading(CleanupDataLoadingState::new(config))
+            } else {
+                CleanupModeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
+                    config,
+                )))
+            };
+            typed_run::run_cleanup_mode(terminal, cleanup_app, event_source, initial_state).await
         }
     }
-
-    Ok(())
 }
 
 /// Run the application loop using the default crossterm event source.
@@ -126,6 +105,42 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     app: &mut App,
 ) -> anyhow::Result<()> {
     run_app_with_events(terminal, app, &CrosstermEventSource::new()).await
+}
+
+/// Run the merge mode application loop with a specific initial state.
+///
+/// This function allows specifying the initial state for testing purposes.
+pub async fn run_merge_app_with_state<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut MergeApp,
+    event_source: &dyn EventSource,
+    initial_state: MergeState,
+) -> anyhow::Result<()> {
+    typed_run::run_merge_mode(terminal, app, event_source, initial_state).await
+}
+
+/// Run the migration mode application loop with a specific initial state.
+///
+/// This function allows specifying the initial state for testing purposes.
+pub async fn run_migration_app_with_state<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut MigrationApp,
+    event_source: &dyn EventSource,
+    initial_state: MigrationModeState,
+) -> anyhow::Result<()> {
+    typed_run::run_migration_mode(terminal, app, event_source, initial_state).await
+}
+
+/// Run the cleanup mode application loop with a specific initial state.
+///
+/// This function allows specifying the initial state for testing purposes.
+pub async fn run_cleanup_app_with_state<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut CleanupApp,
+    event_source: &dyn EventSource,
+    initial_state: CleanupModeState,
+) -> anyhow::Result<()> {
+    typed_run::run_cleanup_mode(terminal, app, event_source, initial_state).await
 }
 
 #[cfg(test)]
@@ -147,7 +162,8 @@ mod tests {
     /// - App loop should exit with Ok(())
     #[tokio::test]
     async fn test_run_app_exit_with_q_key() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -169,7 +185,8 @@ mod tests {
     /// - ErrorState ignores Escape, then exits on 'q'
     #[tokio::test]
     async fn test_run_app_escape_then_quit() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Esc)
@@ -192,7 +209,8 @@ mod tests {
     /// - All keys should be processed, then exit on 'q'
     #[tokio::test]
     async fn test_run_app_navigation_before_exit() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Down)
@@ -222,7 +240,8 @@ mod tests {
     /// - App should exit cleanly on 'q'
     #[tokio::test]
     async fn test_run_app_timeout_processing() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_timeout()
@@ -248,7 +267,8 @@ mod tests {
     /// - App should exit cleanly on 'q'
     #[tokio::test]
     async fn test_run_app_mouse_event() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let mouse_event = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -279,7 +299,8 @@ mod tests {
     /// - All mouse events should be processed
     #[tokio::test]
     async fn test_run_app_multiple_mouse_events() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new();
 
@@ -326,7 +347,8 @@ mod tests {
     /// - All events should be processed in order
     #[tokio::test]
     async fn test_run_app_mixed_events() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Down)
@@ -348,21 +370,21 @@ mod tests {
 
     /// # Run App Default Initial State
     ///
-    /// Tests that default DataLoadingState is used when no initial state is set.
+    /// Tests that default SettingsConfirmation state is used when no initial state is set.
     ///
     /// ## Test Scenario
     /// - Create app without setting initial_state
-    /// - Send 'q' key to exit
+    /// - Send Escape key to exit from settings confirmation
     ///
     /// ## Expected Outcome
-    /// - DataLoadingState should be used as default
+    /// - SettingsConfirmation should be used as default
     /// - App should exit cleanly
     #[tokio::test]
     async fn test_run_app_default_initial_state() {
         let mut harness = TuiTestHarness::new();
-        // Don't set initial_state, let it use default DataLoadingState
+        // Don't set initial_state, let it use default SettingsConfirmation
 
-        let events = MockEventSource::new().with_key(KeyCode::Char('q'));
+        let events = MockEventSource::new().with_key(KeyCode::Esc);
 
         let result = run_app_with_events(&mut harness.terminal, &mut harness.app, &events).await;
 
@@ -385,7 +407,7 @@ mod tests {
     async fn test_run_app_with_error_message() {
         let mut harness = TuiTestHarness::new()
             .with_error_message("Test error message for display")
-            .with_initial_state(Box::new(ErrorState::new()));
+            .with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -411,7 +433,8 @@ mod tests {
     /// - Modified key should be processed
     #[tokio::test]
     async fn test_run_app_key_with_modifiers() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key_modified(KeyCode::Char('c'), KeyModifiers::CONTROL)
@@ -434,7 +457,8 @@ mod tests {
     /// - Function keys should be processed
     #[tokio::test]
     async fn test_run_app_function_keys() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::F(1))
@@ -459,7 +483,8 @@ mod tests {
     /// - Tab keys should be processed
     #[tokio::test]
     async fn test_run_app_tab_keys() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Tab)
@@ -483,7 +508,8 @@ mod tests {
     /// - Enter key should be processed
     #[tokio::test]
     async fn test_run_app_enter_key() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Enter)
@@ -506,7 +532,8 @@ mod tests {
     /// - Page keys should be processed
     #[tokio::test]
     async fn test_run_app_page_keys() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::PageUp)
@@ -530,7 +557,8 @@ mod tests {
     /// - Keys should be processed
     #[tokio::test]
     async fn test_run_app_backspace_delete() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Backspace)
@@ -554,7 +582,8 @@ mod tests {
     /// - App should exit after processing all events
     #[tokio::test]
     async fn test_run_app_events_exhausted() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -575,7 +604,8 @@ mod tests {
     /// - Helper should work the same as direct call
     #[tokio::test]
     async fn test_run_app_using_harness_helper() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -595,7 +625,8 @@ mod tests {
     /// - Keys helper should work correctly
     #[tokio::test]
     async fn test_run_app_using_keys_helper() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let result = harness
             .run_with_keys(vec![KeyCode::Down, KeyCode::Up, KeyCode::Char('q')])
@@ -615,7 +646,8 @@ mod tests {
     /// - All keys should be processed correctly
     #[tokio::test]
     async fn test_run_app_rapid_keys() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new();
         for _ in 0..50 {
@@ -641,7 +673,8 @@ mod tests {
     /// - All character keys should be processed
     #[tokio::test]
     async fn test_run_app_character_keys() {
-        let mut harness = TuiTestHarness::new().with_initial_state(Box::new(ErrorState::new()));
+        let mut harness =
+            TuiTestHarness::new().with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Char('a'))
@@ -671,8 +704,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_app_with_custom_config() {
         let config = create_test_config_default();
-        let mut harness =
-            TuiTestHarness::with_config(config).with_initial_state(Box::new(ErrorState::new()));
+        let mut harness = TuiTestHarness::with_config(config)
+            .with_merge_state(MergeState::Error(ErrorState::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 

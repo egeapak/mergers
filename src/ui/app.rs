@@ -12,7 +12,6 @@ use crate::{
     },
     ui::AppBase,
     ui::apps::{CleanupApp, MergeApp, MigrationApp},
-    ui::state::AppState,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -429,18 +428,6 @@ impl App {
     /// Returns true if this is cleanup mode.
     pub fn is_cleanup_mode(&self) -> bool {
         matches!(self, App::Cleanup(_))
-    }
-
-    // ========================================================================
-    // Initial State Support
-    // ========================================================================
-
-    /// Stores the initial state for the state machine.
-    /// This is a compatibility method - in the new architecture,
-    /// states are managed by the run loop.
-    pub fn set_initial_state(&mut self, _state: Box<dyn AppState>) {
-        // In the new architecture, initial state is managed externally
-        // This method is kept for compatibility but does nothing
     }
 
     /// Cleans up the migration worktree if one was created.
