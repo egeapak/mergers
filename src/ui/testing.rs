@@ -96,13 +96,13 @@ impl TuiTestHarness {
     /// Render a typed sub-state to the terminal (for snapshot testing of sub-states)
     pub fn render_state<S>(&mut self, state: &mut S)
     where
-        S: crate::ui::state::typed::TypedModeState<Mode = MergeState> + ?Sized,
+        S: crate::ui::state::typed::ModeState<Mode = MergeState> + ?Sized,
     {
-        use crate::ui::state::typed::TypedModeState;
+        use crate::ui::state::typed::ModeState;
         match &mut self.app {
             App::Merge(app) => {
                 self.terminal
-                    .draw(|f| TypedModeState::ui(state, f, app))
+                    .draw(|f| ModeState::ui(state, f, app))
                     .unwrap();
             }
             _ => panic!("render_state called but app is not in Merge mode"),
@@ -111,12 +111,10 @@ impl TuiTestHarness {
 
     /// Render a typed merge state to the terminal
     pub fn render_merge_state(&mut self, state: &mut crate::ui::state::MergeState) {
-        use crate::ui::state::typed::TypedAppState;
+        use crate::ui::state::typed::AppState;
         match &mut self.app {
             App::Merge(app) => {
-                self.terminal
-                    .draw(|f| TypedAppState::ui(state, f, app))
-                    .unwrap();
+                self.terminal.draw(|f| AppState::ui(state, f, app)).unwrap();
             }
             _ => panic!("render_merge_state called but app is not in Merge mode"),
         }
@@ -124,12 +122,10 @@ impl TuiTestHarness {
 
     /// Render a typed migration state to the terminal
     pub fn render_migration_state(&mut self, state: &mut crate::ui::state::MigrationModeState) {
-        use crate::ui::state::typed::TypedAppState;
+        use crate::ui::state::typed::AppState;
         match &mut self.app {
             App::Migration(app) => {
-                self.terminal
-                    .draw(|f| TypedAppState::ui(state, f, app))
-                    .unwrap();
+                self.terminal.draw(|f| AppState::ui(state, f, app)).unwrap();
             }
             _ => panic!("render_migration_state called but app is not in Migration mode"),
         }
@@ -137,12 +133,10 @@ impl TuiTestHarness {
 
     /// Render a typed cleanup state to the terminal
     pub fn render_cleanup_state(&mut self, state: &mut crate::ui::state::CleanupModeState) {
-        use crate::ui::state::typed::TypedAppState;
+        use crate::ui::state::typed::AppState;
         match &mut self.app {
             App::Cleanup(app) => {
-                self.terminal
-                    .draw(|f| TypedAppState::ui(state, f, app))
-                    .unwrap();
+                self.terminal.draw(|f| AppState::ui(state, f, app)).unwrap();
             }
             _ => panic!("render_cleanup_state called but app is not in Cleanup mode"),
         }
@@ -151,13 +145,13 @@ impl TuiTestHarness {
     /// Render a migration mode sub-state to the terminal (for snapshot testing of sub-states)
     pub fn render_migration_sub_state<S>(&mut self, state: &mut S)
     where
-        S: crate::ui::state::typed::TypedModeState<Mode = MigrationModeState> + ?Sized,
+        S: crate::ui::state::typed::ModeState<Mode = MigrationModeState> + ?Sized,
     {
-        use crate::ui::state::typed::TypedModeState;
+        use crate::ui::state::typed::ModeState;
         match &mut self.app {
             App::Migration(app) => {
                 self.terminal
-                    .draw(|f| TypedModeState::ui(state, f, app))
+                    .draw(|f| ModeState::ui(state, f, app))
                     .unwrap();
             }
             _ => panic!("render_migration_sub_state called but app is not in Migration mode"),
@@ -167,13 +161,13 @@ impl TuiTestHarness {
     /// Render a cleanup mode sub-state to the terminal (for snapshot testing of sub-states)
     pub fn render_cleanup_sub_state<S>(&mut self, state: &mut S)
     where
-        S: crate::ui::state::typed::TypedModeState<Mode = CleanupModeState> + ?Sized,
+        S: crate::ui::state::typed::ModeState<Mode = CleanupModeState> + ?Sized,
     {
-        use crate::ui::state::typed::TypedModeState;
+        use crate::ui::state::typed::ModeState;
         match &mut self.app {
             App::Cleanup(app) => {
                 self.terminal
-                    .draw(|f| TypedModeState::ui(state, f, app))
+                    .draw(|f| ModeState::ui(state, f, app))
                     .unwrap();
             }
             _ => panic!("render_cleanup_sub_state called but app is not in Cleanup mode"),

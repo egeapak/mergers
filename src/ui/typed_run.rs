@@ -1,6 +1,6 @@
 //! Typed run loop implementations for mode-specific state machines.
 //!
-//! This module provides fully type-safe run loops that use [`TypedAppState`]
+//! This module provides fully type-safe run loops that use [`AppState`]
 //! and mode-specific state enums instead of `Box<dyn AppState>`. This enables
 //! compile-time verification of state transitions within each mode.
 //!
@@ -22,7 +22,7 @@
 
 use crate::ui::EventSource;
 use crate::ui::apps::{CleanupApp, MergeApp, MigrationApp};
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::typed::{AppState, StateChange};
 use crate::ui::state::{CleanupModeState, MergeState, MigrationModeState};
 use crossterm::event::{Event, KeyCode};
 use ratatui::Terminal;
@@ -31,11 +31,11 @@ use ratatui::Terminal;
 macro_rules! handle_typed_state_change {
     ($result:expr, $current_state:expr) => {
         match $result {
-            TypedStateChange::Keep => {}
-            TypedStateChange::Change(new_state) => {
+            StateChange::Keep => {}
+            StateChange::Change(new_state) => {
                 $current_state = new_state;
             }
-            TypedStateChange::Exit => break,
+            StateChange::Exit => break,
         }
     };
 }
@@ -44,7 +44,7 @@ macro_rules! handle_typed_state_change {
 ///
 /// This function provides a fully type-safe run loop for merge mode.
 /// All state transitions are verified at compile time through the
-/// [`TypedAppState`] trait and [`MergeState`] enum.
+/// [`AppState`] trait and [`MergeState`] enum.
 ///
 /// # Arguments
 ///
@@ -65,19 +65,19 @@ pub async fn run_merge_mode<B: ratatui::backend::Backend>(
     let mut current_state = initial_state;
 
     loop {
-        terminal.draw(|f| TypedAppState::ui(&mut current_state, f, app))?;
+        terminal.draw(|f| AppState::ui(&mut current_state, f, app))?;
 
         if event_source.poll(std::time::Duration::from_millis(50))? {
             match event_source.read()? {
                 Event::Key(key) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_key(&mut current_state, key.code, app).await,
+                        AppState::process_key(&mut current_state, key.code, app).await,
                         current_state
                     );
                 }
                 Event::Mouse(mouse) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_mouse(&mut current_state, mouse, app).await,
+                        AppState::process_mouse(&mut current_state, mouse, app).await,
                         current_state
                     );
                 }
@@ -85,7 +85,7 @@ pub async fn run_merge_mode<B: ratatui::backend::Backend>(
             }
         } else {
             handle_typed_state_change!(
-                TypedAppState::process_key(&mut current_state, KeyCode::Null, app).await,
+                AppState::process_key(&mut current_state, KeyCode::Null, app).await,
                 current_state
             );
         }
@@ -98,7 +98,7 @@ pub async fn run_merge_mode<B: ratatui::backend::Backend>(
 ///
 /// This function provides a fully type-safe run loop for migration mode.
 /// All state transitions are verified at compile time through the
-/// [`TypedAppState`] trait and [`MigrationModeState`] enum.
+/// [`AppState`] trait and [`MigrationModeState`] enum.
 ///
 /// # Arguments
 ///
@@ -119,19 +119,19 @@ pub async fn run_migration_mode<B: ratatui::backend::Backend>(
     let mut current_state = initial_state;
 
     loop {
-        terminal.draw(|f| TypedAppState::ui(&mut current_state, f, app))?;
+        terminal.draw(|f| AppState::ui(&mut current_state, f, app))?;
 
         if event_source.poll(std::time::Duration::from_millis(50))? {
             match event_source.read()? {
                 Event::Key(key) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_key(&mut current_state, key.code, app).await,
+                        AppState::process_key(&mut current_state, key.code, app).await,
                         current_state
                     );
                 }
                 Event::Mouse(mouse) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_mouse(&mut current_state, mouse, app).await,
+                        AppState::process_mouse(&mut current_state, mouse, app).await,
                         current_state
                     );
                 }
@@ -139,7 +139,7 @@ pub async fn run_migration_mode<B: ratatui::backend::Backend>(
             }
         } else {
             handle_typed_state_change!(
-                TypedAppState::process_key(&mut current_state, KeyCode::Null, app).await,
+                AppState::process_key(&mut current_state, KeyCode::Null, app).await,
                 current_state
             );
         }
@@ -152,7 +152,7 @@ pub async fn run_migration_mode<B: ratatui::backend::Backend>(
 ///
 /// This function provides a fully type-safe run loop for cleanup mode.
 /// All state transitions are verified at compile time through the
-/// [`TypedAppState`] trait and [`CleanupModeState`] enum.
+/// [`AppState`] trait and [`CleanupModeState`] enum.
 ///
 /// # Arguments
 ///
@@ -173,19 +173,19 @@ pub async fn run_cleanup_mode<B: ratatui::backend::Backend>(
     let mut current_state = initial_state;
 
     loop {
-        terminal.draw(|f| TypedAppState::ui(&mut current_state, f, app))?;
+        terminal.draw(|f| AppState::ui(&mut current_state, f, app))?;
 
         if event_source.poll(std::time::Duration::from_millis(50))? {
             match event_source.read()? {
                 Event::Key(key) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_key(&mut current_state, key.code, app).await,
+                        AppState::process_key(&mut current_state, key.code, app).await,
                         current_state
                     );
                 }
                 Event::Mouse(mouse) => {
                     handle_typed_state_change!(
-                        TypedAppState::process_mouse(&mut current_state, mouse, app).await,
+                        AppState::process_mouse(&mut current_state, mouse, app).await,
                         current_state
                     );
                 }
@@ -193,7 +193,7 @@ pub async fn run_cleanup_mode<B: ratatui::backend::Backend>(
             }
         } else {
             handle_typed_state_change!(
-                TypedAppState::process_key(&mut current_state, KeyCode::Null, app).await,
+                AppState::process_key(&mut current_state, KeyCode::Null, app).await,
                 current_state
             );
         }

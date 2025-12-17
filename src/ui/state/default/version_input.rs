@@ -1,7 +1,7 @@
 use super::{MergeState, SetupRepoState};
 use crate::{
     ui::apps::MergeApp,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -31,11 +31,11 @@ impl VersionInputState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for VersionInputState {
+impl ModeState for VersionInputState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
@@ -65,32 +65,28 @@ impl TypedModeState for VersionInputState {
         f.render_widget(help, chunks[2]);
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         match code {
             KeyCode::Char(c) => {
                 self.input.push(c);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Enter => {
                 if !self.input.is_empty() {
                     app.set_version(Some(self.input.clone()));
-                    TypedStateChange::Change(MergeState::SetupRepo(SetupRepoState::new()))
+                    StateChange::Change(MergeState::SetupRepo(SetupRepoState::new()))
                 } else {
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
             }
-            KeyCode::Esc => TypedStateChange::Change(MergeState::PullRequestSelection(
+            KeyCode::Esc => StateChange::Change(MergeState::PullRequestSelection(
                 super::PullRequestSelectionState::new(),
             )),
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 

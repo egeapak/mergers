@@ -172,7 +172,7 @@ impl MigrationApp {
     }
 
     // ========================================================================
-    // Field Accessors (for TypedAppState compatibility)
+    // Field Accessors (for AppState compatibility)
     // ========================================================================
 
     /// Returns a reference to the migration analysis, if available.

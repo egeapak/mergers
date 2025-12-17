@@ -6,7 +6,7 @@
 use crate::models::AppConfig;
 use crate::parsed_property::ParsedProperty;
 use crate::ui::AppMode;
-use crate::ui::state::typed::TypedStateChange;
+use crate::ui::state::typed::StateChange;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -358,17 +358,17 @@ where
     }
 
     /// Handle key input.
-    pub fn handle_key<R, F>(&self, code: KeyCode, make_next_state: F) -> TypedStateChange<R>
+    pub fn handle_key<R, F>(&self, code: KeyCode, make_next_state: F) -> StateChange<R>
     where
         F: FnOnce(&AppConfig) -> R,
     {
         match code {
             KeyCode::Enter => {
                 // Create the next state using the provided function
-                TypedStateChange::Change(make_next_state(&self.config))
+                StateChange::Change(make_next_state(&self.config))
             }
-            KeyCode::Char('q') | KeyCode::Esc => TypedStateChange::Exit,
-            _ => TypedStateChange::Keep,
+            KeyCode::Char('q') | KeyCode::Esc => StateChange::Exit,
+            _ => StateChange::Keep,
         }
     }
 

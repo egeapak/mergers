@@ -2,7 +2,7 @@ use crate::{
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -168,11 +168,11 @@ impl PostCompletionState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for PostCompletionState {
+impl ModeState for PostCompletionState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
@@ -339,32 +339,28 @@ impl TypedModeState for PostCompletionState {
         f.render_widget(instructions_widget, main_chunks[3]);
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Null if !self.completed => {
                 // Auto-process tasks
                 if self.process_current_task(app).await {
                     // All tasks completed, stay in this state to show results
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Enter if self.completed => {
                 // Return to completion state
-                TypedStateChange::Change(MergeState::Completion(
+                StateChange::Change(MergeState::Completion(
                     crate::ui::state::CompletionState::new(),
                 ))
             }
             KeyCode::Char('r') if self.completed && self.has_failed_tasks() => {
                 // Retry failed tasks
                 self.retry_failed_tasks();
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -612,7 +608,7 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Exit
+    /// - Should return StateChange::Exit
     #[tokio::test]
     async fn test_post_completion_quit() {
         let config = create_test_config_default();
@@ -622,9 +618,8 @@ mod tests {
         state.completed = true;
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Post Completion State - Other Keys
@@ -635,7 +630,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep
+    /// - Should return StateChange::Keep
     #[tokio::test]
     async fn test_post_completion_other_keys() {
         let config = create_test_config_default();
@@ -644,9 +639,8 @@ mod tests {
         let mut state = PostCompletionState::new();
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result =
-                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 

@@ -98,7 +98,7 @@ impl CleanupApp {
     }
 
     // ========================================================================
-    // Field Accessors (for TypedAppState compatibility)
+    // Field Accessors (for AppState compatibility)
     // ========================================================================
 
     /// Returns a reference to the cleanup branches.

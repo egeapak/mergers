@@ -6,7 +6,7 @@ use crate::{
     git,
     models::CherryPickItem,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     ui::state::{CherryPickState, ErrorState},
 };
 use async_trait::async_trait;
@@ -79,7 +79,7 @@ impl SetupRepoState {
         };
     }
 
-    async fn setup_repository(&mut self, app: &mut MergeApp) -> TypedStateChange<MergeState> {
+    async fn setup_repository(&mut self, app: &mut MergeApp) -> StateChange<MergeState> {
         // Get SSH URL if needed
         let ssh_url = if app.local_repo().is_none() {
             self.set_status("Fetching repository details...".to_string());
@@ -90,7 +90,7 @@ impl SetupRepoState {
                         "Failed to fetch repository details: {}",
                         e
                     )));
-                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
+                    return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
         } else {
@@ -163,7 +163,7 @@ impl SetupRepoState {
 
                 if cherry_pick_items.is_empty() {
                     app.set_error_message(Some("No commits found to cherry-pick".to_string()));
-                    TypedStateChange::Change(MergeState::Error(ErrorState::new()))
+                    StateChange::Change(MergeState::Error(ErrorState::new()))
                 } else {
                     *app.cherry_pick_items_mut() = cherry_pick_items;
 
@@ -175,15 +175,15 @@ impl SetupRepoState {
                         git::create_branch(app.repo_path().as_ref().unwrap(), &branch_name)
                     {
                         app.set_error_message(Some(format!("Failed to create branch: {}", e)));
-                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
+                        StateChange::Change(MergeState::Error(ErrorState::new()))
                     } else {
-                        TypedStateChange::Change(MergeState::CherryPick(CherryPickState::new()))
+                        StateChange::Change(MergeState::CherryPick(CherryPickState::new()))
                     }
                 }
             }
             Err(e) => {
                 self.set_error(e);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
         }
     }
@@ -192,7 +192,7 @@ impl SetupRepoState {
         &mut self,
         app: &mut MergeApp,
         error: git::RepositorySetupError,
-    ) -> TypedStateChange<MergeState> {
+    ) -> StateChange<MergeState> {
         let version = app.version().unwrap();
 
         match error {
@@ -203,7 +203,7 @@ impl SetupRepoState {
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                 {
                     app.set_error_message(Some(format!("Failed to force delete branch: {}", e)));
-                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
+                    return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
@@ -213,7 +213,7 @@ impl SetupRepoState {
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {
                     app.set_error_message(Some(format!("Failed to force remove worktree: {}", e)));
-                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
+                    return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::Other(_) => {
@@ -227,11 +227,11 @@ impl SetupRepoState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for SetupRepoState {
+impl ModeState for SetupRepoState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
@@ -296,11 +296,7 @@ impl TypedModeState for SetupRepoState {
         }
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         match &self.state {
             SetupState::Error { error, .. } => {
                 match code {
@@ -317,9 +313,9 @@ impl TypedModeState for SetupRepoState {
                     }
                     KeyCode::Esc => {
                         // Go back to previous state or exit
-                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
+                        StateChange::Change(MergeState::Error(ErrorState::new()))
                     }
-                    _ => TypedStateChange::Keep,
+                    _ => StateChange::Keep,
                 }
             }
             _ => {
@@ -327,7 +323,7 @@ impl TypedModeState for SetupRepoState {
                     self.started = true;
                     self.setup_repository(app).await
                 } else {
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
             }
         }
@@ -539,7 +535,7 @@ mod tests {
     /// - Processes Escape key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Change (to ErrorState)
+    /// - Should return StateChange::Change (to ErrorState)
     #[tokio::test]
     async fn test_setup_repo_escape_in_error() {
         let config = create_test_config_default();
@@ -549,8 +545,8 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+            ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Setup Repo State - Other Keys in Error State
@@ -562,7 +558,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep
+    /// - Should return StateChange::Keep
     #[tokio::test]
     async fn test_setup_repo_other_keys_in_error() {
         let config = create_test_config_default();
@@ -572,9 +568,8 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
-            let result =
-                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 
@@ -588,7 +583,7 @@ mod tests {
     /// - Processes a key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep (already started)
+    /// - Should return StateChange::Keep (already started)
     #[tokio::test]
     async fn test_setup_repo_key_when_started() {
         let config = create_test_config_default();
@@ -598,8 +593,8 @@ mod tests {
         state.started = true;
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Setup Repo State - Creating Branch Status

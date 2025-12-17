@@ -8,4 +8,4 @@ pub use cleanup::*;
 pub use default::*;
 pub use migration::*;
 pub use shared::*;
-pub use typed::{TypedAppState, TypedModeState, TypedStateChange};
+pub use typed::{AppState, ModeState, StateChange};

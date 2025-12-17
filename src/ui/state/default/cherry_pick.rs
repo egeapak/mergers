@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     ui::state::{CompletionState, ConflictResolutionState, ErrorState},
 };
 use async_trait::async_trait;
@@ -37,11 +37,11 @@ impl CherryPickState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for CherryPickState {
+impl ModeState for CherryPickState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
@@ -222,11 +222,7 @@ impl TypedModeState for CherryPickState {
         f.render_widget(status_widget, chunks[2]);
     }
 
-    async fn process_key(
-        &mut self,
-        _code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, _code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         if self.processing {
             // First time processing - fetch commits if needed
             self.processing = false;
@@ -244,7 +240,7 @@ impl TypedModeState for CherryPickState {
 
                 if let Err(e) = git::fetch_commits(repo_path, &commits) {
                     app.set_error_message(Some(format!("Failed to fetch commits: {}", e)));
-                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
+                    return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
         }
@@ -258,7 +254,7 @@ impl TypedModeState for CherryPickState {
     }
 }
 
-pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
+pub fn process_next_commit(app: &mut MergeApp) -> StateChange<MergeState> {
     // Skip already processed commits
     while app.current_cherry_pick_index() < app.cherry_pick_items().len() {
         let item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
@@ -270,7 +266,7 @@ pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
 
     // Check if we're done with all commits
     if app.current_cherry_pick_index() >= app.cherry_pick_items().len() {
-        return TypedStateChange::Change(MergeState::Completion(CompletionState::new()));
+        return StateChange::Change(MergeState::Completion(CompletionState::new()));
     }
 
     // Process the current commit
@@ -289,13 +285,13 @@ pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
             item.status = CherryPickStatus::Success;
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            TypedStateChange::Change(MergeState::CherryPick(
+            StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),
             ))
         }
         Ok(git::CherryPickResult::Conflict(files)) => {
             item.status = CherryPickStatus::Conflict;
-            TypedStateChange::Change(MergeState::ConflictResolution(
+            StateChange::Change(MergeState::ConflictResolution(
                 ConflictResolutionState::new(files),
             ))
         }
@@ -303,7 +299,7 @@ pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
             item.status = CherryPickStatus::Failed(msg);
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            TypedStateChange::Change(MergeState::CherryPick(
+            StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),
             ))
         }
@@ -311,7 +307,7 @@ pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
             item.status = CherryPickStatus::Failed(e.to_string());
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            TypedStateChange::Change(MergeState::CherryPick(
+            StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),
             ))
         }

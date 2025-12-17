@@ -10,7 +10,7 @@ use super::{
 };
 use crate::ui::apps::CleanupApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
-use crate::ui::state::typed::{TypedAppState, TypedModeState, TypedStateChange};
+use crate::ui::state::typed::{AppState, ModeState, StateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -40,9 +40,9 @@ use ratatui::Frame;
 ///
 /// // Process state machine
 /// match state.process_key(KeyCode::Enter, &mut app).await {
-///     TypedStateChange::Keep => { /* stay in current state */ }
-///     TypedStateChange::Change(new_state) => state = new_state,
-///     TypedStateChange::Exit => { /* exit application */ }
+///     StateChange::Keep => { /* stay in current state */ }
+///     StateChange::Change(new_state) => state = new_state,
+///     StateChange::Exit => { /* exit application */ }
 /// }
 /// ```
 #[allow(clippy::large_enum_variant)]
@@ -102,42 +102,38 @@ impl CleanupModeState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// AppState Implementation
 // ============================================================================
 //
-// This implementation delegates to the inner state's TypedAppState implementation,
+// This implementation delegates to the inner state's AppState implementation,
 // providing fully typed state transitions without Box<dyn AppState>.
 
 #[async_trait]
-impl TypedAppState for CleanupModeState {
+impl AppState for CleanupModeState {
     type App = CleanupApp;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.render(f),
-            CleanupModeState::DataLoading(state) => TypedModeState::ui(state, f, app),
-            CleanupModeState::BranchSelection(state) => TypedModeState::ui(state, f, app),
-            CleanupModeState::Execution(state) => TypedModeState::ui(state, f, app),
-            CleanupModeState::Results(state) => TypedModeState::ui(state, f, app),
+            CleanupModeState::DataLoading(state) => ModeState::ui(state, f, app),
+            CleanupModeState::BranchSelection(state) => ModeState::ui(state, f, app),
+            CleanupModeState::Execution(state) => ModeState::ui(state, f, app),
+            CleanupModeState::Results(state) => ModeState::ui(state, f, app),
             CleanupModeState::Error(state) => state.render(f, app.error_message()),
         }
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut CleanupApp) -> TypedStateChange<Self> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut CleanupApp) -> StateChange<Self> {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.handle_key(code, |config| {
                 CleanupModeState::DataLoading(CleanupDataLoadingState::new(config.clone()))
             }),
-            CleanupModeState::DataLoading(state) => {
-                TypedModeState::process_key(state, code, app).await
-            }
+            CleanupModeState::DataLoading(state) => ModeState::process_key(state, code, app).await,
             CleanupModeState::BranchSelection(state) => {
-                TypedModeState::process_key(state, code, app).await
+                ModeState::process_key(state, code, app).await
             }
-            CleanupModeState::Execution(state) => {
-                TypedModeState::process_key(state, code, app).await
-            }
-            CleanupModeState::Results(state) => TypedModeState::process_key(state, code, app).await,
+            CleanupModeState::Execution(state) => ModeState::process_key(state, code, app).await,
+            CleanupModeState::Results(state) => ModeState::process_key(state, code, app).await,
             CleanupModeState::Error(state) => state.handle_key(code),
         }
     }
@@ -146,22 +142,18 @@ impl TypedAppState for CleanupModeState {
         &mut self,
         event: MouseEvent,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<Self> {
+    ) -> StateChange<Self> {
         match self {
-            CleanupModeState::SettingsConfirmation(_) => TypedStateChange::Keep,
+            CleanupModeState::SettingsConfirmation(_) => StateChange::Keep,
             CleanupModeState::DataLoading(state) => {
-                TypedModeState::process_mouse(state, event, app).await
+                ModeState::process_mouse(state, event, app).await
             }
             CleanupModeState::BranchSelection(state) => {
-                TypedModeState::process_mouse(state, event, app).await
+                ModeState::process_mouse(state, event, app).await
             }
-            CleanupModeState::Execution(state) => {
-                TypedModeState::process_mouse(state, event, app).await
-            }
-            CleanupModeState::Results(state) => {
-                TypedModeState::process_mouse(state, event, app).await
-            }
-            CleanupModeState::Error(_) => TypedStateChange::Keep,
+            CleanupModeState::Execution(state) => ModeState::process_mouse(state, event, app).await,
+            CleanupModeState::Results(state) => ModeState::process_mouse(state, event, app).await,
+            CleanupModeState::Error(_) => StateChange::Keep,
         }
     }
 

@@ -3,7 +3,7 @@ use crate::{
     models::WorkItemHistory,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     utils::html_to_lines,
 };
 use anyhow::{Result, bail};
@@ -1122,11 +1122,11 @@ impl PullRequestSelectionState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for PullRequestSelectionState {
+impl ModeState for PullRequestSelectionState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
@@ -1355,31 +1355,27 @@ impl TypedModeState for PullRequestSelectionState {
         }
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         // Handle search iteration mode first (even when search_mode is false)
         if self.search_iteration_mode && !self.search_mode {
             match code {
                 KeyCode::Char('n') => {
                     self.navigate_search_results(1);
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 KeyCode::Char('N') => {
                     self.navigate_search_results(-1);
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 KeyCode::Esc => {
                     self.exit_search_mode();
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 KeyCode::Enter => {
                     // In search iteration mode, Enter should NOT go to version input
                     // but should exit search mode
                     self.exit_search_mode();
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 _ => {
                     // For other keys, fall through to normal handling
@@ -1394,28 +1390,28 @@ impl TypedModeState for PullRequestSelectionState {
                 match code {
                     KeyCode::Char('n') => {
                         self.navigate_search_results(1);
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
                     KeyCode::Char('N') => {
                         self.navigate_search_results(-1);
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
                     KeyCode::Esc | KeyCode::Enter => {
                         self.exit_search_mode();
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
-                    _ => TypedStateChange::Keep,
+                    _ => StateChange::Keep,
                 }
             } else {
                 // In search input mode
                 match code {
                     KeyCode::Char(c) => {
                         self.search_input.push(c);
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
                     KeyCode::Backspace => {
                         self.search_input.pop();
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
                     KeyCode::Enter => {
                         if !self.search_input.trim().is_empty() {
@@ -1425,13 +1421,13 @@ impl TypedModeState for PullRequestSelectionState {
                                 self.search_mode = false;
                             }
                         }
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
                     KeyCode::Esc => {
                         self.exit_search_mode();
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     }
-                    _ => TypedStateChange::Keep,
+                    _ => StateChange::Keep,
                 }
             }
         } else if self.multi_select_mode {
@@ -1439,70 +1435,70 @@ impl TypedModeState for PullRequestSelectionState {
             match code {
                 KeyCode::Char('q') | KeyCode::Esc => {
                     self.exit_multi_select_mode();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Up => {
                     self.previous_state();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Down => {
                     self.next_state();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char(' ') => {
                     self.toggle_state_in_filter();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Enter => {
                     self.select_all_with_filter_states(app);
                     self.exit_multi_select_mode();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('c') => {
                     self.clear_all_selections(app);
                     self.exit_multi_select_mode();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('a') => {
                     // Select all available states
                     for state in &self.available_states.clone() {
                         self.selected_filter_states.insert(state.clone());
                     }
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
-                _ => TypedStateChange::Keep,
+                _ => StateChange::Keep,
             }
         } else {
             // Handle normal mode keys
             match code {
-                KeyCode::Char('q') => TypedStateChange::Exit,
+                KeyCode::Char('q') => StateChange::Exit,
                 KeyCode::Up => {
                     self.previous(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Down => {
                     self.next(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Left => {
                     self.previous_work_item(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Right => {
                     self.next_work_item(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char(' ') => {
                     self.toggle_selection(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('s') => {
                     self.enter_multi_select_mode(app);
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('/') => {
                     self.enter_search_mode();
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('p') => {
                     if let Some(i) = self.table_state.selected()
@@ -1510,7 +1506,7 @@ impl TypedModeState for PullRequestSelectionState {
                     {
                         app.open_pr_in_browser(pr.pr.id);
                     }
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Char('w') => {
                     if let Some(pr_index) = self.table_state.selected()
@@ -1529,20 +1525,20 @@ impl TypedModeState for PullRequestSelectionState {
                             app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
                     }
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
                 KeyCode::Enter => {
                     if app.get_selected_prs().is_empty() {
-                        TypedStateChange::Keep
+                        StateChange::Keep
                     } else {
-                        TypedStateChange::Change(MergeState::VersionInput(VersionInputState::new()))
+                        StateChange::Change(MergeState::VersionInput(VersionInputState::new()))
                     }
                 }
                 KeyCode::Char('r') => {
                     // Refresh: go back to data loading state to re-fetch PRs
-                    TypedStateChange::Change(MergeState::DataLoading(DataLoadingState::new()))
+                    StateChange::Change(MergeState::DataLoading(DataLoadingState::new()))
                 }
-                _ => TypedStateChange::Keep,
+                _ => StateChange::Keep,
             }
         }
     }
@@ -1551,10 +1547,10 @@ impl TypedModeState for PullRequestSelectionState {
         &mut self,
         event: MouseEvent,
         app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    ) -> StateChange<MergeState> {
         // Don't process mouse events in search mode or multi-select mode
         if self.search_mode || self.multi_select_mode {
-            return TypedStateChange::Keep;
+            return StateChange::Keep;
         }
 
         match event.kind {
@@ -1562,13 +1558,13 @@ impl TypedModeState for PullRequestSelectionState {
                 if self.is_in_table(event.column, event.row) {
                     self.previous(app);
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             MouseEventKind::ScrollDown => {
                 if self.is_in_table(event.column, event.row) {
                     self.next(app);
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(row) = self.mouse_y_to_row(event.row, app.pull_requests().len()) {
@@ -1595,9 +1591,9 @@ impl TypedModeState for PullRequestSelectionState {
                         self.last_click_row = Some(row);
                     }
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -1649,7 +1645,7 @@ mod tests {
     use super::*;
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
-        state::typed::TypedAppState,
+        state::typed::AppState,
         testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
     };
     use insta::assert_snapshot;
@@ -2262,7 +2258,7 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Exit
+    /// - Should return StateChange::Exit
     #[tokio::test]
     async fn test_pr_selection_quit() {
         let config = create_test_config_default();
@@ -2273,9 +2269,8 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # PR Selection State - Navigate Up Key
@@ -2297,9 +2292,8 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
         state.table_state.select(Some(1));
 
-        let result =
-            TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+        let result = ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert_eq!(state.table_state.selected(), Some(0));
     }
 
@@ -2323,8 +2317,8 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert_eq!(state.table_state.selected(), Some(1));
     }
 
@@ -2350,16 +2344,14 @@ mod tests {
         assert!(!harness.app.pull_requests()[0].selected);
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(harness.app.pull_requests()[0].selected);
 
         // Toggle again
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(!harness.app.pull_requests()[0].selected);
     }
 
@@ -2371,7 +2363,7 @@ mod tests {
     /// - Processes Enter key with no PRs selected
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep (don't proceed)
+    /// - Should return StateChange::Keep (don't proceed)
     #[tokio::test]
     async fn test_pr_selection_enter_no_selection() {
         let config = create_test_config_default();
@@ -2382,8 +2374,8 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # PR Selection State - Enter With Selection
@@ -2408,8 +2400,8 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+            ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # PR Selection State - Refresh Key
@@ -2431,9 +2423,8 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+            ModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # PR Selection State - Enter Search Mode
@@ -2456,9 +2447,8 @@ mod tests {
         assert!(!state.search_mode);
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('/'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('/'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(state.search_mode);
     }
 
@@ -2482,9 +2472,8 @@ mod tests {
         assert!(!state.multi_select_mode);
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(state.multi_select_mode);
     }
 
@@ -2508,15 +2497,15 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
         state.search_mode = true;
 
-        TypedModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
-        TypedModeState::process_key(&mut state, KeyCode::Char('e'), harness.merge_app_mut()).await;
-        TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
-        TypedModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('e'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
 
         assert_eq!(state.search_input, "test");
 
         // Test backspace
-        TypedModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
         assert_eq!(state.search_input, "tes");
     }
 
@@ -2541,8 +2530,8 @@ mod tests {
         state.search_mode = true;
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(!state.search_mode);
     }
 
@@ -2568,10 +2557,10 @@ mod tests {
         state.available_states = crate::ui::testing::create_test_work_item_states();
         state.state_selection_index = 0;
 
-        TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         assert_eq!(state.state_selection_index, 1);
 
-        TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         assert_eq!(state.state_selection_index, 0);
     }
 
@@ -2599,7 +2588,7 @@ mod tests {
 
         assert!(state.selected_filter_states.is_empty());
 
-        TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
         assert!(
             state
                 .selected_filter_states
@@ -2628,8 +2617,8 @@ mod tests {
         state.multi_select_mode = true;
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert!(!state.multi_select_mode);
     }
 
@@ -2653,10 +2642,10 @@ mod tests {
         state.table_state.select(Some(2)); // Select PR with multiple work items
         state.work_item_index = 0;
 
-        TypedModeState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
         assert_eq!(state.work_item_index, 1);
 
-        TypedModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
         assert_eq!(state.work_item_index, 0);
     }
 
@@ -2668,7 +2657,7 @@ mod tests {
     /// - Processes 'p' key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep
+    /// - Should return StateChange::Keep
     #[tokio::test]
     async fn test_pr_selection_open_pr() {
         let config = create_test_config_default();
@@ -2680,9 +2669,8 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # PR Selection State - Open Work Items Key
@@ -2693,7 +2681,7 @@ mod tests {
     /// - Processes 'w' key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep
+    /// - Should return StateChange::Keep
     #[tokio::test]
     async fn test_pr_selection_open_work_items() {
         let config = create_test_config_default();
@@ -2705,9 +2693,8 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedModeState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # PR Selection State - Search Dialog Display
@@ -2844,11 +2831,11 @@ mod tests {
         state.current_search_index = 0;
 
         // Navigate next
-        TypedModeState::process_key(&mut state, KeyCode::Char('n'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('n'), harness.merge_app_mut()).await;
         assert_eq!(state.current_search_index, 1);
 
         // Navigate previous
-        TypedModeState::process_key(&mut state, KeyCode::Char('N'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('N'), harness.merge_app_mut()).await;
         assert_eq!(state.current_search_index, 0);
     }
 
@@ -2873,7 +2860,7 @@ mod tests {
         state.search_iteration_mode = true;
         state.search_results = vec![0];
 
-        TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
         assert!(!state.search_iteration_mode);
     }
 
@@ -2898,7 +2885,7 @@ mod tests {
         state.multi_select_mode = true;
         state.available_states = crate::ui::testing::create_test_work_item_states();
 
-        TypedModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
         assert_eq!(
             state.selected_filter_states.len(),
             state.available_states.len()
@@ -2927,7 +2914,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
 
-        TypedModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
         assert!(!state.multi_select_mode);
         assert!(!harness.app.pull_requests()[0].selected);
     }

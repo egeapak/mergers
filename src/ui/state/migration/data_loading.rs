@@ -8,7 +8,7 @@ use crate::{
     migration::MigrationAnalyzer,
     models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     utils::throttle::NetworkProcessor,
 };
 use anyhow::{Context, Result, bail};
@@ -601,11 +601,11 @@ impl MigrationDataLoadingState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for MigrationDataLoadingState {
+impl ModeState for MigrationDataLoadingState {
     type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MigrationApp) {
@@ -693,15 +693,15 @@ impl TypedModeState for MigrationDataLoadingState {
         &mut self,
         code: KeyCode,
         app: &mut MigrationApp,
-    ) -> TypedStateChange<MigrationModeState> {
+    ) -> StateChange<MigrationModeState> {
         // Start loading on first render
         if !self.loaded && code == KeyCode::Null {
             self.loaded = true;
             if let Err(e) = self.start_pr_fetching(app).await {
                 self.error = Some(e.to_string());
-                return TypedStateChange::Keep;
+                return StateChange::Keep;
             }
-            return TypedStateChange::Keep;
+            return StateChange::Keep;
         }
 
         // Process loading stages
@@ -722,7 +722,7 @@ impl TypedModeState for MigrationDataLoadingState {
                             self.error = Some(e.to_string());
                         }
                     }
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 LoadingStage::SettingUpRepository => {
                     match self.check_repository_setup_progress().await {
@@ -739,11 +739,11 @@ impl TypedModeState for MigrationDataLoadingState {
                             self.error = Some(e.to_string());
                         }
                     }
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 LoadingStage::FetchingWorkItems => {
                     self.loading_stage = LoadingStage::WaitingForWorkItems;
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 LoadingStage::WaitingForWorkItems => {
                     match self.check_work_items_progress(app).await {
@@ -760,13 +760,13 @@ impl TypedModeState for MigrationDataLoadingState {
                             self.error = Some(e.to_string());
                         }
                     }
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 LoadingStage::RunningAnalysis => {
                     match self.check_analysis_progress(app).await {
                         Ok(true) => {
                             // Analysis completed, transition to results state
-                            return TypedStateChange::Change(MigrationModeState::Results(
+                            return StateChange::Change(MigrationModeState::Results(
                                 super::MigrationResultsState::new(),
                             ));
                         }
@@ -777,24 +777,24 @@ impl TypedModeState for MigrationDataLoadingState {
                             self.error = Some(e.to_string());
                         }
                     }
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
                 LoadingStage::Complete => {
                     // Should transition to results, but handle just in case
-                    return TypedStateChange::Change(MigrationModeState::Results(
+                    return StateChange::Change(MigrationModeState::Results(
                         super::MigrationResultsState::new(),
                     ));
                 }
                 LoadingStage::NotStarted => {
                     // Should not happen, but handle gracefully
-                    return TypedStateChange::Keep;
+                    return StateChange::Keep;
                 }
             }
         }
 
         // Handle user input
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Char('r') if self.error.is_some() => {
                 // Clean up any existing worktree before retry
                 app.worktree.cleanup();
@@ -817,15 +817,15 @@ impl TypedModeState for MigrationDataLoadingState {
                 self.repo_path = None;
                 self.base_repo_path = None;
                 self.terminal_states = None;
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             _ if matches!(self.loading_stage, LoadingStage::Complete) => {
                 // Any key continues after completion
-                TypedStateChange::Change(MigrationModeState::Results(
+                StateChange::Change(MigrationModeState::Results(
                     super::MigrationResultsState::new(),
                 ))
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -1074,16 +1074,16 @@ mod tests {
 
         // Test quit at various stages
         state.loading_stage = LoadingStage::NotStarted;
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, TypedStateChange::Exit));
+        let result = ModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
 
         state.loading_stage = LoadingStage::FetchingPullRequests;
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, TypedStateChange::Exit));
+        let result = ModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
 
         state.loading_stage = LoadingStage::RunningAnalysis;
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
-        assert!(matches!(result, TypedStateChange::Exit));
+        let result = ModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Retry Resets State When Error Exists
@@ -1118,10 +1118,10 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press 'r' to retry
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = ModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // Verify state was reset
-        assert!(matches!(result, TypedStateChange::Keep));
+        assert!(matches!(result, StateChange::Keep));
         assert!(state.error.is_none());
         assert_eq!(state.loading_stage, LoadingStage::NotStarted);
         assert_eq!(state.progress, 0.0);
@@ -1160,10 +1160,10 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press 'r' without error
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = ModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // State should be unchanged
-        assert!(matches!(result, TypedStateChange::Keep));
+        assert!(matches!(result, StateChange::Keep));
         assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
         assert_eq!(state.progress, 0.5);
         assert!(state.loaded);
@@ -1193,13 +1193,13 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press Enter to continue
-        let result = TypedModeState::process_key(&mut state, KeyCode::Enter, &mut app).await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        let result = ModeState::process_key(&mut state, KeyCode::Enter, &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
 
         // Reset and test with space
         state.loading_stage = LoadingStage::Complete;
-        let result = TypedModeState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        let result = ModeState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Loading Message for All Stages
@@ -1340,10 +1340,10 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Trigger initial load
-        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        let result = ModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
 
         // Verify state after trigger
-        assert!(matches!(result, TypedStateChange::Keep));
+        assert!(matches!(result, StateChange::Keep));
         assert!(state.loaded);
         assert_eq!(state.loading_stage, LoadingStage::FetchingPullRequests);
         assert!(state.pr_fetch_task.is_some());
@@ -1373,8 +1373,8 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // KeyCode::Null at Complete should transition
-        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        let result = ModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Migration Data Loading - Error State
@@ -1504,8 +1504,8 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Should handle gracefully
-        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+        let result = ModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # State Constructor Initializes Correctly

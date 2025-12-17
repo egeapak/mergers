@@ -4,7 +4,7 @@
 //! that can work with any mode-specific app type (MergeApp, MigrationApp, CleanupApp).
 
 use crate::ui::AppMode;
-use crate::ui::state::typed::TypedStateChange;
+use crate::ui::state::typed::StateChange;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -100,10 +100,10 @@ where
     }
 
     /// Handle key input.
-    pub fn handle_key<R>(&self, code: KeyCode) -> TypedStateChange<R> {
+    pub fn handle_key<R>(&self, code: KeyCode) -> StateChange<R> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
-            _ => TypedStateChange::Keep,
+            KeyCode::Char('q') => StateChange::Exit,
+            _ => StateChange::Keep,
         }
     }
 

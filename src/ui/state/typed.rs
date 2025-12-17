@@ -1,4 +1,4 @@
-//! Typed app state infrastructure with associated types.
+//! App state infrastructure with associated types.
 //!
 //! This module provides the type-safe state infrastructure that uses
 //! associated types to ensure states receive correctly-typed app instances.
@@ -6,19 +6,19 @@
 //! # Architecture
 //!
 //! The key components are:
-//! - [`TypedAppState`]: Trait for mode state enums (e.g., `MergeState`) with
-//!   associated `App` type. Returns `TypedStateChange<Self>` for type-safe transitions.
-//! - [`TypedModeState`]: Trait for individual states (e.g., `DataLoadingState`) within
+//! - [`AppState`]: Trait for mode state enums (e.g., `MergeState`) with
+//!   associated `App` type. Returns `StateChange<Self>` for type-safe transitions.
+//! - [`ModeState`]: Trait for individual states (e.g., `DataLoadingState`) within
 //!   a mode. Has associated `Mode` type pointing to the mode enum. The `App` type is
-//!   derived from the mode's `TypedAppState` implementation.
-//! - [`TypedStateChange`]: Generic state change enum for type-safe transitions
+//!   derived from the mode's `AppState` implementation.
+//! - [`StateChange`]: Generic state change enum for type-safe transitions
 //!
 //! # Two-Trait Design
 //!
-//! The separation into `TypedAppState` and `TypedModeState` reduces boilerplate:
-//! - Mode enums implement `TypedAppState` and declare `type App`
-//! - Sub-states implement `TypedModeState` and only declare `type Mode`
-//! - The `App` type is automatically derived: `<Self::Mode as TypedAppState>::App`
+//! The separation into `AppState` and `ModeState` reduces boilerplate:
+//! - Mode enums implement `AppState` and declare `type App`
+//! - Sub-states implement `ModeState` and only declare `type Mode`
+//! - The `App` type is automatically derived: `<Self::Mode as AppState>::App`
 //!
 //! This means each sub-state only needs to specify one associated type instead of two.
 
@@ -27,17 +27,17 @@ use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
 
-/// State change result from typed state operations.
+/// State change result from state operations.
 ///
 /// Generic over the state type `S` to provide type-safe transitions
-/// within a single mode. For example, `TypedStateChange<MergeState>`
+/// within a single mode. For example, `StateChange<MergeState>`
 /// ensures all transitions stay within the merge mode's state machine.
 ///
 /// # Type Parameter
 ///
 /// * `S` - The state enum type (e.g., `MergeState`, `MigrationState`)
 #[derive(Debug)]
-pub enum TypedStateChange<S> {
+pub enum StateChange<S> {
     /// Keep the current state unchanged.
     Keep,
     /// Change to a new state.
@@ -46,33 +46,33 @@ pub enum TypedStateChange<S> {
     Exit,
 }
 
-impl<S> TypedStateChange<S> {
+impl<S> StateChange<S> {
     /// Returns `true` if this is a `Keep` variant.
     pub fn is_keep(&self) -> bool {
-        matches!(self, TypedStateChange::Keep)
+        matches!(self, StateChange::Keep)
     }
 
     /// Returns `true` if this is a `Change` variant.
     pub fn is_change(&self) -> bool {
-        matches!(self, TypedStateChange::Change(_))
+        matches!(self, StateChange::Change(_))
     }
 
     /// Returns `true` if this is an `Exit` variant.
     pub fn is_exit(&self) -> bool {
-        matches!(self, TypedStateChange::Exit)
+        matches!(self, StateChange::Exit)
     }
 
     /// Maps the state type using a conversion function.
     ///
     /// Useful for converting between state representations.
-    pub fn map<T, F>(self, f: F) -> TypedStateChange<T>
+    pub fn map<T, F>(self, f: F) -> StateChange<T>
     where
         F: FnOnce(S) -> T,
     {
         match self {
-            TypedStateChange::Keep => TypedStateChange::Keep,
-            TypedStateChange::Change(s) => TypedStateChange::Change(f(s)),
-            TypedStateChange::Exit => TypedStateChange::Exit,
+            StateChange::Keep => StateChange::Keep,
+            StateChange::Change(s) => StateChange::Change(f(s)),
+            StateChange::Exit => StateChange::Exit,
         }
     }
 }
@@ -90,9 +90,9 @@ impl<S> TypedStateChange<S> {
 /// access to shared state through [`AppBase`]. Mode-specific apps also
 /// implement `Deref<Target = AppBase>` for ergonomic access.
 ///
-/// # Returns `TypedStateChange<Self>`
+/// # Returns `StateChange<Self>`
 ///
-/// Unlike the legacy design, this trait returns `TypedStateChange<Self>`,
+/// Unlike the legacy design, this trait returns `StateChange<Self>`,
 /// meaning mode enums return transitions to themselves. This eliminates the
 /// need for a separate `StateEnum` associated type.
 ///
@@ -100,7 +100,7 @@ impl<S> TypedStateChange<S> {
 ///
 /// ```ignore
 /// use crate::ui::apps::MergeApp;
-/// use crate::ui::state::{TypedAppState, TypedStateChange};
+/// use crate::ui::state::{AppState, StateChange};
 ///
 /// pub enum MergeState {
 ///     DataLoading(DataLoadingState),
@@ -109,12 +109,12 @@ impl<S> TypedStateChange<S> {
 /// }
 ///
 /// #[async_trait]
-/// impl TypedAppState for MergeState {
+/// impl AppState for MergeState {
 ///     type App = MergeApp;
 ///
 ///     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
 ///         match self {
-///             MergeState::DataLoading(state) => TypedModeState::ui(state, f, app),
+///             MergeState::DataLoading(state) => ModeState::ui(state, f, app),
 ///             // ...
 ///         }
 ///     }
@@ -123,10 +123,10 @@ impl<S> TypedStateChange<S> {
 ///         &mut self,
 ///         code: KeyCode,
 ///         app: &mut MergeApp
-///     ) -> TypedStateChange<Self> {
+///     ) -> StateChange<Self> {
 ///         match self {
 ///             MergeState::DataLoading(state) => {
-///                 TypedModeState::process_key(state, code, app).await
+///                 ModeState::process_key(state, code, app).await
 ///             }
 ///             // ...
 ///         }
@@ -138,7 +138,7 @@ impl<S> TypedStateChange<S> {
 ///
 /// [`AppBase`]: crate::ui::AppBase
 #[async_trait]
-pub trait TypedAppState: Send + Sync + Sized {
+pub trait AppState: Send + Sync + Sized {
     /// The app type this state works with.
     ///
     /// Must implement [`AppMode`] to ensure access to shared state.
@@ -162,8 +162,8 @@ pub trait TypedAppState: Send + Sync + Sized {
     /// # Returns
     ///
     /// A state change indicating whether to keep, change, or exit.
-    /// Returns `TypedStateChange<Self>` for type-safe transitions within the mode.
-    async fn process_key(&mut self, code: KeyCode, app: &mut Self::App) -> TypedStateChange<Self>;
+    /// Returns `StateChange<Self>` for type-safe transitions within the mode.
+    async fn process_key(&mut self, code: KeyCode, app: &mut Self::App) -> StateChange<Self>;
 
     /// Process mouse input.
     ///
@@ -181,8 +181,8 @@ pub trait TypedAppState: Send + Sync + Sized {
         &mut self,
         _event: MouseEvent,
         _app: &mut Self::App,
-    ) -> TypedStateChange<Self> {
-        TypedStateChange::Keep
+    ) -> StateChange<Self> {
+        StateChange::Keep
     }
 
     /// Get this state's name for logging/debugging.
@@ -197,21 +197,21 @@ pub trait TypedAppState: Send + Sync + Sized {
 ///
 /// # Associated Type
 ///
-/// The `Mode` associated type must implement [`TypedAppState`]. The `App` type
+/// The `Mode` associated type must implement [`AppState`]. The `App` type
 /// is automatically derived from `Mode::App`, reducing boilerplate.
 ///
 /// # Example
 ///
 /// ```ignore
 /// use crate::ui::apps::MergeApp;
-/// use crate::ui::state::{MergeState, TypedModeState, TypedStateChange};
+/// use crate::ui::state::{MergeState, ModeState, StateChange};
 ///
 /// pub struct DataLoadingState {
 ///     loading_stage: LoadingStage,
 /// }
 ///
 /// #[async_trait]
-/// impl TypedModeState for DataLoadingState {
+/// impl ModeState for DataLoadingState {
 ///     type Mode = MergeState;
 ///     // App is automatically MergeApp (from MergeState::App)
 ///
@@ -223,20 +223,20 @@ pub trait TypedAppState: Send + Sync + Sized {
 ///         &mut self,
 ///         code: KeyCode,
 ///         app: &mut MergeApp
-///     ) -> TypedStateChange<MergeState> {
+///     ) -> StateChange<MergeState> {
 ///         // State transitions return MergeState variants
-///         TypedStateChange::Change(MergeState::PullRequestSelection(...))
+///         StateChange::Change(MergeState::PullRequestSelection(...))
 ///     }
 ///
 ///     fn name(&self) -> &'static str { "DataLoading" }
 /// }
 /// ```
 #[async_trait]
-pub trait TypedModeState: Send + Sync {
+pub trait ModeState: Send + Sync {
     /// The mode state enum this state belongs to.
     ///
-    /// Must implement [`TypedAppState`]. The app type is derived from this.
-    type Mode: TypedAppState;
+    /// Must implement [`AppState`]. The app type is derived from this.
+    type Mode: AppState;
 
     /// Render the state's UI.
     ///
@@ -244,7 +244,7 @@ pub trait TypedModeState: Send + Sync {
     ///
     /// * `f` - The frame to render into
     /// * `app` - Reference to the mode-specific app (derived from `Mode::App`)
-    fn ui(&mut self, f: &mut Frame, app: &<Self::Mode as TypedAppState>::App);
+    fn ui(&mut self, f: &mut Frame, app: &<Self::Mode as AppState>::App);
 
     /// Process keyboard input.
     ///
@@ -256,12 +256,12 @@ pub trait TypedModeState: Send + Sync {
     /// # Returns
     ///
     /// A state change indicating whether to keep, change, or exit.
-    /// Returns `TypedStateChange<Self::Mode>` for transitions within the mode.
+    /// Returns `StateChange<Self::Mode>` for transitions within the mode.
     async fn process_key(
         &mut self,
         code: KeyCode,
-        app: &mut <Self::Mode as TypedAppState>::App,
-    ) -> TypedStateChange<Self::Mode>;
+        app: &mut <Self::Mode as AppState>::App,
+    ) -> StateChange<Self::Mode>;
 
     /// Process mouse input.
     ///
@@ -278,9 +278,9 @@ pub trait TypedModeState: Send + Sync {
     async fn process_mouse(
         &mut self,
         _event: MouseEvent,
-        _app: &mut <Self::Mode as TypedAppState>::App,
-    ) -> TypedStateChange<Self::Mode> {
-        TypedStateChange::Keep
+        _app: &mut <Self::Mode as AppState>::App,
+    ) -> StateChange<Self::Mode> {
+        StateChange::Keep
     }
 
     /// Get this state's name for logging/debugging.
@@ -291,12 +291,12 @@ pub trait TypedModeState: Send + Sync {
 mod tests {
     use super::*;
 
-    /// # TypedStateChange Keep Variant
+    /// # StateChange Keep Variant
     ///
-    /// Tests the Keep variant of TypedStateChange.
+    /// Tests the Keep variant of StateChange.
     ///
     /// ## Test Scenario
-    /// - Creates a TypedStateChange::Keep
+    /// - Creates a StateChange::Keep
     /// - Checks the helper methods
     ///
     /// ## Expected Outcome
@@ -304,19 +304,19 @@ mod tests {
     /// - is_change() returns false
     /// - is_exit() returns false
     #[test]
-    fn test_typed_state_change_keep() {
-        let change: TypedStateChange<String> = TypedStateChange::Keep;
+    fn test_state_change_keep() {
+        let change: StateChange<String> = StateChange::Keep;
         assert!(change.is_keep());
         assert!(!change.is_change());
         assert!(!change.is_exit());
     }
 
-    /// # TypedStateChange Change Variant
+    /// # StateChange Change Variant
     ///
-    /// Tests the Change variant of TypedStateChange.
+    /// Tests the Change variant of StateChange.
     ///
     /// ## Test Scenario
-    /// - Creates a TypedStateChange::Change with a value
+    /// - Creates a StateChange::Change with a value
     /// - Checks the helper methods
     ///
     /// ## Expected Outcome
@@ -324,19 +324,19 @@ mod tests {
     /// - is_change() returns true
     /// - is_exit() returns false
     #[test]
-    fn test_typed_state_change_change() {
-        let change: TypedStateChange<String> = TypedStateChange::Change("new_state".to_string());
+    fn test_state_change_change() {
+        let change: StateChange<String> = StateChange::Change("new_state".to_string());
         assert!(!change.is_keep());
         assert!(change.is_change());
         assert!(!change.is_exit());
     }
 
-    /// # TypedStateChange Exit Variant
+    /// # StateChange Exit Variant
     ///
-    /// Tests the Exit variant of TypedStateChange.
+    /// Tests the Exit variant of StateChange.
     ///
     /// ## Test Scenario
-    /// - Creates a TypedStateChange::Exit
+    /// - Creates a StateChange::Exit
     /// - Checks the helper methods
     ///
     /// ## Expected Outcome
@@ -344,19 +344,19 @@ mod tests {
     /// - is_change() returns false
     /// - is_exit() returns true
     #[test]
-    fn test_typed_state_change_exit() {
-        let change: TypedStateChange<String> = TypedStateChange::Exit;
+    fn test_state_change_exit() {
+        let change: StateChange<String> = StateChange::Exit;
         assert!(!change.is_keep());
         assert!(!change.is_change());
         assert!(change.is_exit());
     }
 
-    /// # TypedStateChange Map Function
+    /// # StateChange Map Function
     ///
     /// Tests the map function for converting state types.
     ///
     /// ## Test Scenario
-    /// - Creates various TypedStateChange variants
+    /// - Creates various StateChange variants
     /// - Maps them using a conversion function
     ///
     /// ## Expected Outcome
@@ -364,31 +364,31 @@ mod tests {
     /// - Exit maps to Exit
     /// - Change applies the conversion function
     #[test]
-    fn test_typed_state_change_map() {
+    fn test_state_change_map() {
         // Test mapping Keep
-        let keep: TypedStateChange<i32> = TypedStateChange::Keep;
-        let mapped_keep: TypedStateChange<String> = keep.map(|n| n.to_string());
+        let keep: StateChange<i32> = StateChange::Keep;
+        let mapped_keep: StateChange<String> = keep.map(|n| n.to_string());
         assert!(mapped_keep.is_keep());
 
         // Test mapping Exit
-        let exit: TypedStateChange<i32> = TypedStateChange::Exit;
-        let mapped_exit: TypedStateChange<String> = exit.map(|n| n.to_string());
+        let exit: StateChange<i32> = StateChange::Exit;
+        let mapped_exit: StateChange<String> = exit.map(|n| n.to_string());
         assert!(mapped_exit.is_exit());
 
         // Test mapping Change
-        let change: TypedStateChange<i32> = TypedStateChange::Change(42);
-        let mapped_change: TypedStateChange<String> = change.map(|n| n.to_string());
+        let change: StateChange<i32> = StateChange::Change(42);
+        let mapped_change: StateChange<String> = change.map(|n| n.to_string());
         assert!(mapped_change.is_change());
-        if let TypedStateChange::Change(s) = mapped_change {
+        if let StateChange::Change(s) = mapped_change {
             assert_eq!(s, "42");
         } else {
             panic!("Expected Change variant");
         }
     }
 
-    /// # TypedStateChange Debug Implementation
+    /// # StateChange Debug Implementation
     ///
-    /// Tests that TypedStateChange implements Debug correctly.
+    /// Tests that StateChange implements Debug correctly.
     ///
     /// ## Test Scenario
     /// - Creates each variant
@@ -397,10 +397,10 @@ mod tests {
     /// ## Expected Outcome
     /// - Should produce readable debug output
     #[test]
-    fn test_typed_state_change_debug() {
-        let keep: TypedStateChange<&str> = TypedStateChange::Keep;
-        let change: TypedStateChange<&str> = TypedStateChange::Change("test");
-        let exit: TypedStateChange<&str> = TypedStateChange::Exit;
+    fn test_state_change_debug() {
+        let keep: StateChange<&str> = StateChange::Keep;
+        let change: StateChange<&str> = StateChange::Change("test");
+        let exit: StateChange<&str> = StateChange::Exit;
 
         assert_eq!(format!("{:?}", keep), "Keep");
         assert_eq!(format!("{:?}", change), "Change(\"test\")");

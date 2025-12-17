@@ -4,7 +4,7 @@ use crate::{
     models::CleanupStatus,
     ui::apps::CleanupApp,
     ui::state::CleanupResultsState,
-    ui::state::typed::{TypedModeState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -129,11 +129,11 @@ impl CleanupExecutionState {
 }
 
 // ============================================================================
-// TypedModeState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedModeState for CleanupExecutionState {
+impl ModeState for CleanupExecutionState {
     type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
@@ -223,11 +223,11 @@ impl TypedModeState for CleanupExecutionState {
         &mut self,
         code: KeyCode,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    ) -> StateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Enter if self.is_complete => {
-                TypedStateChange::Change(CleanupModeState::Results(CleanupResultsState::new()))
+                StateChange::Change(CleanupModeState::Results(CleanupResultsState::new()))
             }
             KeyCode::Null => {
                 // Poll for task completion
@@ -238,14 +238,14 @@ impl TypedModeState for CleanupExecutionState {
 
                     if self.check_progress(app).await {
                         // Auto-transition to results after a brief moment
-                        return TypedStateChange::Change(CleanupModeState::Results(
+                        return StateChange::Change(CleanupModeState::Results(
                             CleanupResultsState::new(),
                         ));
                     }
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
