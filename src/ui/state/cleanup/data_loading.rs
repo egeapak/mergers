@@ -1,7 +1,10 @@
+use super::CleanupModeState;
 use crate::{
     git::{check_patch_merged, list_patch_branches},
     models::AppConfig,
     ui::App,
+    ui::apps::CleanupApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, CleanupBranchSelectionState, StateChange},
 };
 use anyhow::Result;
@@ -62,7 +65,7 @@ impl CleanupDataLoadingState {
         }
     }
 
-    fn start_loading(&mut self, app: &App) {
+    fn start_loading(&mut self, app: &CleanupApp) {
         if self.loading_task.is_some() {
             return;
         }
@@ -78,12 +81,12 @@ impl CleanupDataLoadingState {
         }
 
         let repo_path = local_repo.unwrap().to_string();
-        let target_branch =
-            if let crate::models::AppConfig::Cleanup { cleanup, .. } = app.config().as_ref() {
-                cleanup.target.value().to_string()
-            } else {
-                app.target_branch().to_string()
-            };
+        let target_branch = if let crate::models::AppConfig::Cleanup { cleanup, .. } = &*app.config
+        {
+            cleanup.target.value().to_string()
+        } else {
+            app.target_branch().to_string()
+        };
 
         self.status = "Loading patch branches...".to_string();
         self.progress = 0.1;
@@ -150,9 +153,16 @@ async fn load_and_analyze_branches(
     Ok(branches)
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupDataLoadingState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for CleanupDataLoadingState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -220,9 +230,13 @@ impl AppState for CleanupDataLoadingState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Null => {
                 // Poll for task completion
                 if !self.loaded {
@@ -233,7 +247,7 @@ impl AppState for CleanupDataLoadingState {
                     if self.check_loading_status().await {
                         if self.error.is_some() {
                             // Stay in this state to show the error
-                            return StateChange::Keep;
+                            return TypedStateChange::Keep;
                         } else if let Some(task) = self.loading_task.take()
                             && let Ok(Ok(branches)) = task.await
                         {
@@ -241,20 +255,50 @@ impl AppState for CleanupDataLoadingState {
                             *app.cleanup_branches_mut() = branches;
 
                             // Check if we have a local_repo path set
-                            if let Some(local_repo) = app.local_repo() {
-                                app.set_repo_path(Some(std::path::PathBuf::from(local_repo)));
+                            let repo_path = app.local_repo().map(std::path::PathBuf::from);
+                            if let Some(path) = repo_path {
+                                app.set_repo_path(Some(path));
                             }
 
                             // Transition to branch selection
-                            return StateChange::Change(Box::new(
+                            return TypedStateChange::Change(CleanupModeState::BranchSelection(
                                 CleanupBranchSelectionState::new(),
                             ));
                         }
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupDataLoading"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+
+#[async_trait]
+impl AppState for CleanupDataLoadingState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Cleanup(cleanup_app) = app {
+            TypedAppState::ui(self, f, cleanup_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Cleanup(cleanup_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
@@ -421,9 +465,7 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config.clone());
         let mut state = CleanupDataLoadingState::new(config);
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Exit));
     }
 
@@ -443,7 +485,7 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = state.process_key(key, &mut harness.app).await;
+            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
             assert!(matches!(result, StateChange::Keep));
         }
     }

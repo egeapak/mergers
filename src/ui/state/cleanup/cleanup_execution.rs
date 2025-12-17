@@ -1,7 +1,10 @@
+use super::CleanupModeState;
 use crate::{
     git::force_delete_branch,
     models::CleanupStatus,
     ui::App,
+    ui::apps::CleanupApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, CleanupResultsState, StateChange},
 };
 use async_trait::async_trait;
@@ -37,7 +40,7 @@ impl CleanupExecutionState {
         }
     }
 
-    fn start_cleanup(&mut self, app: &mut App) {
+    fn start_cleanup(&mut self, app: &mut CleanupApp) {
         if self.deletion_tasks.is_some() {
             return;
         }
@@ -83,7 +86,7 @@ impl CleanupExecutionState {
         self.deletion_tasks = Some(tasks);
     }
 
-    async fn check_progress(&mut self, app: &mut App) -> bool {
+    async fn check_progress(&mut self, app: &mut CleanupApp) -> bool {
         if let Some(tasks) = &mut self.deletion_tasks {
             let mut all_complete = true;
 
@@ -113,7 +116,7 @@ impl CleanupExecutionState {
         false
     }
 
-    fn get_progress(&self, app: &App) -> (usize, usize) {
+    fn get_progress(&self, app: &CleanupApp) -> (usize, usize) {
         let total = app.cleanup_branches().iter().filter(|b| b.selected).count();
         let completed = app
             .cleanup_branches()
@@ -126,9 +129,16 @@ impl CleanupExecutionState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupExecutionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CleanupExecutionState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -211,11 +221,15 @@ impl AppState for CleanupExecutionState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Enter if self.is_complete => {
-                StateChange::Change(Box::new(CleanupResultsState::new()))
+                TypedStateChange::Change(CleanupModeState::Results(CleanupResultsState::new()))
             }
             KeyCode::Null => {
                 // Poll for task completion
@@ -226,13 +240,43 @@ impl AppState for CleanupExecutionState {
 
                     if self.check_progress(app).await {
                         // Auto-transition to results after a brief moment
-                        // (in real impl, we might want to add a small delay here)
-                        return StateChange::Change(Box::new(CleanupResultsState::new()));
+                        return TypedStateChange::Change(CleanupModeState::Results(
+                            CleanupResultsState::new(),
+                        ));
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupExecution"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+
+#[async_trait]
+impl AppState for CleanupExecutionState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Cleanup(cleanup_app) = app {
+            TypedAppState::ui(self, f, cleanup_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Cleanup(cleanup_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }

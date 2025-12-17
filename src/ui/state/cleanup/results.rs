@@ -1,6 +1,9 @@
+use super::CleanupModeState;
 use crate::{
     models::CleanupStatus,
     ui::App,
+    ui::apps::CleanupApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
@@ -53,21 +56,27 @@ impl CleanupResultsState {
         };
     }
 
-    fn get_success_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
+    fn get_success_branches<'a>(
+        &self,
+        app: &'a CleanupApp,
+    ) -> Vec<&'a crate::models::CleanupBranch> {
         app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Success))
             .collect()
     }
 
-    fn get_failed_branches<'a>(&self, app: &'a App) -> Vec<&'a crate::models::CleanupBranch> {
+    fn get_failed_branches<'a>(
+        &self,
+        app: &'a CleanupApp,
+    ) -> Vec<&'a crate::models::CleanupBranch> {
         app.cleanup_branches()
             .iter()
             .filter(|b| b.selected && matches!(b.status, CleanupStatus::Failed(_)))
             .collect()
     }
 
-    fn next(&mut self, app: &App) {
+    fn next(&mut self, app: &CleanupApp) {
         let count = match self.current_tab {
             ResultTab::Success => self.get_success_branches(app).len(),
             ResultTab::Failed => self.get_failed_branches(app).len(),
@@ -95,7 +104,7 @@ impl CleanupResultsState {
         list_state.select(Some(i));
     }
 
-    fn previous(&mut self, app: &App) {
+    fn previous(&mut self, app: &CleanupApp) {
         let count = match self.current_tab {
             ResultTab::Success => self.get_success_branches(app).len(),
             ResultTab::Failed => self.get_failed_branches(app).len(),
@@ -124,9 +133,16 @@ impl CleanupResultsState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for CleanupResultsState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CleanupResultsState {
+    type App = CleanupApp;
+    type StateEnum = CleanupModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -260,22 +276,55 @@ impl AppState for CleanupResultsState {
         f.render_widget(help, chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut CleanupApp,
+    ) -> TypedStateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Tab => {
                 self.switch_tab();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Up => {
                 self.previous(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "CleanupResults"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+
+#[async_trait]
+impl AppState for CleanupResultsState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Cleanup(cleanup_app) = app {
+            TypedAppState::ui(self, f, cleanup_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Cleanup(cleanup_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, cleanup_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }

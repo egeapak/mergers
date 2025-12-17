@@ -115,10 +115,10 @@ impl AppState for CleanupModeState {
     fn ui(&mut self, f: &mut Frame, app: &App) {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.ui(f, app),
-            CleanupModeState::DataLoading(state) => state.ui(f, app),
-            CleanupModeState::BranchSelection(state) => state.ui(f, app),
-            CleanupModeState::Execution(state) => state.ui(f, app),
-            CleanupModeState::Results(state) => state.ui(f, app),
+            CleanupModeState::DataLoading(state) => AppState::ui(state, f, app),
+            CleanupModeState::BranchSelection(state) => AppState::ui(state, f, app),
+            CleanupModeState::Execution(state) => AppState::ui(state, f, app),
+            CleanupModeState::Results(state) => AppState::ui(state, f, app),
             CleanupModeState::Error(state) => state.ui(f, app),
         }
     }
@@ -126,22 +126,30 @@ impl AppState for CleanupModeState {
     async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.process_key(code, app).await,
-            CleanupModeState::DataLoading(state) => state.process_key(code, app).await,
-            CleanupModeState::BranchSelection(state) => state.process_key(code, app).await,
-            CleanupModeState::Execution(state) => state.process_key(code, app).await,
-            CleanupModeState::Results(state) => state.process_key(code, app).await,
+            CleanupModeState::DataLoading(state) => AppState::process_key(state, code, app).await,
+            CleanupModeState::BranchSelection(state) => {
+                AppState::process_key(state, code, app).await
+            }
+            CleanupModeState::Execution(state) => AppState::process_key(state, code, app).await,
+            CleanupModeState::Results(state) => AppState::process_key(state, code, app).await,
             CleanupModeState::Error(state) => state.process_key(code, app).await,
         }
     }
 
     async fn process_mouse(&mut self, event: MouseEvent, app: &mut App) -> StateChange {
         match self {
-            CleanupModeState::SettingsConfirmation(state) => state.process_mouse(event, app).await,
-            CleanupModeState::DataLoading(state) => state.process_mouse(event, app).await,
-            CleanupModeState::BranchSelection(state) => state.process_mouse(event, app).await,
-            CleanupModeState::Execution(state) => state.process_mouse(event, app).await,
-            CleanupModeState::Results(state) => state.process_mouse(event, app).await,
-            CleanupModeState::Error(state) => state.process_mouse(event, app).await,
+            CleanupModeState::SettingsConfirmation(state) => {
+                AppState::process_mouse(state.as_mut(), event, app).await
+            }
+            CleanupModeState::DataLoading(state) => {
+                AppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::BranchSelection(state) => {
+                AppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::Execution(state) => AppState::process_mouse(state, event, app).await,
+            CleanupModeState::Results(state) => AppState::process_mouse(state, event, app).await,
+            CleanupModeState::Error(state) => AppState::process_mouse(state, event, app).await,
         }
     }
 }
