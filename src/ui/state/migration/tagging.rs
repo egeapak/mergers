@@ -1,7 +1,7 @@
 use super::{MigrationModeState, MigrationResultsState};
 use crate::{
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -400,13 +400,12 @@ impl MigrationTaggingState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// AppState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationTaggingState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl ModeState for MigrationTaggingState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MigrationApp) {
         let chunks = Layout::default()
@@ -430,10 +429,10 @@ impl TypedAppState for MigrationTaggingState {
         &mut self,
         code: KeyCode,
         app: &mut MigrationApp,
-    ) -> TypedStateChange<MigrationModeState> {
+    ) -> StateChange<MigrationModeState> {
         match code {
-            KeyCode::Char('q') if self.is_complete => TypedStateChange::Exit,
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') if self.is_complete => StateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Null => {
                 // Auto-start tagging and check progress (but don't transition)
                 if !self.is_complete {
@@ -445,13 +444,13 @@ impl TypedAppState for MigrationTaggingState {
                         self.check_progress().await;
                     }
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             _ if self.is_complete => {
                 // Any actual key press returns to results when complete
-                TypedStateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
+                StateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -597,9 +596,9 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
                 .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Migration Tagging State - Quit Key When Complete
@@ -621,9 +620,9 @@ mod tests {
         state.is_complete = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
                 .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Migration Tagging State - Any Key When Complete
@@ -645,9 +644,8 @@ mod tests {
         state.is_complete = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+            ModeState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut()).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Migration Tagging State - Other Keys During Tagging
@@ -668,9 +666,8 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
 
         for key in [KeyCode::Enter, KeyCode::Up, KeyCode::Down] {
-            let result =
-                TypedAppState::process_key(&mut state, key, harness.migration_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.migration_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 

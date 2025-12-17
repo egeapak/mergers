@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     ui::state::{CherryPickState, ConflictResolutionState},
 };
 use async_trait::async_trait;
@@ -124,13 +124,12 @@ impl CherryPickContinueState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CherryPickContinueState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl ModeState for CherryPickContinueState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let is_complete = *self.is_complete.lock().unwrap();
@@ -299,16 +298,12 @@ impl TypedAppState for CherryPickContinueState {
         f.render_widget(instructions_widget, main_chunks[2]);
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         let is_complete = *self.is_complete.lock().unwrap();
 
         // Don't process keys until the command is complete
         if !is_complete {
-            return TypedStateChange::Keep;
+            return StateChange::Keep;
         }
 
         let success = *self.success.lock().unwrap();
@@ -319,7 +314,7 @@ impl TypedAppState for CherryPickContinueState {
                 let current_index = app.current_cherry_pick_index();
                 app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Success;
                 app.set_current_cherry_pick_index(current_index + 1);
-                TypedStateChange::Change(MergeState::CherryPick(
+                StateChange::Change(MergeState::CherryPick(
                     CherryPickState::continue_after_conflict(),
                 ))
             }
@@ -328,7 +323,7 @@ impl TypedAppState for CherryPickContinueState {
                 match code {
                     KeyCode::Char('r') => {
                         // Retry - go back to conflict resolution
-                        TypedStateChange::Change(MergeState::ConflictResolution(
+                        StateChange::Change(MergeState::ConflictResolution(
                             ConflictResolutionState::new(self.conflicted_files.clone()),
                         ))
                     }
@@ -338,7 +333,7 @@ impl TypedAppState for CherryPickContinueState {
                         app.cherry_pick_items_mut()[current_index].status =
                             CherryPickStatus::Skipped;
                         app.set_current_cherry_pick_index(current_index + 1);
-                        TypedStateChange::Change(MergeState::CherryPick(
+                        StateChange::Change(MergeState::CherryPick(
                             CherryPickState::continue_after_conflict(),
                         ))
                     }
@@ -355,16 +350,14 @@ impl TypedAppState for CherryPickContinueState {
                             version,
                             &target_branch,
                         );
-                        TypedStateChange::Change(MergeState::Completion(
-                            super::CompletionState::new(),
-                        ))
+                        StateChange::Change(MergeState::Completion(super::CompletionState::new()))
                     }
-                    _ => TypedStateChange::Keep,
+                    _ => StateChange::Keep,
                 }
             }
             None => {
                 // Should not happen, but handle it
-                TypedStateChange::Keep
+                StateChange::Keep
             }
         }
     }
@@ -864,11 +857,10 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // Should mark the commit as Skipped
         assert!(matches!(
@@ -923,11 +915,10 @@ mod tests {
 
         // Press 'a' to abort
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
 
         // Should transition to CompletionState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Cherry Pick Continue - Skip Does Not Trigger When Successful
@@ -971,11 +962,10 @@ mod tests {
 
         // Press 's' (any key continues on success)
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // Should mark as Success, NOT Skipped
         assert!(matches!(
@@ -1039,10 +1029,9 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
 
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // First commit should be Skipped
         assert!(matches!(
@@ -1105,11 +1094,10 @@ mod tests {
 
         // Press 'r' to retry
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut()).await;
 
         // Should transition to ConflictResolutionState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // Index should still be 0
         assert_eq!(harness.app.current_cherry_pick_index(), 0);

@@ -1,7 +1,7 @@
 use super::{MigrationModeState, MigrationResultsState};
 use crate::{
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -32,13 +32,12 @@ impl MigrationVersionInputState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationVersionInputState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl ModeState for MigrationVersionInputState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         let chunks = Layout::default()
@@ -191,35 +190,35 @@ impl TypedAppState for MigrationVersionInputState {
         &mut self,
         code: KeyCode,
         app: &mut MigrationApp,
-    ) -> TypedStateChange<MigrationModeState> {
+    ) -> StateChange<MigrationModeState> {
         match code {
             KeyCode::Char(c) => {
                 self.input.push(c);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Enter => {
                 if !self.input.trim().is_empty() {
                     app.set_version(Some(self.input.trim().to_string()));
                     // Transition to tagging state
-                    TypedStateChange::Change(MigrationModeState::Tagging(
+                    StateChange::Change(MigrationModeState::Tagging(
                         super::MigrationTaggingState::new(
                             self.input.trim().to_string(),
                             app.tag_prefix().to_string(),
                         ),
                     ))
                 } else {
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 }
             }
             KeyCode::Esc => {
                 // Go back to results to continue reviewing PRs
-                TypedStateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
+                StateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 

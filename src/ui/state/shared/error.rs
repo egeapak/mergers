@@ -1,4 +1,4 @@
-use crate::ui::state::typed::TypedStateChange;
+use crate::ui::state::typed::StateChange;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -23,7 +23,7 @@ impl ErrorState {
     /// Render the error UI with the provided error message.
     ///
     /// This is a mode-agnostic rendering method that can be called from
-    /// any mode's TypedAppState implementation.
+    /// any mode's AppState implementation.
     pub fn render(&mut self, f: &mut Frame, error_msg: Option<&str>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -56,11 +56,11 @@ impl ErrorState {
     /// Handle a key press and return the typed state change.
     ///
     /// This is a mode-agnostic key handler that can be called from
-    /// any mode's TypedAppState implementation.
-    pub fn handle_key<S>(&mut self, code: KeyCode) -> TypedStateChange<S> {
+    /// any mode's AppState implementation.
+    pub fn handle_key<S>(&mut self, code: KeyCode) -> StateChange<S> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
-            _ => TypedStateChange::Keep,
+            KeyCode::Char('q') => StateChange::Exit,
+            _ => StateChange::Keep,
         }
     }
 }

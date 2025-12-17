@@ -4,8 +4,7 @@
 //! that can work with any mode-specific app type (MergeApp, MigrationApp, CleanupApp).
 
 use crate::ui::AppMode;
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
-use async_trait::async_trait;
+use crate::ui::state::typed::StateChange;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -64,16 +63,13 @@ impl<A, S> TypedErrorState<A, S> {
     }
 }
 
-#[async_trait]
-impl<A, S> TypedAppState for TypedErrorState<A, S>
+impl<A, S> TypedErrorState<A, S>
 where
     A: AppMode + Send + Sync + std::ops::Deref<Target = crate::ui::AppBase>,
     S: Send + Sync + 'static,
 {
-    type App = A;
-    type StateEnum = S;
-
-    fn ui(&mut self, f: &mut Frame, app: &A) {
+    /// Render the error UI.
+    pub fn render(&self, f: &mut Frame, app: &A) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -103,14 +99,16 @@ where
         f.render_widget(help, chunks[2]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, _app: &mut A) -> TypedStateChange<S> {
+    /// Handle key input.
+    pub fn handle_key<R>(&self, code: KeyCode) -> StateChange<R> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
-            _ => TypedStateChange::Keep,
+            KeyCode::Char('q') => StateChange::Exit,
+            _ => StateChange::Keep,
         }
     }
 
-    fn name(&self) -> &'static str {
+    /// Get this state's name for logging/debugging.
+    pub fn name(&self) -> &'static str {
         "Error"
     }
 }

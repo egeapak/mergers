@@ -1,6 +1,4 @@
-use crate::{
-    models::AppConfig, parsed_property::ParsedProperty, ui::state::typed::TypedStateChange,
-};
+use crate::{models::AppConfig, parsed_property::ParsedProperty, ui::state::typed::StateChange};
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -27,7 +25,7 @@ impl SettingsConfirmationState {
     /// Render the settings confirmation UI.
     ///
     /// This is a mode-agnostic rendering method that can be called from
-    /// any mode's TypedAppState implementation.
+    /// any mode's AppState implementation.
     pub fn render(&mut self, f: &mut Frame) {
         let area = f.area();
 
@@ -70,14 +68,14 @@ impl SettingsConfirmationState {
     ///
     /// * `code` - The key code pressed
     /// * `make_next_state` - A closure that takes the config and returns the next state
-    pub fn handle_key<S, F>(&self, code: KeyCode, make_next_state: F) -> TypedStateChange<S>
+    pub fn handle_key<S, F>(&self, code: KeyCode, make_next_state: F) -> StateChange<S>
     where
         F: FnOnce(&AppConfig) -> S,
     {
         match code {
-            KeyCode::Enter => TypedStateChange::Change(make_next_state(&self.config)),
-            KeyCode::Char('q') | KeyCode::Esc => TypedStateChange::Exit,
-            _ => TypedStateChange::Keep,
+            KeyCode::Enter => StateChange::Change(make_next_state(&self.config)),
+            KeyCode::Char('q') | KeyCode::Esc => StateChange::Exit,
+            _ => StateChange::Keep,
         }
     }
 

@@ -6,7 +6,7 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{AppConfig, MigrationAnalysis},
-    ui::{AppBase, AppMode},
+    ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -42,10 +42,14 @@ pub struct MigrationApp {
 }
 
 impl MigrationApp {
-    /// Creates a new MigrationApp with the given configuration and client.
-    pub fn new(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new MigrationApp with the given configuration, client, and browser opener.
+    pub fn new(
+        config: Arc<AppConfig>,
+        client: AzureDevOpsClient,
+        browser: Box<dyn BrowserOpener>,
+    ) -> Self {
         Self {
-            base: AppBase::new(config, client),
+            base: AppBase::new(config, client, browser),
             migration_analysis: None,
         }
     }
@@ -172,7 +176,7 @@ impl MigrationApp {
     }
 
     // ========================================================================
-    // Field Accessors (for TypedAppState compatibility)
+    // Field Accessors (for AppState compatibility)
     // ========================================================================
 
     /// Returns a reference to the migration analysis, if available.
@@ -221,6 +225,7 @@ mod tests {
     use crate::{
         models::{MigrationModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
+        ui::browser::MockBrowserOpener,
     };
 
     fn create_test_config() -> Arc<AppConfig> {
@@ -271,7 +276,11 @@ mod tests {
     /// - migration_analysis is None initially
     #[test]
     fn test_migration_app_initialization() {
-        let app = MigrationApp::new(create_test_config(), create_test_client());
+        let app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         assert!(app.migration_analysis.is_none());
     }
@@ -287,7 +296,11 @@ mod tests {
     /// - Can call AppBase methods directly on MigrationApp
     #[test]
     fn test_deref_to_app_base() {
-        let app = MigrationApp::new(create_test_config(), create_test_client());
+        let app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Access AppBase methods via Deref
         assert_eq!(app.organization(), "test_org");
@@ -307,7 +320,11 @@ mod tests {
     /// - Returns configured terminal states
     #[test]
     fn test_terminal_states() {
-        let app = MigrationApp::new(create_test_config(), create_test_client());
+        let app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         let states = app.terminal_states();
         assert_eq!(states.len(), 2);
@@ -327,7 +344,11 @@ mod tests {
     /// - Returns None when no analysis
     #[test]
     fn test_has_manual_override_no_analysis() {
-        let app = MigrationApp::new(create_test_config(), create_test_client());
+        let app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         assert!(app.has_manual_override(123).is_none());
     }
@@ -344,7 +365,11 @@ mod tests {
     /// - All counts return 0
     #[test]
     fn test_count_methods_without_analysis() {
-        let app = MigrationApp::new(create_test_config(), create_test_client());
+        let app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         assert_eq!(app.eligible_count(), 0);
         assert_eq!(app.not_eligible_count(), 0);
@@ -362,7 +387,11 @@ mod tests {
     /// - base() and base_mut() work correctly
     #[test]
     fn test_app_mode_trait() {
-        let mut app = MigrationApp::new(create_test_config(), create_test_client());
+        let mut app = MigrationApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Test base()
         assert_eq!(app.base().organization(), "test_org");

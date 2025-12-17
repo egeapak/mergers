@@ -2,7 +2,7 @@ use super::CleanupModeState;
 use crate::{
     models::CleanupStatus,
     ui::apps::CleanupApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -132,13 +132,12 @@ impl CleanupResultsState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupResultsState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl ModeState for CleanupResultsState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
@@ -278,22 +277,22 @@ impl TypedAppState for CleanupResultsState {
         &mut self,
         code: KeyCode,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    ) -> StateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Tab => {
                 self.switch_tab();
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Up => {
                 self.previous(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 

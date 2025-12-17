@@ -2,7 +2,7 @@ use super::CleanupModeState;
 use crate::{
     ui::apps::CleanupApp,
     ui::state::CleanupExecutionState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -89,13 +89,12 @@ impl CleanupBranchSelectionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupBranchSelectionState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl ModeState for CleanupBranchSelectionState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()
@@ -205,42 +204,40 @@ impl TypedAppState for CleanupBranchSelectionState {
         &mut self,
         code: KeyCode,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    ) -> StateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Up => {
                 self.previous(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Char(' ') => {
                 self.toggle_selection(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Char('a') => {
                 self.select_all_merged(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Char('d') => {
                 self.deselect_all(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Enter => {
                 let selected_count = self.get_selected_count(app);
                 if selected_count == 0 {
                     // No branches selected, stay in this state
-                    TypedStateChange::Keep
+                    StateChange::Keep
                 } else {
                     // Proceed to cleanup execution
-                    TypedStateChange::Change(CleanupModeState::Execution(
-                        CleanupExecutionState::new(),
-                    ))
+                    StateChange::Change(CleanupModeState::Execution(CleanupExecutionState::new()))
                 }
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 

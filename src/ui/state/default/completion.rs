@@ -2,7 +2,7 @@ use crate::{
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -69,9 +69,8 @@ impl CompletionState {
 }
 
 #[async_trait]
-impl TypedAppState for CompletionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl ModeState for CompletionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let main_chunks = Layout::default()
@@ -303,20 +302,16 @@ impl TypedAppState for CompletionState {
         f.render_widget(summary, content_chunks[1]);
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Up => {
                 self.previous(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Char('p') => {
                 if let Some(i) = self.list_state.selected()
@@ -324,7 +319,7 @@ impl TypedAppState for CompletionState {
                 {
                     app.open_pr_in_browser(item.pr_id);
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
@@ -337,12 +332,12 @@ impl TypedAppState for CompletionState {
                         app.open_work_items_in_browser(&pr.work_items);
                     }
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            KeyCode::Char('t') => TypedStateChange::Change(MergeState::PostCompletion(
+            KeyCode::Char('t') => StateChange::Change(MergeState::PostCompletion(
                 crate::ui::state::PostCompletionState::new(),
             )),
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -453,8 +448,8 @@ mod tests {
         assert_eq!(state.list_state.selected(), Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         assert_eq!(state.list_state.selected(), Some(1));
     }
 
@@ -479,9 +474,8 @@ mod tests {
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+        let result = ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
         // Should wrap to last item
         assert_eq!(
             state.list_state.selected(),
@@ -509,9 +503,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Completion State - Tag PRs Key
@@ -534,9 +527,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Change(_)));
+            ModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Completion State - Open PR Key
@@ -559,9 +551,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Completion State - Open Work Items Key
@@ -587,9 +578,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Completion State - Other Keys Ignored
@@ -612,8 +602,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 
@@ -654,12 +644,11 @@ mod tests {
 
         // Should not panic
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+            ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
-        assert!(matches!(result, TypedStateChange::Keep));
+        let result = ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Completion State - With Skipped Items
@@ -721,13 +710,13 @@ mod tests {
 
         // Navigate to end
         for _ in 0..item_count {
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+            ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         }
         // Should wrap to 0
         assert_eq!(state.list_state.selected(), Some(0));
 
         // Navigate up from 0
-        TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         // Should wrap to last item
         assert_eq!(state.list_state.selected(), Some(item_count - 1));
     }

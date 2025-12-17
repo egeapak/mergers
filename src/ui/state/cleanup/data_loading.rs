@@ -4,7 +4,7 @@ use crate::{
     models::AppConfig,
     ui::apps::CleanupApp,
     ui::state::CleanupBranchSelectionState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -153,13 +153,12 @@ async fn load_and_analyze_branches(
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupDataLoadingState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl ModeState for CleanupDataLoadingState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &CleanupApp) {
         let chunks = Layout::default()
@@ -233,9 +232,9 @@ impl TypedAppState for CleanupDataLoadingState {
         &mut self,
         code: KeyCode,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    ) -> StateChange<CleanupModeState> {
         match code {
-            KeyCode::Char('q') => TypedStateChange::Exit,
+            KeyCode::Char('q') => StateChange::Exit,
             KeyCode::Null => {
                 // Poll for task completion
                 if !self.loaded {
@@ -246,7 +245,7 @@ impl TypedAppState for CleanupDataLoadingState {
                     if self.check_loading_status().await {
                         if self.error.is_some() {
                             // Stay in this state to show the error
-                            return TypedStateChange::Keep;
+                            return StateChange::Keep;
                         } else if let Some(task) = self.loading_task.take()
                             && let Ok(Ok(branches)) = task.await
                         {
@@ -260,15 +259,15 @@ impl TypedAppState for CleanupDataLoadingState {
                             }
 
                             // Transition to branch selection
-                            return TypedStateChange::Change(CleanupModeState::BranchSelection(
+                            return StateChange::Change(CleanupModeState::BranchSelection(
                                 CleanupBranchSelectionState::new(),
                             ));
                         }
                     }
                 }
-                TypedStateChange::Keep
+                StateChange::Keep
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -432,7 +431,7 @@ mod tests {
     /// - Processes 'q' key
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Exit
+    /// - Should return StateChange::Exit
     #[tokio::test]
     async fn test_data_loading_quit() {
         let config = create_test_config_cleanup();
@@ -440,9 +439,8 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut())
-                .await;
-        assert!(matches!(result, TypedStateChange::Exit));
+            ModeState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut()).await;
+        assert!(matches!(result, StateChange::Exit));
     }
 
     /// # Cleanup Data Loading Other Keys Ignored
@@ -453,7 +451,7 @@ mod tests {
     /// - Processes various unrecognized keys
     ///
     /// ## Expected Outcome
-    /// - Should return TypedStateChange::Keep
+    /// - Should return StateChange::Keep
     #[tokio::test]
     async fn test_data_loading_other_keys() {
         let config = create_test_config_cleanup();
@@ -461,9 +459,8 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result =
-                TypedAppState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 

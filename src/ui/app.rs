@@ -12,6 +12,7 @@ use crate::{
     },
     ui::AppBase,
     ui::apps::{CleanupApp, MergeApp, MigrationApp},
+    ui::browser::SystemBrowserOpener,
 };
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -56,17 +57,25 @@ impl App {
 
     /// Creates a new App for merge mode.
     pub fn new_merge(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
-        App::Merge(MergeApp::new(config, client))
+        App::Merge(MergeApp::new(config, client, Box::new(SystemBrowserOpener)))
     }
 
     /// Creates a new App for migration mode.
     pub fn new_migration(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
-        App::Migration(MigrationApp::new(config, client))
+        App::Migration(MigrationApp::new(
+            config,
+            client,
+            Box::new(SystemBrowserOpener),
+        ))
     }
 
     /// Creates a new App for cleanup mode.
     pub fn new_cleanup(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
-        App::Cleanup(CleanupApp::new(config, client))
+        App::Cleanup(CleanupApp::new(
+            config,
+            client,
+            Box::new(SystemBrowserOpener),
+        ))
     }
 
     /// Creates a new App with empty pull requests for the appropriate mode
@@ -111,14 +120,14 @@ impl App {
         pull_requests: Vec<PullRequestWithWorkItems>,
         config: Arc<AppConfig>,
         client: AzureDevOpsClient,
-        _browser: Box<dyn crate::ui::browser::BrowserOpener>,
+        browser: Box<dyn crate::ui::browser::BrowserOpener>,
     ) -> Self {
         let mut app = if config.is_migration_mode() {
-            App::new_migration(config, client)
+            App::Migration(MigrationApp::new(config, client, browser))
         } else if config.is_cleanup_mode() {
-            App::new_cleanup(config, client)
+            App::Cleanup(CleanupApp::new(config, client, browser))
         } else {
-            App::new_merge(config, client)
+            App::Merge(MergeApp::new(config, client, browser))
         };
 
         // Set the pull requests on the base

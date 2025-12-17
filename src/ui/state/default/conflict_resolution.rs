@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{ModeState, StateChange},
     ui::state::{CherryPickContinueState, CherryPickState},
 };
 use async_trait::async_trait;
@@ -237,13 +237,12 @@ impl ConflictResolutionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// ModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for ConflictResolutionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl ModeState for ConflictResolutionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         // Main layout: Title at top, content in middle, help at bottom
@@ -329,11 +328,7 @@ impl TypedAppState for ConflictResolutionState {
         f.render_widget(instructions_widget, main_chunks[2]);
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         let repo_path = {
             let repo_path_ref = app.repo_path();
             repo_path_ref.unwrap().to_path_buf()
@@ -345,15 +340,15 @@ impl TypedAppState for ConflictResolutionState {
                 match git::check_conflicts_resolved(&repo_path) {
                     Ok(true) => {
                         // Transition to CherryPickContinueState to process the commit with feedback
-                        TypedStateChange::Change(MergeState::CherryPickContinue(
+                        StateChange::Change(MergeState::CherryPickContinue(
                             CherryPickContinueState::new(
                                 self.conflicted_files.clone(),
                                 repo_path.clone(),
                             ),
                         ))
                     }
-                    Ok(false) => TypedStateChange::Keep, // Conflicts not resolved
-                    Err(_) => TypedStateChange::Keep,
+                    Ok(false) => StateChange::Keep, // Conflicts not resolved
+                    Err(_) => StateChange::Keep,
                 }
             }
             KeyCode::Char('s') => {
@@ -362,7 +357,7 @@ impl TypedAppState for ConflictResolutionState {
                 let current_index = app.current_cherry_pick_index();
                 app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Skipped;
                 app.set_current_cherry_pick_index(current_index + 1);
-                TypedStateChange::Change(MergeState::CherryPick(
+                StateChange::Change(MergeState::CherryPick(
                     CherryPickState::continue_after_conflict(),
                 ))
             }
@@ -377,9 +372,9 @@ impl TypedAppState for ConflictResolutionState {
                     version,
                     &target_branch,
                 );
-                TypedStateChange::Change(MergeState::Completion(super::CompletionState::new()))
+                StateChange::Change(MergeState::Completion(super::CompletionState::new()))
             }
-            _ => TypedStateChange::Keep,
+            _ => StateChange::Keep,
         }
     }
 
@@ -475,11 +470,10 @@ mod tests {
 
         // Press 'c' to attempt continue
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
 
         // Should stay in same state because git operation fails
-        assert!(matches!(result, TypedStateChange::Keep));
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Conflict Resolution - Abort Cherry-Pick
@@ -518,11 +512,10 @@ mod tests {
 
         // Press 'a' to abort
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
 
         // Should transition to CompletionState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Conflict Resolution - Other Key Press
@@ -563,8 +556,8 @@ mod tests {
             KeyCode::Esc,
             KeyCode::Up,
         ] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
-            assert!(matches!(result, TypedStateChange::Keep));
+            let result = ModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            assert!(matches!(result, StateChange::Keep));
         }
     }
 
@@ -612,11 +605,10 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
 
         // Should transition to CherryPickState
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // Should mark the commit as Skipped
         assert!(matches!(
@@ -676,10 +668,9 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
-                .await;
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
 
-        assert!(matches!(result, TypedStateChange::Change(_)));
+        assert!(matches!(result, StateChange::Change(_)));
 
         // First commit should be Skipped
         assert!(matches!(
