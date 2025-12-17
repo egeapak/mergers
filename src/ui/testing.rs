@@ -87,6 +87,22 @@ impl TuiTestHarness {
         self.terminal.backend()
     }
 
+    /// Get a reference to the inner MergeApp (panics if not in Merge mode)
+    pub fn merge_app(&self) -> &crate::ui::apps::MergeApp {
+        match &self.app {
+            App::Merge(app) => app,
+            _ => panic!("TuiTestHarness::merge_app called but app is not in Merge mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner MergeApp (panics if not in Merge mode)
+    pub fn merge_app_mut(&mut self) -> &mut crate::ui::apps::MergeApp {
+        match &mut self.app {
+            App::Merge(app) => app,
+            _ => panic!("TuiTestHarness::merge_app_mut called but app is not in Merge mode"),
+        }
+    }
+
     /// Set the initial state for the app (used by run_with_events)
     pub fn with_initial_state(mut self, state: Box<dyn AppState>) -> Self {
         self.initial_state = Some(state);

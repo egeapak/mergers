@@ -4,6 +4,9 @@ use crate::{
     api,
     models::PullRequestWithWorkItems,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::default::MergeState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, StateChange},
 };
 use anyhow::{Context, Result, bail};
@@ -65,7 +68,7 @@ impl DataLoadingState {
         }
     }
 
-    async fn fetch_pull_requests(&mut self, app: &mut App) -> Result<()> {
+    async fn fetch_pull_requests(&mut self, app: &mut MergeApp) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingPullRequests;
 
         // Fetch pull requests
@@ -97,7 +100,7 @@ impl DataLoadingState {
         Ok(())
     }
 
-    fn start_work_items_fetching(&mut self, app: &App) {
+    fn start_work_items_fetching(&mut self, app: &MergeApp) {
         self.loading_stage = LoadingStage::FetchingWorkItems;
         self.work_items_total = app.pull_requests().len();
         self.work_items_fetched = 0;
@@ -143,7 +146,7 @@ impl DataLoadingState {
         self.work_items_tasks = Some(tasks);
     }
 
-    async fn check_work_items_progress(&mut self, app: &mut App) -> Result<bool> {
+    async fn check_work_items_progress(&mut self, app: &mut MergeApp) -> Result<bool> {
         if let Some(ref mut tasks) = self.work_items_tasks {
             let mut completed = Vec::new();
             let mut still_running = Vec::new();
@@ -189,7 +192,7 @@ impl DataLoadingState {
         }
     }
 
-    async fn fetch_commit_info(&mut self, app: &mut App) -> Result<()> {
+    async fn fetch_commit_info(&mut self, app: &mut MergeApp) -> Result<()> {
         self.loading_stage = LoadingStage::FetchingCommitInfo;
         self.commit_info_total = app
             .pull_requests()
@@ -249,9 +252,16 @@ impl DataLoadingState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for DataLoadingState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for DataLoadingState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let loading = Paragraph::new(self.get_loading_message())
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).title("Loading"))
@@ -259,11 +269,15 @@ impl AppState for DataLoadingState {
         f.render_widget(loading, f.area());
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         // Start loading on first render
         if !self.loaded && code == KeyCode::Null {
             self.loaded = true;
-            return StateChange::Keep;
+            return TypedStateChange::Keep;
         }
 
         // Process loading stages
@@ -272,19 +286,19 @@ impl AppState for DataLoadingState {
                 LoadingStage::NotStarted => {
                     if let Err(e) = self.fetch_pull_requests(app).await {
                         app.set_error_message(Some(e.to_string()));
-                        return StateChange::Change(Box::new(ErrorState::new()));
+                        return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                     }
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingPullRequests => {
                     // Start parallel work items fetching
                     self.start_work_items_fetching(app);
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingWorkItems => {
                     // Transition to waiting for work items
                     self.loading_stage = LoadingStage::WaitingForWorkItems;
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::WaitingForWorkItems => {
                     // Check progress of work items fetching
@@ -293,7 +307,9 @@ impl AppState for DataLoadingState {
                             // All work items fetched, move to commit info
                             if let Err(e) = self.fetch_commit_info(app).await {
                                 app.set_error_message(Some(e.to_string()));
-                                return StateChange::Change(Box::new(ErrorState::new()));
+                                return TypedStateChange::Change(MergeState::Error(
+                                    ErrorState::new(),
+                                ));
                             }
                         }
                         Ok(false) => {
@@ -301,26 +317,59 @@ impl AppState for DataLoadingState {
                         }
                         Err(e) => {
                             app.set_error_message(Some(e.to_string()));
-                            return StateChange::Change(Box::new(ErrorState::new()));
+                            return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                         }
                     }
-                    return StateChange::Keep;
+                    return TypedStateChange::Keep;
                 }
                 LoadingStage::FetchingCommitInfo => {
                     // Loading is complete, transition to PR selection
-                    return StateChange::Change(Box::new(PullRequestSelectionState::new()));
+                    return TypedStateChange::Change(MergeState::PullRequestSelection(
+                        PullRequestSelectionState::new(),
+                    ));
                 }
                 LoadingStage::Complete => {
                     // Should not reach here, but transition to PR selection just in case
-                    return StateChange::Change(Box::new(PullRequestSelectionState::new()));
+                    return TypedStateChange::Change(MergeState::PullRequestSelection(
+                        PullRequestSelectionState::new(),
+                    ));
                 }
             }
         }
 
         // Allow quitting during loading
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
-            _ => StateChange::Keep,
+            KeyCode::Char('q') => TypedStateChange::Exit,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "DataLoading"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation (for backward compatibility)
+// ============================================================================
+
+#[async_trait]
+impl AppState for DataLoadingState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Merge(merge_app) = app {
+            <Self as TypedAppState>::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
@@ -483,9 +532,7 @@ mod tests {
 
         let mut state = DataLoadingState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Exit));
     }
 
@@ -508,7 +555,7 @@ mod tests {
         let mut state = DataLoadingState::new();
         assert!(!state.loaded);
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
         assert!(state.loaded);
     }
@@ -536,7 +583,7 @@ mod tests {
             KeyCode::Enter,
             KeyCode::Char('x'),
         ] {
-            let result = state.process_key(key, &mut harness.app).await;
+            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
             assert!(matches!(result, StateChange::Keep));
         }
     }
@@ -653,7 +700,7 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::Complete;
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
         assert!(matches!(result, StateChange::Change(_)));
     }
 
@@ -677,7 +724,7 @@ mod tests {
         state.loaded = true;
         state.loading_stage = LoadingStage::FetchingCommitInfo;
 
-        let result = state.process_key(KeyCode::Null, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Null, &mut harness.app).await;
         assert!(matches!(result, StateChange::Change(_)));
     }
 }

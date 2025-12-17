@@ -170,6 +170,25 @@ impl MigrationApp {
             .map(|a| a.unsure_prs.len())
             .unwrap_or(0)
     }
+
+    // ========================================================================
+    // Field Accessors (for TypedAppState compatibility)
+    // ========================================================================
+
+    /// Returns a reference to the migration analysis, if available.
+    pub fn migration_analysis(&self) -> Option<&MigrationAnalysis> {
+        self.migration_analysis.as_ref()
+    }
+
+    /// Returns a mutable reference to the migration analysis, if available.
+    pub fn migration_analysis_mut(&mut self) -> Option<&mut MigrationAnalysis> {
+        self.migration_analysis.as_mut()
+    }
+
+    /// Sets the migration analysis.
+    pub fn set_migration_analysis(&mut self, analysis: Option<MigrationAnalysis>) {
+        self.migration_analysis = analysis;
+    }
 }
 
 impl Deref for MigrationApp {

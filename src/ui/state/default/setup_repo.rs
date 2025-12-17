@@ -1,10 +1,13 @@
 // Allow deprecated RepositorySetupError usage until full migration to GitError
 #![allow(deprecated)]
 
+use super::MergeState;
 use crate::{
     git,
     models::CherryPickItem,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, CherryPickState, ErrorState, StateChange},
 };
 use async_trait::async_trait;
@@ -77,7 +80,7 @@ impl SetupRepoState {
         };
     }
 
-    async fn setup_repository(&mut self, app: &mut App) -> StateChange {
+    async fn setup_repository(&mut self, app: &mut MergeApp) -> TypedStateChange<MergeState> {
         // Get SSH URL if needed
         let ssh_url = if app.local_repo().is_none() {
             self.set_status("Fetching repository details...".to_string());
@@ -88,7 +91,7 @@ impl SetupRepoState {
                         "Failed to fetch repository details: {}",
                         e
                     )));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
         } else {
@@ -137,13 +140,13 @@ impl SetupRepoState {
                     git::RepositorySetup::Local(path) => {
                         // Store the base repo path for cleanup (worktree case)
                         if let Some(local_repo) = local_repo_path {
-                            app.base_mut().worktree.base_repo_path = Some(local_repo);
+                            app.worktree.base_repo_path = Some(local_repo);
                         }
                         app.set_repo_path(Some(path));
                     }
                     git::RepositorySetup::Clone(path, temp_dir) => {
                         app.set_repo_path(Some(path));
-                        app.set_temp_dir(Some(temp_dir));
+                        app.worktree.set_temp_dir(Some(temp_dir));
                         // base_repo_path stays None for cloned repos
                     }
                 }
@@ -161,7 +164,7 @@ impl SetupRepoState {
 
                 if cherry_pick_items.is_empty() {
                     app.set_error_message(Some("No commits found to cherry-pick".to_string()));
-                    StateChange::Change(Box::new(ErrorState::new()))
+                    TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                 } else {
                     *app.cherry_pick_items_mut() = cherry_pick_items;
 
@@ -173,24 +176,24 @@ impl SetupRepoState {
                         git::create_branch(app.repo_path().as_ref().unwrap(), &branch_name)
                     {
                         app.set_error_message(Some(format!("Failed to create branch: {}", e)));
-                        StateChange::Change(Box::new(ErrorState::new()))
+                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                     } else {
-                        StateChange::Change(Box::new(CherryPickState::new()))
+                        TypedStateChange::Change(MergeState::CherryPick(CherryPickState::new()))
                     }
                 }
             }
             Err(e) => {
                 self.set_error(e);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
         }
     }
 
     async fn force_resolve_error(
         &mut self,
-        app: &mut App,
+        app: &mut MergeApp,
         error: git::RepositorySetupError,
-    ) -> StateChange {
+    ) -> TypedStateChange<MergeState> {
         let version = app.version().unwrap();
 
         match error {
@@ -201,7 +204,7 @@ impl SetupRepoState {
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
                 {
                     app.set_error_message(Some(format!("Failed to force delete branch: {}", e)));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
@@ -211,7 +214,7 @@ impl SetupRepoState {
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {
                     app.set_error_message(Some(format!("Failed to force remove worktree: {}", e)));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
             git::RepositorySetupError::Other(_) => {
@@ -224,9 +227,16 @@ impl SetupRepoState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for SetupRepoState {
-    fn ui(&mut self, f: &mut Frame, _app: &App) {
+impl TypedAppState for SetupRepoState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -288,7 +298,11 @@ impl AppState for SetupRepoState {
         }
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match &self.state {
             SetupState::Error { error, .. } => {
                 match code {
@@ -305,9 +319,9 @@ impl AppState for SetupRepoState {
                     }
                     KeyCode::Esc => {
                         // Go back to previous state or exit
-                        StateChange::Change(Box::new(ErrorState::new()))
+                        TypedStateChange::Change(MergeState::Error(ErrorState::new()))
                     }
-                    _ => StateChange::Keep,
+                    _ => TypedStateChange::Keep,
                 }
             }
             _ => {
@@ -315,9 +329,38 @@ impl AppState for SetupRepoState {
                     self.started = true;
                     self.setup_repository(app).await
                 } else {
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 }
             }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "SetupRepo"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation (delegates to TypedAppState)
+// ============================================================================
+
+#[async_trait]
+impl AppState for SetupRepoState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Merge(merge_app) = app {
+            TypedAppState::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
@@ -527,7 +570,7 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
-        let result = state.process_key(KeyCode::Esc, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Esc, &mut harness.app).await;
         assert!(matches!(result, StateChange::Change(_)));
     }
 
@@ -550,7 +593,7 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
-            let result = state.process_key(key, &mut harness.app).await;
+            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
             assert!(matches!(result, StateChange::Keep));
         }
     }
@@ -574,7 +617,7 @@ mod tests {
         let mut state = SetupRepoState::new();
         state.started = true;
 
-        let result = state.process_key(KeyCode::Enter, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Enter, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
     }
 

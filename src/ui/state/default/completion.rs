@@ -1,10 +1,13 @@
 use crate::{
     models::CherryPickStatus,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::default::MergeState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
@@ -32,13 +35,13 @@ impl CompletionState {
         state
     }
 
-    fn next(&mut self, app: &App) {
-        if app.cherry_pick_items().is_empty() {
+    fn next(&mut self, app: &MergeApp) {
+        if app.cherry_pick_items.is_empty() {
             return;
         }
         let i = match self.list_state.selected() {
             Some(i) => {
-                if i >= app.cherry_pick_items().len() - 1 {
+                if i >= app.cherry_pick_items.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -49,14 +52,14 @@ impl CompletionState {
         self.list_state.select(Some(i));
     }
 
-    fn previous(&mut self, app: &App) {
-        if app.cherry_pick_items().is_empty() {
+    fn previous(&mut self, app: &MergeApp) {
+        if app.cherry_pick_items.is_empty() {
             return;
         }
         let i = match self.list_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    app.cherry_pick_items().len() - 1
+                    app.cherry_pick_items.len() - 1
                 } else {
                     i - 1
                 }
@@ -68,8 +71,11 @@ impl CompletionState {
 }
 
 #[async_trait]
-impl AppState for CompletionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CompletionState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -95,7 +101,7 @@ impl AppState for CompletionState {
         let available_width = content_chunks[0].width.saturating_sub(4); // Account for borders
 
         let items: Vec<ListItem> = app
-            .cherry_pick_items()
+            .cherry_pick_items
             .iter()
             .map(|item| {
                 let mut spans = vec![];
@@ -121,7 +127,7 @@ impl AppState for CompletionState {
 
                 // Find work items for this PR
                 let work_items: Vec<i32> = app
-                    .pull_requests()
+                    .pull_requests
                     .iter()
                     .find(|pr| pr.pr.id == item.pr_id)
                     .map(|pr| pr.work_items.iter().map(|wi| wi.id).collect())
@@ -205,7 +211,7 @@ impl AppState for CompletionState {
         // Calculate summary
         let mut successful = 0;
         let mut failed = 0;
-        for item in app.cherry_pick_items() {
+        for item in &app.cherry_pick_items {
             match &item.status {
                 CherryPickStatus::Success => successful += 1,
                 CherryPickStatus::Failed(_) => failed += 1,
@@ -252,14 +258,14 @@ impl AppState for CompletionState {
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch(),
-            app.version().as_ref().unwrap()
+            app.version.as_ref().unwrap()
         );
         summary_text.push(Line::from(vec![
             Span::raw("Branch: "),
             Span::styled(branch_name, Style::default().fg(Color::Cyan)),
         ]));
 
-        if let Some(repo_path) = &app.repo_path() {
+        if let Some(repo_path) = app.repo_path() {
             summary_text.push(Line::from(vec![
                 Span::raw("Location: "),
                 Span::styled(
@@ -299,43 +305,84 @@ impl AppState for CompletionState {
         f.render_widget(summary, content_chunks[1]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Up => {
                 self.previous(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Down => {
                 self.next(app);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('p') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items().get(i)
+                    && let Some(item) = app.cherry_pick_items.get(i)
                 {
                     app.open_pr_in_browser(item.pr_id);
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
-                    && let Some(item) = app.cherry_pick_items().get(i)
+                    && let Some(item) = app.cherry_pick_items.get(i)
                 {
                     // Find the corresponding PR and open its work items
-                    if let Some(pr) = app.pull_requests().iter().find(|pr| pr.pr.id == item.pr_id)
+                    if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
                         && !pr.work_items.is_empty()
                     {
                         app.open_work_items_in_browser(&pr.work_items);
                     }
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            KeyCode::Char('t') => {
-                StateChange::Change(Box::new(crate::ui::state::PostCompletionState::new()))
-            }
-            _ => StateChange::Keep,
+            KeyCode::Char('t') => TypedStateChange::Change(MergeState::PostCompletion(
+                crate::ui::state::PostCompletionState::new(),
+            )),
+            _ => TypedStateChange::Keep,
         }
+    }
+
+    fn name(&self) -> &'static str {
+        "Completion"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation (for backward compatibility during migration)
+// ============================================================================
+
+#[async_trait]
+impl AppState for CompletionState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        // Delegate to TypedAppState by extracting MergeApp
+        if let App::Merge(merge_app) = app {
+            <Self as TypedAppState>::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => {
+                    // Convert MergeState to Box<dyn AppState>
+                    StateChange::Change(Box::new(new_state))
+                }
+            }
+        } else {
+            StateChange::Keep
+        }
+    }
+
+    async fn process_mouse(&mut self, _event: MouseEvent, _app: &mut App) -> StateChange {
+        StateChange::Keep
     }
 }
 
@@ -440,7 +487,7 @@ mod tests {
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
         assert_eq!(state.list_state.selected(), Some(1));
     }
@@ -466,7 +513,7 @@ mod tests {
         let mut state = CompletionState::new();
         assert_eq!(state.list_state.selected(), Some(0));
 
-        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
         // Should wrap to last item
         assert_eq!(
@@ -494,9 +541,7 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Exit));
     }
 
@@ -519,9 +564,7 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('t'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('t'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Change(_)));
     }
 
@@ -544,9 +587,7 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('p'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('p'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
     }
 
@@ -572,9 +613,7 @@ mod tests {
 
         let mut state = CompletionState::new();
 
-        let result = state
-            .process_key(KeyCode::Char('w'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('w'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
     }
 
@@ -598,7 +637,7 @@ mod tests {
         let mut state = CompletionState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
-            let result = state.process_key(key, &mut harness.app).await;
+            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
             assert!(matches!(result, StateChange::Keep));
         }
     }
@@ -639,10 +678,10 @@ mod tests {
         let mut state = CompletionState::new();
 
         // Should not panic
-        let result = state.process_key(KeyCode::Down, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
 
-        let result = state.process_key(KeyCode::Up, &mut harness.app).await;
+        let result = AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
         assert!(matches!(result, StateChange::Keep));
     }
 
@@ -705,13 +744,13 @@ mod tests {
 
         // Navigate to end
         for _ in 0..item_count {
-            state.process_key(KeyCode::Down, &mut harness.app).await;
+            AppState::process_key(&mut state, KeyCode::Down, &mut harness.app).await;
         }
         // Should wrap to 0
         assert_eq!(state.list_state.selected(), Some(0));
 
         // Navigate up from 0
-        state.process_key(KeyCode::Up, &mut harness.app).await;
+        AppState::process_key(&mut state, KeyCode::Up, &mut harness.app).await;
         // Should wrap to last item
         assert_eq!(state.list_state.selected(), Some(item_count - 1));
     }

@@ -87,6 +87,26 @@ impl MergeApp {
             .len()
             .saturating_sub(self.current_cherry_pick_index)
     }
+
+    /// Returns a reference to the cherry-pick items.
+    pub fn cherry_pick_items(&self) -> &Vec<CherryPickItem> {
+        &self.cherry_pick_items
+    }
+
+    /// Returns a mutable reference to the cherry-pick items.
+    pub fn cherry_pick_items_mut(&mut self) -> &mut Vec<CherryPickItem> {
+        &mut self.cherry_pick_items
+    }
+
+    /// Returns the current cherry-pick index.
+    pub fn current_cherry_pick_index(&self) -> usize {
+        self.current_cherry_pick_index
+    }
+
+    /// Sets the current cherry-pick index.
+    pub fn set_current_cherry_pick_index(&mut self, idx: usize) {
+        self.current_cherry_pick_index = idx;
+    }
 }
 
 impl Deref for MergeApp {

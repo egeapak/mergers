@@ -1,7 +1,10 @@
+use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, CherryPickState, ConflictResolutionState, StateChange},
 };
 use async_trait::async_trait;
@@ -121,9 +124,16 @@ impl CherryPickContinueState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for CherryPickContinueState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CherryPickContinueState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let is_complete = *self.is_complete.lock().unwrap();
         let success = *self.success.lock().unwrap();
 
@@ -290,12 +300,16 @@ impl AppState for CherryPickContinueState {
         f.render_widget(instructions_widget, main_chunks[2]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         let is_complete = *self.is_complete.lock().unwrap();
 
         // Don't process keys until the command is complete
         if !is_complete {
-            return StateChange::Keep;
+            return TypedStateChange::Keep;
         }
 
         let success = *self.success.lock().unwrap();
@@ -306,16 +320,18 @@ impl AppState for CherryPickContinueState {
                 let current_index = app.current_cherry_pick_index();
                 app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Success;
                 app.set_current_cherry_pick_index(current_index + 1);
-                StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                TypedStateChange::Change(MergeState::CherryPick(
+                    CherryPickState::continue_after_conflict(),
+                ))
             }
             Some(false) => {
                 // Failed - allow retry, skip, or abort
                 match code {
                     KeyCode::Char('r') => {
                         // Retry - go back to conflict resolution
-                        StateChange::Change(Box::new(ConflictResolutionState::new(
-                            self.conflicted_files.clone(),
-                        )))
+                        TypedStateChange::Change(MergeState::ConflictResolution(
+                            ConflictResolutionState::new(self.conflicted_files.clone()),
+                        ))
                     }
                     KeyCode::Char('s') => {
                         // Skip - mark as skipped and continue to next commit
@@ -323,7 +339,9 @@ impl AppState for CherryPickContinueState {
                         app.cherry_pick_items_mut()[current_index].status =
                             CherryPickStatus::Skipped;
                         app.set_current_cherry_pick_index(current_index + 1);
-                        StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+                        TypedStateChange::Change(MergeState::CherryPick(
+                            CherryPickState::continue_after_conflict(),
+                        ))
                     }
                     KeyCode::Char('a') => {
                         // Abort entire process with cleanup
@@ -338,15 +356,46 @@ impl AppState for CherryPickContinueState {
                             version,
                             &target_branch,
                         );
-                        StateChange::Change(Box::new(super::CompletionState::new()))
+                        TypedStateChange::Change(MergeState::Completion(
+                            super::CompletionState::new(),
+                        ))
                     }
-                    _ => StateChange::Keep,
+                    _ => TypedStateChange::Keep,
                 }
             }
             None => {
                 // Should not happen, but handle it
-                StateChange::Keep
+                TypedStateChange::Keep
             }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "CherryPickContinue"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation (delegates to TypedAppState)
+// ============================================================================
+
+#[async_trait]
+impl AppState for CherryPickContinueState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Merge(merge_app) = app {
+            TypedAppState::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
@@ -840,9 +889,7 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
 
         // Should transition to CherryPickState
         assert!(matches!(result, StateChange::Change(_)));
@@ -899,9 +946,7 @@ mod tests {
         );
 
         // Press 'a' to abort
-        let result = state
-            .process_key(KeyCode::Char('a'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('a'), &mut harness.app).await;
 
         // Should transition to CompletionState
         assert!(matches!(result, StateChange::Change(_)));
@@ -947,9 +992,7 @@ mod tests {
         );
 
         // Press 's' (any key continues on success)
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
 
         // Should transition to CherryPickState
         assert!(matches!(result, StateChange::Change(_)));
@@ -1015,9 +1058,7 @@ mod tests {
         );
 
         // Press 's' to skip
-        let result = state
-            .process_key(KeyCode::Char('s'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('s'), &mut harness.app).await;
 
         assert!(matches!(result, StateChange::Change(_)));
 
@@ -1081,9 +1122,7 @@ mod tests {
         );
 
         // Press 'r' to retry
-        let result = state
-            .process_key(KeyCode::Char('r'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('r'), &mut harness.app).await;
 
         // Should transition to ConflictResolutionState
         assert!(matches!(result, StateChange::Change(_)));

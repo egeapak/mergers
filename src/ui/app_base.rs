@@ -8,7 +8,7 @@ use crate::{
     models::{AppConfig, PullRequestWithWorkItems, WorkItem},
     ui::WorktreeContext,
 };
-use std::{process::Command, sync::Arc};
+use std::{path::Path, process::Command, sync::Arc};
 
 /// Shared state common to all app modes.
 ///
@@ -49,6 +49,55 @@ impl AppBase {
             worktree: WorktreeContext::new(),
             error_message: None,
         }
+    }
+
+    // ========================================================================
+    // Field Accessors
+    // ========================================================================
+
+    /// Returns a reference to the API client.
+    pub fn client(&self) -> &AzureDevOpsClient {
+        &self.client
+    }
+
+    /// Returns a reference to the pull requests.
+    pub fn pull_requests(&self) -> &Vec<PullRequestWithWorkItems> {
+        &self.pull_requests
+    }
+
+    /// Returns a mutable reference to the pull requests.
+    pub fn pull_requests_mut(&mut self) -> &mut Vec<PullRequestWithWorkItems> {
+        &mut self.pull_requests
+    }
+
+    /// Returns the version string if set.
+    pub fn version(&self) -> Option<&str> {
+        self.version.as_deref()
+    }
+
+    /// Sets the version string.
+    pub fn set_version(&mut self, version: Option<String>) {
+        self.version = version;
+    }
+
+    /// Returns the error message if set.
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
+    }
+
+    /// Sets the error message.
+    pub fn set_error_message(&mut self, msg: Option<String>) {
+        self.error_message = msg;
+    }
+
+    /// Returns the repository path (for worktree operations).
+    pub fn repo_path(&self) -> Option<&Path> {
+        self.worktree.repo_path()
+    }
+
+    /// Sets the repository path.
+    pub fn set_repo_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.worktree.set_repo_path(path);
     }
 
     // ========================================================================

@@ -1,6 +1,9 @@
 use crate::{
     models::CherryPickStatus,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::default::MergeState,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
@@ -85,7 +88,7 @@ impl PostCompletionState {
             .any(|task| matches!(task.status, TaskStatus::Failed(_)))
     }
 
-    fn initialize_tasks(&mut self, app: &App) {
+    fn initialize_tasks(&mut self, app: &MergeApp) {
         if !self.tasks.is_empty() {
             return; // Already initialized
         }
@@ -124,7 +127,7 @@ impl PostCompletionState {
         self.total_tasks = self.tasks.len();
     }
 
-    async fn process_current_task(&mut self, app: &App) -> bool {
+    async fn process_current_task(&mut self, app: &MergeApp) -> bool {
         if self.current_task_index >= self.tasks.len() {
             self.completed = true;
             return true;
@@ -166,9 +169,16 @@ impl PostCompletionState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for PostCompletionState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for PostCompletionState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         self.initialize_tasks(app);
 
         let main_chunks = Layout::default()
@@ -332,26 +342,61 @@ impl AppState for PostCompletionState {
         f.render_widget(instructions_widget, main_chunks[3]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => TypedStateChange::Exit,
             KeyCode::Null if !self.completed => {
                 // Auto-process tasks
                 if self.process_current_task(app).await {
                     // All tasks completed, stay in this state to show results
                 }
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Enter if self.completed => {
                 // Return to completion state
-                StateChange::Change(Box::new(crate::ui::state::CompletionState::new()))
+                TypedStateChange::Change(MergeState::Completion(
+                    crate::ui::state::CompletionState::new(),
+                ))
             }
             KeyCode::Char('r') if self.completed && self.has_failed_tasks() => {
                 // Retry failed tasks
                 self.retry_failed_tasks();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "PostCompletion"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation (for backward compatibility)
+// ============================================================================
+
+#[async_trait]
+impl AppState for PostCompletionState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Merge(merge_app) = app {
+            <Self as TypedAppState>::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
@@ -600,9 +645,7 @@ mod tests {
         let mut state = PostCompletionState::new();
         state.completed = true;
 
-        let result = state
-            .process_key(KeyCode::Char('q'), &mut harness.app)
-            .await;
+        let result = AppState::process_key(&mut state, KeyCode::Char('q'), &mut harness.app).await;
         assert!(matches!(result, StateChange::Exit));
     }
 
@@ -623,7 +666,7 @@ mod tests {
         let mut state = PostCompletionState::new();
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = state.process_key(key, &mut harness.app).await;
+            let result = AppState::process_key(&mut state, key, &mut harness.app).await;
             assert!(matches!(result, StateChange::Keep));
         }
     }

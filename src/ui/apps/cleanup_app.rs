@@ -96,6 +96,20 @@ impl CleanupApp {
             .filter(|b| b.selected)
             .collect()
     }
+
+    // ========================================================================
+    // Field Accessors (for TypedAppState compatibility)
+    // ========================================================================
+
+    /// Returns a reference to the cleanup branches.
+    pub fn cleanup_branches(&self) -> &Vec<CleanupBranch> {
+        &self.cleanup_branches
+    }
+
+    /// Returns a mutable reference to the cleanup branches.
+    pub fn cleanup_branches_mut(&mut self) -> &mut Vec<CleanupBranch> {
+        &mut self.cleanup_branches
+    }
 }
 
 impl Deref for CleanupApp {

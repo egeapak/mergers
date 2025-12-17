@@ -1,7 +1,10 @@
+use super::MergeState;
 use crate::{
     git,
     models::CherryPickStatus,
     ui::App,
+    ui::apps::MergeApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, CompletionState, ConflictResolutionState, ErrorState, StateChange},
 };
 use async_trait::async_trait;
@@ -34,9 +37,16 @@ impl CherryPickState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation (Primary)
+// ============================================================================
+
 #[async_trait]
-impl AppState for CherryPickState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for CherryPickState {
+    type App = MergeApp;
+    type StateEnum = MergeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -214,7 +224,11 @@ impl AppState for CherryPickState {
         f.render_widget(status_widget, chunks[2]);
     }
 
-    async fn process_key(&mut self, _code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        _code: KeyCode,
+        app: &mut MergeApp,
+    ) -> TypedStateChange<MergeState> {
         if self.processing {
             // First time processing - fetch commits if needed
             self.processing = false;
@@ -232,7 +246,7 @@ impl AppState for CherryPickState {
 
                 if let Err(e) = git::fetch_commits(repo_path, &commits) {
                     app.set_error_message(Some(format!("Failed to fetch commits: {}", e)));
-                    return StateChange::Change(Box::new(ErrorState::new()));
+                    return TypedStateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
         }
@@ -240,9 +254,38 @@ impl AppState for CherryPickState {
         // Process next commit (either first time or continuing after conflict)
         process_next_commit(app)
     }
+
+    fn name(&self) -> &'static str {
+        "CherryPick"
+    }
 }
 
-pub fn process_next_commit(app: &mut App) -> StateChange {
+// ============================================================================
+// Legacy AppState Implementation (delegates to TypedAppState)
+// ============================================================================
+
+#[async_trait]
+impl AppState for CherryPickState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Merge(merge_app) = app {
+            TypedAppState::ui(self, f, merge_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Merge(merge_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, merge_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
+        }
+    }
+}
+
+pub fn process_next_commit(app: &mut MergeApp) -> TypedStateChange<MergeState> {
     // Skip already processed commits
     while app.current_cherry_pick_index() < app.cherry_pick_items().len() {
         let item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
@@ -254,7 +297,7 @@ pub fn process_next_commit(app: &mut App) -> StateChange {
 
     // Check if we're done with all commits
     if app.current_cherry_pick_index() >= app.cherry_pick_items().len() {
-        return StateChange::Change(Box::new(CompletionState::new()));
+        return TypedStateChange::Change(MergeState::Completion(CompletionState::new()));
     }
 
     // Process the current commit
@@ -273,23 +316,31 @@ pub fn process_next_commit(app: &mut App) -> StateChange {
             item.status = CherryPickStatus::Success;
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+            TypedStateChange::Change(MergeState::CherryPick(
+                CherryPickState::continue_after_conflict(),
+            ))
         }
         Ok(git::CherryPickResult::Conflict(files)) => {
             item.status = CherryPickStatus::Conflict;
-            StateChange::Change(Box::new(ConflictResolutionState::new(files)))
+            TypedStateChange::Change(MergeState::ConflictResolution(
+                ConflictResolutionState::new(files),
+            ))
         }
         Ok(git::CherryPickResult::Failed(msg)) => {
             item.status = CherryPickStatus::Failed(msg);
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+            TypedStateChange::Change(MergeState::CherryPick(
+                CherryPickState::continue_after_conflict(),
+            ))
         }
         Err(e) => {
             item.status = CherryPickStatus::Failed(e.to_string());
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
             // Return to the same state to continue processing and show UI update
-            StateChange::Change(Box::new(CherryPickState::continue_after_conflict()))
+            TypedStateChange::Change(MergeState::CherryPick(
+                CherryPickState::continue_after_conflict(),
+            ))
         }
     }
 }
