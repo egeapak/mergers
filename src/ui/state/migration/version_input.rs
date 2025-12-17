@@ -1,6 +1,8 @@
-use super::MigrationResultsState;
+use super::{MigrationModeState, MigrationResultsState};
 use crate::{
     ui::App,
+    ui::apps::MigrationApp,
+    ui::state::typed::{TypedAppState, TypedStateChange},
     ui::state::{AppState, StateChange},
 };
 use async_trait::async_trait;
@@ -31,9 +33,16 @@ impl MigrationVersionInputState {
     }
 }
 
+// ============================================================================
+// TypedAppState Implementation
+// ============================================================================
+
 #[async_trait]
-impl AppState for MigrationVersionInputState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+impl TypedAppState for MigrationVersionInputState {
+    type App = MigrationApp;
+    type StateEnum = MigrationModeState;
+
+    fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -180,33 +189,68 @@ impl AppState for MigrationVersionInputState {
         f.render_widget(help, chunks[6]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut MigrationApp,
+    ) -> TypedStateChange<MigrationModeState> {
         match code {
             KeyCode::Char(c) => {
                 self.input.push(c);
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Backspace => {
                 self.input.pop();
-                StateChange::Keep
+                TypedStateChange::Keep
             }
             KeyCode::Enter => {
                 if !self.input.trim().is_empty() {
                     app.set_version(Some(self.input.trim().to_string()));
                     // Transition to tagging state
-                    StateChange::Change(Box::new(super::MigrationTaggingState::new(
-                        self.input.trim().to_string(),
-                        app.tag_prefix().to_string(),
-                    )))
+                    TypedStateChange::Change(MigrationModeState::Tagging(
+                        super::MigrationTaggingState::new(
+                            self.input.trim().to_string(),
+                            app.tag_prefix().to_string(),
+                        ),
+                    ))
                 } else {
-                    StateChange::Keep
+                    TypedStateChange::Keep
                 }
             }
             KeyCode::Esc => {
                 // Go back to results to continue reviewing PRs
-                StateChange::Change(Box::new(MigrationResultsState::new()))
+                TypedStateChange::Change(MigrationModeState::Results(MigrationResultsState::new()))
             }
-            _ => StateChange::Keep,
+            _ => TypedStateChange::Keep,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "MigrationVersionInput"
+    }
+}
+
+// ============================================================================
+// Legacy AppState Implementation
+// ============================================================================
+
+#[async_trait]
+impl AppState for MigrationVersionInputState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        if let App::Migration(migration_app) = app {
+            TypedAppState::ui(self, f, migration_app);
+        }
+    }
+
+    async fn process_key(&mut self, code: KeyCode, app: &mut App) -> StateChange {
+        if let App::Migration(migration_app) = app {
+            match <Self as TypedAppState>::process_key(self, code, migration_app).await {
+                TypedStateChange::Keep => StateChange::Keep,
+                TypedStateChange::Exit => StateChange::Exit,
+                TypedStateChange::Change(new_state) => StateChange::Change(Box::new(new_state)),
+            }
+        } else {
+            StateChange::Keep
         }
     }
 }
