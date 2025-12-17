@@ -77,9 +77,48 @@ impl TuiTestHarness {
         self
     }
 
-    /// Render a state to the terminal
+    /// Render a state to the terminal (legacy AppState)
     pub fn render_state(&mut self, mut state: Box<dyn AppState>) {
         self.terminal.draw(|f| state.ui(f, &self.app)).unwrap();
+    }
+
+    /// Render a typed merge state to the terminal
+    pub fn render_merge_state(&mut self, state: &mut crate::ui::state::MergeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Merge(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_merge_state called but app is not in Merge mode"),
+        }
+    }
+
+    /// Render a typed migration state to the terminal
+    pub fn render_migration_state(&mut self, state: &mut crate::ui::state::MigrationModeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Migration(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_migration_state called but app is not in Migration mode"),
+        }
+    }
+
+    /// Render a typed cleanup state to the terminal
+    pub fn render_cleanup_state(&mut self, state: &mut crate::ui::state::CleanupModeState) {
+        use crate::ui::state::typed::TypedAppState;
+        match &mut self.app {
+            App::Cleanup(app) => {
+                self.terminal
+                    .draw(|f| TypedAppState::ui(state, f, app))
+                    .unwrap();
+            }
+            _ => panic!("render_cleanup_state called but app is not in Cleanup mode"),
+        }
     }
 
     /// Get the terminal backend for snapshot testing
@@ -100,6 +139,40 @@ impl TuiTestHarness {
         match &mut self.app {
             App::Merge(app) => app,
             _ => panic!("TuiTestHarness::merge_app_mut called but app is not in Merge mode"),
+        }
+    }
+
+    /// Get a reference to the inner MigrationApp (panics if not in Migration mode)
+    pub fn migration_app(&self) -> &crate::ui::apps::MigrationApp {
+        match &self.app {
+            App::Migration(app) => app,
+            _ => panic!("TuiTestHarness::migration_app called but app is not in Migration mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner MigrationApp (panics if not in Migration mode)
+    pub fn migration_app_mut(&mut self) -> &mut crate::ui::apps::MigrationApp {
+        match &mut self.app {
+            App::Migration(app) => app,
+            _ => {
+                panic!("TuiTestHarness::migration_app_mut called but app is not in Migration mode")
+            }
+        }
+    }
+
+    /// Get a reference to the inner CleanupApp (panics if not in Cleanup mode)
+    pub fn cleanup_app(&self) -> &crate::ui::apps::CleanupApp {
+        match &self.app {
+            App::Cleanup(app) => app,
+            _ => panic!("TuiTestHarness::cleanup_app called but app is not in Cleanup mode"),
+        }
+    }
+
+    /// Get a mutable reference to the inner CleanupApp (panics if not in Cleanup mode)
+    pub fn cleanup_app_mut(&mut self) -> &mut crate::ui::apps::CleanupApp {
+        match &mut self.app {
+            App::Cleanup(app) => app,
+            _ => panic!("TuiTestHarness::cleanup_app_mut called but app is not in Cleanup mode"),
         }
     }
 
