@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     ui::state::{CherryPickState, ConflictResolutionState},
 };
 use async_trait::async_trait;
@@ -124,13 +124,12 @@ impl CherryPickContinueState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CherryPickContinueState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for CherryPickContinueState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let is_complete = *self.is_complete.lock().unwrap();
@@ -864,7 +863,7 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
 
         // Should transition to CherryPickState
@@ -923,7 +922,7 @@ mod tests {
 
         // Press 'a' to abort
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
                 .await;
 
         // Should transition to CompletionState
@@ -971,7 +970,7 @@ mod tests {
 
         // Press 's' (any key continues on success)
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
 
         // Should transition to CherryPickState
@@ -1039,7 +1038,7 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
 
         assert!(matches!(result, TypedStateChange::Change(_)));
@@ -1105,7 +1104,7 @@ mod tests {
 
         // Press 'r' to retry
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
                 .await;
 
         // Should transition to ConflictResolutionState

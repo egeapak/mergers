@@ -1,23 +1,26 @@
 //! Typed app state infrastructure with associated types.
 //!
-//! This module provides the new type-safe state infrastructure that uses
+//! This module provides the type-safe state infrastructure that uses
 //! associated types to ensure states receive correctly-typed app instances.
-//! This exists alongside the legacy [`AppState`] trait during migration.
 //!
 //! # Architecture
 //!
 //! The key components are:
-//! - [`TypedAppState`]: Trait with associated `App` type for compile-time safety
+//! - [`TypedAppState`]: Trait for mode state enums (e.g., `MergeState`) with
+//!   associated `App` type. Returns `TypedStateChange<Self>` for type-safe transitions.
+//! - [`TypedModeState`]: Trait for individual states (e.g., `DataLoadingState`) within
+//!   a mode. Has associated `Mode` type pointing to the mode enum. The `App` type is
+//!   derived from the mode's `TypedAppState` implementation.
 //! - [`TypedStateChange`]: Generic state change enum for type-safe transitions
 //!
-//! # Migration Path
+//! # Two-Trait Design
 //!
-//! States are being migrated from the legacy `AppState` trait (which uses `&App`)
-//! to `TypedAppState` (which uses `&Self::App`). During this transition:
-//! - Legacy states continue using `AppState` with the old `App` struct
-//! - New/migrated states implement `TypedAppState` with mode-specific apps
+//! The separation into `TypedAppState` and `TypedModeState` reduces boilerplate:
+//! - Mode enums implement `TypedAppState` and declare `type App`
+//! - Sub-states implement `TypedModeState` and only declare `type Mode`
+//! - The `App` type is automatically derived: `<Self::Mode as TypedAppState>::App`
 //!
-//! [`AppState`]: super::AppState
+//! This means each sub-state only needs to specify one associated type instead of two.
 
 use crate::ui::AppMode;
 use async_trait::async_trait;
@@ -74,12 +77,12 @@ impl<S> TypedStateChange<S> {
     }
 }
 
-/// Trait for typed UI states with compile-time app type safety.
+/// Trait for mode state enums with compile-time app type safety.
 ///
-/// This trait uses an associated type to specify which app mode a state
-/// works with. This provides compile-time type checking - a state that
-/// declares `type App = MergeApp` will only receive `MergeApp` instances,
-/// preventing accidental access to wrong mode's fields.
+/// This trait is implemented by mode state enums (e.g., `MergeState`,
+/// `MigrationModeState`, `CleanupModeState`). It uses an associated type
+/// to specify which app mode a state works with, providing compile-time
+/// type checking.
 ///
 /// # Associated Type
 ///
@@ -87,53 +90,59 @@ impl<S> TypedStateChange<S> {
 /// access to shared state through [`AppBase`]. Mode-specific apps also
 /// implement `Deref<Target = AppBase>` for ergonomic access.
 ///
+/// # Returns `TypedStateChange<Self>`
+///
+/// Unlike the legacy design, this trait returns `TypedStateChange<Self>`,
+/// meaning mode enums return transitions to themselves. This eliminates the
+/// need for a separate `StateEnum` associated type.
+///
 /// # Example
 ///
 /// ```ignore
 /// use crate::ui::apps::MergeApp;
 /// use crate::ui::state::{TypedAppState, TypedStateChange};
 ///
-/// struct CherryPickState {
-///     current_index: usize,
+/// pub enum MergeState {
+///     DataLoading(DataLoadingState),
+///     PullRequestSelection(PullRequestSelectionState),
+///     // ...
 /// }
 ///
 /// #[async_trait]
-/// impl TypedAppState for CherryPickState {
+/// impl TypedAppState for MergeState {
 ///     type App = MergeApp;
-///     type StateEnum = MergeState;
 ///
 ///     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
-///         // Direct access to MergeApp fields
-///         let items = &app.cherry_pick_items;
-///         // Shared fields via Deref
-///         let org = app.organization();
+///         match self {
+///             MergeState::DataLoading(state) => TypedModeState::ui(state, f, app),
+///             // ...
+///         }
 ///     }
 ///
 ///     async fn process_key(
 ///         &mut self,
 ///         code: KeyCode,
 ///         app: &mut MergeApp
-///     ) -> TypedStateChange<MergeState> {
-///         // Type-safe state transitions
-///         TypedStateChange::Keep
+///     ) -> TypedStateChange<Self> {
+///         match self {
+///             MergeState::DataLoading(state) => {
+///                 TypedModeState::process_key(state, code, app).await
+///             }
+///             // ...
+///         }
 ///     }
 ///
-///     fn name(&self) -> &'static str { "CherryPick" }
+///     fn name(&self) -> &'static str { /* ... */ }
 /// }
 /// ```
 ///
 /// [`AppBase`]: crate::ui::AppBase
 #[async_trait]
-pub trait TypedAppState: Send + Sync {
+pub trait TypedAppState: Send + Sync + Sized {
     /// The app type this state works with.
     ///
     /// Must implement [`AppMode`] to ensure access to shared state.
     type App: AppMode + Send + Sync;
-
-    /// The state enum type for this mode.
-    ///
-    /// Used for type-safe state transitions within a mode.
-    type StateEnum: Send;
 
     /// Render the state's UI.
     ///
@@ -152,12 +161,9 @@ pub trait TypedAppState: Send + Sync {
     ///
     /// # Returns
     ///
-    /// A state change indicating whether to keep, change, or exit
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut Self::App,
-    ) -> TypedStateChange<Self::StateEnum>;
+    /// A state change indicating whether to keep, change, or exit.
+    /// Returns `TypedStateChange<Self>` for type-safe transitions within the mode.
+    async fn process_key(&mut self, code: KeyCode, app: &mut Self::App) -> TypedStateChange<Self>;
 
     /// Process mouse input.
     ///
@@ -175,7 +181,105 @@ pub trait TypedAppState: Send + Sync {
         &mut self,
         _event: MouseEvent,
         _app: &mut Self::App,
-    ) -> TypedStateChange<Self::StateEnum> {
+    ) -> TypedStateChange<Self> {
+        TypedStateChange::Keep
+    }
+
+    /// Get this state's name for logging/debugging.
+    fn name(&self) -> &'static str;
+}
+
+/// Trait for individual states within a mode.
+///
+/// This trait is implemented by individual state structs (e.g., `DataLoadingState`,
+/// `PullRequestSelectionState`). It uses an associated `Mode` type to specify
+/// which mode state enum this state belongs to.
+///
+/// # Associated Type
+///
+/// The `Mode` associated type must implement [`TypedAppState`]. The `App` type
+/// is automatically derived from `Mode::App`, reducing boilerplate.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::ui::apps::MergeApp;
+/// use crate::ui::state::{MergeState, TypedModeState, TypedStateChange};
+///
+/// pub struct DataLoadingState {
+///     loading_stage: LoadingStage,
+/// }
+///
+/// #[async_trait]
+/// impl TypedModeState for DataLoadingState {
+///     type Mode = MergeState;
+///     // App is automatically MergeApp (from MergeState::App)
+///
+///     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
+///         // Render loading UI
+///     }
+///
+///     async fn process_key(
+///         &mut self,
+///         code: KeyCode,
+///         app: &mut MergeApp
+///     ) -> TypedStateChange<MergeState> {
+///         // State transitions return MergeState variants
+///         TypedStateChange::Change(MergeState::PullRequestSelection(...))
+///     }
+///
+///     fn name(&self) -> &'static str { "DataLoading" }
+/// }
+/// ```
+#[async_trait]
+pub trait TypedModeState: Send + Sync {
+    /// The mode state enum this state belongs to.
+    ///
+    /// Must implement [`TypedAppState`]. The app type is derived from this.
+    type Mode: TypedAppState;
+
+    /// Render the state's UI.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The frame to render into
+    /// * `app` - Reference to the mode-specific app (derived from `Mode::App`)
+    fn ui(&mut self, f: &mut Frame, app: &<Self::Mode as TypedAppState>::App);
+
+    /// Process keyboard input.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - The key code that was pressed
+    /// * `app` - Mutable reference to the mode-specific app
+    ///
+    /// # Returns
+    ///
+    /// A state change indicating whether to keep, change, or exit.
+    /// Returns `TypedStateChange<Self::Mode>` for transitions within the mode.
+    async fn process_key(
+        &mut self,
+        code: KeyCode,
+        app: &mut <Self::Mode as TypedAppState>::App,
+    ) -> TypedStateChange<Self::Mode>;
+
+    /// Process mouse input.
+    ///
+    /// Default implementation returns `Keep` (no-op).
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The mouse event
+    /// * `app` - Mutable reference to the mode-specific app
+    ///
+    /// # Returns
+    ///
+    /// A state change indicating whether to keep, change, or exit
+    async fn process_mouse(
+        &mut self,
+        _event: MouseEvent,
+        _app: &mut <Self::Mode as TypedAppState>::App,
+    ) -> TypedStateChange<Self::Mode> {
         TypedStateChange::Keep
     }
 

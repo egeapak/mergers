@@ -3,7 +3,7 @@ use crate::{
     models::WorkItemHistory,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     utils::html_to_lines,
 };
 use anyhow::{Result, bail};
@@ -1122,13 +1122,12 @@ impl PullRequestSelectionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for PullRequestSelectionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for PullRequestSelectionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         // Initialize selection if not already set
@@ -1650,6 +1649,7 @@ mod tests {
     use super::*;
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
+        state::typed::TypedAppState,
         testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
     };
     use insta::assert_snapshot;
@@ -2273,7 +2273,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
@@ -2298,7 +2298,7 @@ mod tests {
         state.table_state.select(Some(1));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.table_state.selected(), Some(0));
     }
@@ -2323,7 +2323,7 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.table_state.selected(), Some(1));
     }
@@ -2350,14 +2350,14 @@ mod tests {
         assert!(!harness.app.pull_requests()[0].selected);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(harness.app.pull_requests()[0].selected);
 
         // Toggle again
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(!harness.app.pull_requests()[0].selected);
@@ -2382,7 +2382,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 
@@ -2408,7 +2408,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
@@ -2431,7 +2431,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
@@ -2456,7 +2456,7 @@ mod tests {
         assert!(!state.search_mode);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('/'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('/'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.search_mode);
@@ -2482,7 +2482,7 @@ mod tests {
         assert!(!state.multi_select_mode);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.multi_select_mode);
@@ -2508,15 +2508,15 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
         state.search_mode = true;
 
-        TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
-        TypedAppState::process_key(&mut state, KeyCode::Char('e'), harness.merge_app_mut()).await;
-        TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
-        TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('e'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut()).await;
 
         assert_eq!(state.search_input, "test");
 
         // Test backspace
-        TypedAppState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
         assert_eq!(state.search_input, "tes");
     }
 
@@ -2541,7 +2541,7 @@ mod tests {
         state.search_mode = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(!state.search_mode);
     }
@@ -2568,10 +2568,10 @@ mod tests {
         state.available_states = crate::ui::testing::create_test_work_item_states();
         state.state_selection_index = 0;
 
-        TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         assert_eq!(state.state_selection_index, 1);
 
-        TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         assert_eq!(state.state_selection_index, 0);
     }
 
@@ -2599,7 +2599,7 @@ mod tests {
 
         assert!(state.selected_filter_states.is_empty());
 
-        TypedAppState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
         assert!(
             state
                 .selected_filter_states
@@ -2628,7 +2628,7 @@ mod tests {
         state.multi_select_mode = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(!state.multi_select_mode);
     }
@@ -2653,10 +2653,10 @@ mod tests {
         state.table_state.select(Some(2)); // Select PR with multiple work items
         state.work_item_index = 0;
 
-        TypedAppState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
         assert_eq!(state.work_item_index, 1);
 
-        TypedAppState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
         assert_eq!(state.work_item_index, 0);
     }
 
@@ -2680,7 +2680,7 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
@@ -2705,7 +2705,7 @@ mod tests {
         state.table_state.select(Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
@@ -2844,11 +2844,11 @@ mod tests {
         state.current_search_index = 0;
 
         // Navigate next
-        TypedAppState::process_key(&mut state, KeyCode::Char('n'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('n'), harness.merge_app_mut()).await;
         assert_eq!(state.current_search_index, 1);
 
         // Navigate previous
-        TypedAppState::process_key(&mut state, KeyCode::Char('N'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('N'), harness.merge_app_mut()).await;
         assert_eq!(state.current_search_index, 0);
     }
 
@@ -2873,7 +2873,7 @@ mod tests {
         state.search_iteration_mode = true;
         state.search_results = vec![0];
 
-        TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
         assert!(!state.search_iteration_mode);
     }
 
@@ -2898,7 +2898,7 @@ mod tests {
         state.multi_select_mode = true;
         state.available_states = crate::ui::testing::create_test_work_item_states();
 
-        TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut()).await;
         assert_eq!(
             state.selected_filter_states.len(),
             state.available_states.len()
@@ -2927,7 +2927,7 @@ mod tests {
         let mut state = PullRequestSelectionState::new();
         state.multi_select_mode = true;
 
-        TypedAppState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
         assert!(!state.multi_select_mode);
         assert!(!harness.app.pull_requests()[0].selected);
     }

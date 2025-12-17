@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     ui::state::{CherryPickContinueState, CherryPickState},
 };
 use async_trait::async_trait;
@@ -237,13 +237,12 @@ impl ConflictResolutionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for ConflictResolutionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for ConflictResolutionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         // Main layout: Title at top, content in middle, help at bottom
@@ -475,7 +474,7 @@ mod tests {
 
         // Press 'c' to attempt continue
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut())
                 .await;
 
         // Should stay in same state because git operation fails
@@ -518,7 +517,7 @@ mod tests {
 
         // Press 'a' to abort
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('a'), harness.merge_app_mut())
                 .await;
 
         // Should transition to CompletionState
@@ -563,7 +562,8 @@ mod tests {
             KeyCode::Esc,
             KeyCode::Up,
         ] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            let result =
+                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }
@@ -612,7 +612,7 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
 
         // Should transition to CherryPickState
@@ -676,7 +676,7 @@ mod tests {
 
         // Press 's' to skip
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut())
                 .await;
 
         assert!(matches!(result, TypedStateChange::Change(_)));

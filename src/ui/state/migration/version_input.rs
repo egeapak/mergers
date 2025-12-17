@@ -1,7 +1,7 @@
 use super::{MigrationModeState, MigrationResultsState};
 use crate::{
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -32,13 +32,12 @@ impl MigrationVersionInputState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationVersionInputState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl TypedModeState for MigrationVersionInputState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         let chunks = Layout::default()

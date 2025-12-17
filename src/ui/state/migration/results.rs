@@ -1,6 +1,6 @@
 use super::MigrationModeState;
 use crate::ui::apps::MigrationApp;
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::typed::{TypedModeState, TypedStateChange};
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -464,13 +464,12 @@ impl MigrationState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl TypedModeState for MigrationState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         if app.migration_analysis().is_none() {
@@ -886,7 +885,7 @@ mod tests {
         assert_eq!(state.eligible_list_state.selected(), Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.eligible_list_state.selected(), Some(1));
@@ -915,7 +914,7 @@ mod tests {
         assert_eq!(state.eligible_list_state.selected(), Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         // Should wrap to last item (there are 2 eligible PRs)
         assert_eq!(state.eligible_list_state.selected(), Some(1));
@@ -944,7 +943,7 @@ mod tests {
         assert_eq!(state.current_tab, MigrationTab::Eligible);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.current_tab, MigrationTab::Unsure);
@@ -973,7 +972,7 @@ mod tests {
         assert_eq!(state.current_tab, MigrationTab::Eligible);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.current_tab, MigrationTab::NotMerged);
@@ -1001,16 +1000,22 @@ mod tests {
         let mut state = MigrationState::new();
         assert!(!state.show_details);
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('d'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('d'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.show_details);
 
         // Toggle back
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('d'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('d'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(!state.show_details);
     }
@@ -1035,9 +1040,12 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('q'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
 
@@ -1062,7 +1070,7 @@ mod tests {
         let mut state = MigrationState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
@@ -1087,9 +1095,12 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('o'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('o'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 
@@ -1123,9 +1134,12 @@ mod tests {
 
         let mut state = MigrationState::new();
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char(' '), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char(' '),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Keep));
 
         // Check that the override was applied
@@ -1154,7 +1168,7 @@ mod tests {
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Tab] {
             let result =
-                TypedAppState::process_key(&mut state, key, harness.migration_app_mut()).await;
+                TypedModeState::process_key(&mut state, key, harness.migration_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }
@@ -1208,15 +1222,15 @@ mod tests {
         let mut state = MigrationState::new();
 
         // Eligible -> Unsure
-        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Unsure);
 
         // Unsure -> NotMerged
-        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::NotMerged);
 
         // NotMerged -> Eligible (wrap)
-        TypedAppState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Right, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Eligible);
     }
 
@@ -1243,7 +1257,7 @@ mod tests {
         state.current_tab = MigrationTab::Unsure;
 
         // Unsure -> Eligible
-        TypedAppState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Left, harness.migration_app_mut()).await;
         assert_eq!(state.current_tab, MigrationTab::Eligible);
     }
 
@@ -1290,12 +1304,12 @@ mod tests {
 
         // Try navigating in empty list - should not panic
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Up, harness.migration_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 }

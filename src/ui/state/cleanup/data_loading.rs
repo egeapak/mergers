@@ -4,7 +4,7 @@ use crate::{
     models::AppConfig,
     ui::apps::CleanupApp,
     ui::state::CleanupBranchSelectionState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -153,13 +153,12 @@ async fn load_and_analyze_branches(
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupDataLoadingState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl TypedModeState for CleanupDataLoadingState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &CleanupApp) {
         let chunks = Layout::default()
@@ -440,7 +439,7 @@ mod tests {
         let mut state = CleanupDataLoadingState::new(config);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.cleanup_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
@@ -462,7 +461,7 @@ mod tests {
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
             let result =
-                TypedAppState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
+                TypedModeState::process_key(&mut state, key, harness.cleanup_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }

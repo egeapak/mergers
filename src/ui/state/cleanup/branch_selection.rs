@@ -2,7 +2,7 @@ use super::CleanupModeState;
 use crate::{
     ui::apps::CleanupApp,
     ui::state::CleanupExecutionState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -89,13 +89,12 @@ impl CleanupBranchSelectionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupBranchSelectionState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl TypedModeState for CleanupBranchSelectionState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()

@@ -4,7 +4,7 @@ use crate::{
     models::CleanupStatus,
     ui::apps::CleanupApp,
     ui::state::CleanupResultsState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -129,13 +129,12 @@ impl CleanupExecutionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CleanupExecutionState {
-    type App = CleanupApp;
-    type StateEnum = CleanupModeState;
+impl TypedModeState for CleanupExecutionState {
+    type Mode = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         let chunks = Layout::default()

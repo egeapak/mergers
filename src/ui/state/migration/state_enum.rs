@@ -13,7 +13,7 @@ use super::{
 };
 use crate::ui::apps::MigrationApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::typed::{TypedAppState, TypedModeState, TypedStateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -114,15 +114,14 @@ impl MigrationModeState {
 #[async_trait]
 impl TypedAppState for MigrationModeState {
     type App = MigrationApp;
-    type StateEnum = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
         match self {
             MigrationModeState::SettingsConfirmation(state) => state.render(f),
-            MigrationModeState::DataLoading(state) => TypedAppState::ui(state.as_mut(), f, app),
-            MigrationModeState::Results(state) => TypedAppState::ui(state, f, app),
-            MigrationModeState::VersionInput(state) => TypedAppState::ui(state, f, app),
-            MigrationModeState::Tagging(state) => TypedAppState::ui(state, f, app),
+            MigrationModeState::DataLoading(state) => TypedModeState::ui(state.as_mut(), f, app),
+            MigrationModeState::Results(state) => TypedModeState::ui(state, f, app),
+            MigrationModeState::VersionInput(state) => TypedModeState::ui(state, f, app),
+            MigrationModeState::Tagging(state) => TypedModeState::ui(state, f, app),
             MigrationModeState::Error(state) => state.render(f, app.error_message()),
         }
     }
@@ -131,7 +130,7 @@ impl TypedAppState for MigrationModeState {
         &mut self,
         code: KeyCode,
         app: &mut MigrationApp,
-    ) -> TypedStateChange<MigrationModeState> {
+    ) -> TypedStateChange<Self> {
         match self {
             MigrationModeState::SettingsConfirmation(state) => state.handle_key(code, |config| {
                 MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(
@@ -139,16 +138,16 @@ impl TypedAppState for MigrationModeState {
                 )))
             }),
             MigrationModeState::DataLoading(state) => {
-                TypedAppState::process_key(state.as_mut(), code, app).await
+                TypedModeState::process_key(state.as_mut(), code, app).await
             }
             MigrationModeState::Results(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             MigrationModeState::VersionInput(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             MigrationModeState::Tagging(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             MigrationModeState::Error(state) => state.handle_key(code),
         }
@@ -158,20 +157,20 @@ impl TypedAppState for MigrationModeState {
         &mut self,
         event: MouseEvent,
         app: &mut MigrationApp,
-    ) -> TypedStateChange<MigrationModeState> {
+    ) -> TypedStateChange<Self> {
         match self {
             MigrationModeState::SettingsConfirmation(_) => TypedStateChange::Keep,
             MigrationModeState::DataLoading(state) => {
-                TypedAppState::process_mouse(state.as_mut(), event, app).await
+                TypedModeState::process_mouse(state.as_mut(), event, app).await
             }
             MigrationModeState::Results(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MigrationModeState::VersionInput(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MigrationModeState::Tagging(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MigrationModeState::Error(_) => TypedStateChange::Keep,
         }

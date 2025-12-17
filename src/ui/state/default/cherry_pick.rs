@@ -3,7 +3,7 @@ use crate::{
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     ui::state::{CompletionState, ConflictResolutionState, ErrorState},
 };
 use async_trait::async_trait;
@@ -37,13 +37,12 @@ impl CherryPickState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for CherryPickState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for CherryPickState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let chunks = Layout::default()

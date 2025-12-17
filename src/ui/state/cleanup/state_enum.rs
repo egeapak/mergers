@@ -10,7 +10,7 @@ use super::{
 };
 use crate::ui::apps::CleanupApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::typed::{TypedAppState, TypedModeState, TypedStateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -111,38 +111,33 @@ impl CleanupModeState {
 #[async_trait]
 impl TypedAppState for CleanupModeState {
     type App = CleanupApp;
-    type StateEnum = CleanupModeState;
 
     fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.render(f),
-            CleanupModeState::DataLoading(state) => TypedAppState::ui(state, f, app),
-            CleanupModeState::BranchSelection(state) => TypedAppState::ui(state, f, app),
-            CleanupModeState::Execution(state) => TypedAppState::ui(state, f, app),
-            CleanupModeState::Results(state) => TypedAppState::ui(state, f, app),
+            CleanupModeState::DataLoading(state) => TypedModeState::ui(state, f, app),
+            CleanupModeState::BranchSelection(state) => TypedModeState::ui(state, f, app),
+            CleanupModeState::Execution(state) => TypedModeState::ui(state, f, app),
+            CleanupModeState::Results(state) => TypedModeState::ui(state, f, app),
             CleanupModeState::Error(state) => state.render(f, app.error_message()),
         }
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut CleanupApp) -> TypedStateChange<Self> {
         match self {
             CleanupModeState::SettingsConfirmation(state) => state.handle_key(code, |config| {
                 CleanupModeState::DataLoading(CleanupDataLoadingState::new(config.clone()))
             }),
             CleanupModeState::DataLoading(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             CleanupModeState::BranchSelection(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             CleanupModeState::Execution(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
-            CleanupModeState::Results(state) => TypedAppState::process_key(state, code, app).await,
+            CleanupModeState::Results(state) => TypedModeState::process_key(state, code, app).await,
             CleanupModeState::Error(state) => state.handle_key(code),
         }
     }
@@ -151,20 +146,20 @@ impl TypedAppState for CleanupModeState {
         &mut self,
         event: MouseEvent,
         app: &mut CleanupApp,
-    ) -> TypedStateChange<CleanupModeState> {
+    ) -> TypedStateChange<Self> {
         match self {
             CleanupModeState::SettingsConfirmation(_) => TypedStateChange::Keep,
             CleanupModeState::DataLoading(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             CleanupModeState::BranchSelection(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             CleanupModeState::Execution(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             CleanupModeState::Results(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             CleanupModeState::Error(_) => TypedStateChange::Keep,
         }

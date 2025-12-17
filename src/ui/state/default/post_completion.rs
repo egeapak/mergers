@@ -2,7 +2,7 @@ use crate::{
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -168,13 +168,12 @@ impl PostCompletionState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for PostCompletionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for PostCompletionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         self.initialize_tasks(app);
@@ -623,7 +622,7 @@ mod tests {
         state.completed = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
@@ -645,7 +644,8 @@ mod tests {
         let mut state = PostCompletionState::new();
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Enter, KeyCode::Esc] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            let result =
+                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }

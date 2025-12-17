@@ -11,7 +11,7 @@ use super::{
 };
 use crate::ui::apps::MergeApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
+use crate::ui::state::typed::{TypedAppState, TypedModeState, TypedStateChange};
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::Frame;
@@ -124,48 +124,45 @@ impl MergeState {
 #[async_trait]
 impl TypedAppState for MergeState {
     type App = MergeApp;
-    type StateEnum = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         match self {
             MergeState::SettingsConfirmation(state) => state.render(f),
-            MergeState::DataLoading(state) => TypedAppState::ui(state, f, app),
-            MergeState::PullRequestSelection(state) => TypedAppState::ui(state, f, app),
-            MergeState::VersionInput(state) => TypedAppState::ui(state, f, app),
-            MergeState::SetupRepo(state) => TypedAppState::ui(state, f, app),
-            MergeState::CherryPick(state) => TypedAppState::ui(state, f, app),
-            MergeState::CherryPickContinue(state) => TypedAppState::ui(state, f, app),
-            MergeState::ConflictResolution(state) => TypedAppState::ui(state, f, app),
-            MergeState::Completion(state) => TypedAppState::ui(state, f, app),
-            MergeState::PostCompletion(state) => TypedAppState::ui(state, f, app),
+            MergeState::DataLoading(state) => TypedModeState::ui(state, f, app),
+            MergeState::PullRequestSelection(state) => TypedModeState::ui(state, f, app),
+            MergeState::VersionInput(state) => TypedModeState::ui(state, f, app),
+            MergeState::SetupRepo(state) => TypedModeState::ui(state, f, app),
+            MergeState::CherryPick(state) => TypedModeState::ui(state, f, app),
+            MergeState::CherryPickContinue(state) => TypedModeState::ui(state, f, app),
+            MergeState::ConflictResolution(state) => TypedModeState::ui(state, f, app),
+            MergeState::Completion(state) => TypedModeState::ui(state, f, app),
+            MergeState::PostCompletion(state) => TypedModeState::ui(state, f, app),
             MergeState::Error(state) => state.render(f, app.error_message()),
         }
     }
 
-    async fn process_key(
-        &mut self,
-        code: KeyCode,
-        app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> TypedStateChange<Self> {
         match self {
             MergeState::SettingsConfirmation(state) => state.handle_key(code, |_config| {
                 MergeState::DataLoading(DataLoadingState::new())
             }),
-            MergeState::DataLoading(state) => TypedAppState::process_key(state, code, app).await,
+            MergeState::DataLoading(state) => TypedModeState::process_key(state, code, app).await,
             MergeState::PullRequestSelection(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
-            MergeState::VersionInput(state) => TypedAppState::process_key(state, code, app).await,
-            MergeState::SetupRepo(state) => TypedAppState::process_key(state, code, app).await,
-            MergeState::CherryPick(state) => TypedAppState::process_key(state, code, app).await,
+            MergeState::VersionInput(state) => TypedModeState::process_key(state, code, app).await,
+            MergeState::SetupRepo(state) => TypedModeState::process_key(state, code, app).await,
+            MergeState::CherryPick(state) => TypedModeState::process_key(state, code, app).await,
             MergeState::CherryPickContinue(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
             MergeState::ConflictResolution(state) => {
-                TypedAppState::process_key(state, code, app).await
+                TypedModeState::process_key(state, code, app).await
             }
-            MergeState::Completion(state) => TypedAppState::process_key(state, code, app).await,
-            MergeState::PostCompletion(state) => TypedAppState::process_key(state, code, app).await,
+            MergeState::Completion(state) => TypedModeState::process_key(state, code, app).await,
+            MergeState::PostCompletion(state) => {
+                TypedModeState::process_key(state, code, app).await
+            }
             MergeState::Error(state) => state.handle_key(code),
         }
     }
@@ -174,27 +171,29 @@ impl TypedAppState for MergeState {
         &mut self,
         event: MouseEvent,
         app: &mut MergeApp,
-    ) -> TypedStateChange<MergeState> {
+    ) -> TypedStateChange<Self> {
         match self {
             MergeState::SettingsConfirmation(_) => TypedStateChange::Keep,
-            MergeState::DataLoading(state) => TypedAppState::process_mouse(state, event, app).await,
+            MergeState::DataLoading(state) => {
+                TypedModeState::process_mouse(state, event, app).await
+            }
             MergeState::PullRequestSelection(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MergeState::VersionInput(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
-            MergeState::SetupRepo(state) => TypedAppState::process_mouse(state, event, app).await,
-            MergeState::CherryPick(state) => TypedAppState::process_mouse(state, event, app).await,
+            MergeState::SetupRepo(state) => TypedModeState::process_mouse(state, event, app).await,
+            MergeState::CherryPick(state) => TypedModeState::process_mouse(state, event, app).await,
             MergeState::CherryPickContinue(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MergeState::ConflictResolution(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
-            MergeState::Completion(state) => TypedAppState::process_mouse(state, event, app).await,
+            MergeState::Completion(state) => TypedModeState::process_mouse(state, event, app).await,
             MergeState::PostCompletion(state) => {
-                TypedAppState::process_mouse(state, event, app).await
+                TypedModeState::process_mouse(state, event, app).await
             }
             MergeState::Error(_) => TypedStateChange::Keep,
         }

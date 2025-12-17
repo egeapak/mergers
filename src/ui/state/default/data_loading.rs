@@ -5,7 +5,7 @@ use crate::{
     models::PullRequestWithWorkItems,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -251,13 +251,12 @@ impl DataLoadingState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for DataLoadingState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for DataLoadingState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let loading = Paragraph::new(self.get_loading_message())
@@ -506,7 +505,7 @@ mod tests {
         let mut state = DataLoadingState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
@@ -531,7 +530,7 @@ mod tests {
         assert!(!state.loaded);
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert!(state.loaded);
     }
@@ -559,7 +558,8 @@ mod tests {
             KeyCode::Enter,
             KeyCode::Char('x'),
         ] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            let result =
+                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }
@@ -677,7 +677,7 @@ mod tests {
         state.loading_stage = LoadingStage::Complete;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
@@ -702,7 +702,7 @@ mod tests {
         state.loading_stage = LoadingStage::FetchingCommitInfo;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 }

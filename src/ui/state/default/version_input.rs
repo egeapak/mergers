@@ -1,7 +1,7 @@
 use super::{MergeState, SetupRepoState};
 use crate::{
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -31,13 +31,12 @@ impl VersionInputState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for VersionInputState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for VersionInputState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let chunks = Layout::default()

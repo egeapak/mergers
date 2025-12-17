@@ -8,7 +8,7 @@ use crate::{
     migration::MigrationAnalyzer,
     models::{AppConfig, PullRequest, PullRequestWithWorkItems, WorkItem},
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     utils::throttle::NetworkProcessor,
 };
 use anyhow::{Context, Result, bail};
@@ -601,13 +601,12 @@ impl MigrationDataLoadingState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationDataLoadingState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl TypedModeState for MigrationDataLoadingState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MigrationApp) {
         let chunks = Layout::default()
@@ -1075,15 +1074,15 @@ mod tests {
 
         // Test quit at various stages
         state.loading_stage = LoadingStage::NotStarted;
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
         assert!(matches!(result, TypedStateChange::Exit));
 
         state.loading_stage = LoadingStage::FetchingPullRequests;
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
         assert!(matches!(result, TypedStateChange::Exit));
 
         state.loading_stage = LoadingStage::RunningAnalysis;
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char('q'), &mut app).await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
 
@@ -1119,7 +1118,7 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press 'r' to retry
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // Verify state was reset
         assert!(matches!(result, TypedStateChange::Keep));
@@ -1161,7 +1160,7 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press 'r' without error
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char('r'), &mut app).await;
 
         // State should be unchanged
         assert!(matches!(result, TypedStateChange::Keep));
@@ -1194,12 +1193,12 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Press Enter to continue
-        let result = TypedAppState::process_key(&mut state, KeyCode::Enter, &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Enter, &mut app).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
 
         // Reset and test with space
         state.loading_stage = LoadingStage::Complete;
-        let result = TypedAppState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Char(' '), &mut app).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
@@ -1341,7 +1340,7 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Trigger initial load
-        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
 
         // Verify state after trigger
         assert!(matches!(result, TypedStateChange::Keep));
@@ -1374,7 +1373,7 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // KeyCode::Null at Complete should transition
-        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
@@ -1505,7 +1504,7 @@ mod tests {
         let mut app = create_test_migration_app(config);
 
         // Should handle gracefully
-        let result = TypedAppState::process_key(&mut state, KeyCode::Null, &mut app).await;
+        let result = TypedModeState::process_key(&mut state, KeyCode::Null, &mut app).await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 

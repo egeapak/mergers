@@ -6,7 +6,7 @@ use crate::{
     git,
     models::CherryPickItem,
     ui::apps::MergeApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
     ui::state::{CherryPickState, ErrorState},
 };
 use async_trait::async_trait;
@@ -227,13 +227,12 @@ impl SetupRepoState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Primary)
+// TypedModeState Implementation
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for SetupRepoState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for SetupRepoState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
         let chunks = Layout::default()
@@ -550,7 +549,7 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
 
@@ -573,7 +572,8 @@ mod tests {
         state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            let result =
+                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }
@@ -598,7 +598,7 @@ mod tests {
         state.started = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 

@@ -6,8 +6,7 @@
 use crate::models::AppConfig;
 use crate::parsed_property::ParsedProperty;
 use crate::ui::AppMode;
-use crate::ui::state::typed::{TypedAppState, TypedStateChange};
-use async_trait::async_trait;
+use crate::ui::state::typed::TypedStateChange;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
@@ -320,16 +319,13 @@ impl<A, S> TypedSettingsConfirmationState<A, S> {
     }
 }
 
-#[async_trait]
-impl<A, S> TypedAppState for TypedSettingsConfirmationState<A, S>
+impl<A, S> TypedSettingsConfirmationState<A, S>
 where
     A: AppMode + Send + Sync,
     S: Send + Sync + 'static,
 {
-    type App = A;
-    type StateEnum = S;
-
-    fn ui(&mut self, f: &mut Frame, _app: &A) {
+    /// Render the settings confirmation UI.
+    pub fn render(&self, f: &mut Frame) {
         let area = f.area();
 
         // Create layout with some margins for better appearance
@@ -361,21 +357,23 @@ where
         f.render_widget(settings_paragraph, layout[0]);
     }
 
-    async fn process_key(&mut self, code: KeyCode, _app: &mut A) -> TypedStateChange<S> {
+    /// Handle key input.
+    pub fn handle_key<R, F>(&self, code: KeyCode, make_next_state: F) -> TypedStateChange<R>
+    where
+        F: FnOnce(&AppConfig) -> R,
+    {
         match code {
             KeyCode::Enter => {
-                // Note: The actual state transition will be handled by the caller
-                // since we don't know the concrete state enum type here.
-                // For now, we just signal that we're ready to proceed.
-                // The run loop or state enum will handle creating the next state.
-                TypedStateChange::Exit // Signal to proceed (will be remapped by caller)
+                // Create the next state using the provided function
+                TypedStateChange::Change(make_next_state(&self.config))
             }
             KeyCode::Char('q') | KeyCode::Esc => TypedStateChange::Exit,
             _ => TypedStateChange::Keep,
         }
     }
 
-    fn name(&self) -> &'static str {
+    /// Get this state's name for logging/debugging.
+    pub fn name(&self) -> &'static str {
         "SettingsConfirmation"
     }
 }

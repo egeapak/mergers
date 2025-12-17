@@ -1,7 +1,7 @@
 use super::{MigrationModeState, MigrationResultsState};
 use crate::{
     ui::apps::MigrationApp,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -404,9 +404,8 @@ impl MigrationTaggingState {
 // ============================================================================
 
 #[async_trait]
-impl TypedAppState for MigrationTaggingState {
-    type App = MigrationApp;
-    type StateEnum = MigrationModeState;
+impl TypedModeState for MigrationTaggingState {
+    type Mode = MigrationModeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MigrationApp) {
         let chunks = Layout::default()
@@ -596,9 +595,12 @@ mod tests {
 
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('q'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
 
@@ -620,9 +622,12 @@ mod tests {
         let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
         state.is_complete = true;
 
-        let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.migration_app_mut())
-                .await;
+        let result = TypedModeState::process_key(
+            &mut state,
+            KeyCode::Char('q'),
+            harness.migration_app_mut(),
+        )
+        .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
 
@@ -645,7 +650,7 @@ mod tests {
         state.is_complete = true;
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Enter, harness.migration_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
@@ -669,7 +674,7 @@ mod tests {
 
         for key in [KeyCode::Enter, KeyCode::Up, KeyCode::Down] {
             let result =
-                TypedAppState::process_key(&mut state, key, harness.migration_app_mut()).await;
+                TypedModeState::process_key(&mut state, key, harness.migration_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }

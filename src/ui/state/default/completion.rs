@@ -2,7 +2,7 @@ use crate::{
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
-    ui::state::typed::{TypedAppState, TypedStateChange},
+    ui::state::typed::{TypedModeState, TypedStateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -69,9 +69,8 @@ impl CompletionState {
 }
 
 #[async_trait]
-impl TypedAppState for CompletionState {
-    type App = MergeApp;
-    type StateEnum = MergeState;
+impl TypedModeState for CompletionState {
+    type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let main_chunks = Layout::default()
@@ -453,7 +452,7 @@ mod tests {
         assert_eq!(state.list_state.selected(), Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         assert_eq!(state.list_state.selected(), Some(1));
     }
@@ -480,7 +479,7 @@ mod tests {
         assert_eq!(state.list_state.selected(), Some(0));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
         // Should wrap to last item
         assert_eq!(
@@ -509,7 +508,7 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('q'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Exit));
     }
@@ -534,7 +533,7 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('t'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Change(_)));
     }
@@ -559,7 +558,7 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
@@ -587,7 +586,7 @@ mod tests {
         let mut state = CompletionState::new();
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
+            TypedModeState::process_key(&mut state, KeyCode::Char('w'), harness.merge_app_mut())
                 .await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
@@ -612,7 +611,8 @@ mod tests {
         let mut state = CompletionState::new();
 
         for key in [KeyCode::Char('x'), KeyCode::Esc, KeyCode::Enter] {
-            let result = TypedAppState::process_key(&mut state, key, harness.merge_app_mut()).await;
+            let result =
+                TypedModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
             assert!(matches!(result, TypedStateChange::Keep));
         }
     }
@@ -654,11 +654,11 @@ mod tests {
 
         // Should not panic
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
 
         let result =
-            TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         assert!(matches!(result, TypedStateChange::Keep));
     }
 
@@ -721,13 +721,13 @@ mod tests {
 
         // Navigate to end
         for _ in 0..item_count {
-            TypedAppState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+            TypedModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
         }
         // Should wrap to 0
         assert_eq!(state.list_state.selected(), Some(0));
 
         // Navigate up from 0
-        TypedAppState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        TypedModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
         // Should wrap to last item
         assert_eq!(state.list_state.selected(), Some(item_count - 1));
     }
