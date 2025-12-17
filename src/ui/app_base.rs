@@ -6,9 +6,9 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{AppConfig, PullRequestWithWorkItems, WorkItem},
-    ui::WorktreeContext,
+    ui::{WorktreeContext, browser::BrowserOpener},
 };
-use std::{path::Path, process::Command, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 /// Shared state common to all app modes.
 ///
@@ -36,11 +36,18 @@ pub struct AppBase {
 
     /// Error message to display to the user.
     pub error_message: Option<String>,
+
+    /// Browser opener for opening URLs (trait object for testing).
+    browser: Box<dyn BrowserOpener>,
 }
 
 impl AppBase {
-    /// Creates a new AppBase with the given configuration and client.
-    pub fn new(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new AppBase with the given configuration, client, and browser opener.
+    pub fn new(
+        config: Arc<AppConfig>,
+        client: AzureDevOpsClient,
+        browser: Box<dyn BrowserOpener>,
+    ) -> Self {
         Self {
             config,
             pull_requests: Vec::new(),
@@ -48,6 +55,7 @@ impl AppBase {
             version: None,
             worktree: WorktreeContext::new(),
             error_message: None,
+            browser,
         }
     }
 
@@ -191,7 +199,7 @@ impl AppBase {
             pr_id
         );
 
-        Self::open_url(&url);
+        self.browser.open_url(&url);
     }
 
     /// Opens work items in the default browser.
@@ -204,20 +212,8 @@ impl AppBase {
                 wi.id
             );
 
-            Self::open_url(&url);
+            self.browser.open_url(&url);
         }
-    }
-
-    /// Opens a URL in the system's default browser.
-    fn open_url(url: &str) {
-        #[cfg(target_os = "macos")]
-        let _ = Command::new("open").arg(url).spawn();
-
-        #[cfg(target_os = "linux")]
-        let _ = Command::new("xdg-open").arg(url).spawn();
-
-        #[cfg(target_os = "windows")]
-        let _ = Command::new("cmd").args(["/C", "start", url]).spawn();
     }
 }
 
@@ -227,6 +223,7 @@ mod tests {
     use crate::{
         models::{DefaultModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
+        ui::browser::MockBrowserOpener,
     };
 
     fn create_test_shared_config() -> SharedConfig {
@@ -278,7 +275,7 @@ mod tests {
         });
         let client = create_test_client();
 
-        let base = AppBase::new(config.clone(), client);
+        let base = AppBase::new(config.clone(), client, Box::new(MockBrowserOpener::new()));
 
         assert!(Arc::ptr_eq(&base.config, &config));
         assert!(base.pull_requests.is_empty());
@@ -306,7 +303,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let base = AppBase::new(config, client);
+        let base = AppBase::new(config, client, Box::new(MockBrowserOpener::new()));
 
         assert_eq!(base.organization(), "test_org");
         assert_eq!(base.project(), "test_project");
@@ -343,7 +340,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let base = AppBase::new(config, client);
+        let base = AppBase::new(config, client, Box::new(MockBrowserOpener::new()));
 
         assert!(base.local_repo().is_none());
         assert!(base.since().is_none());
@@ -371,7 +368,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let mut base = AppBase::new(config, client);
+        let mut base = AppBase::new(config, client, Box::new(MockBrowserOpener::new()));
 
         let created_by = CreatedBy {
             display_name: "Test User".to_string(),

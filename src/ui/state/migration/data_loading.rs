@@ -837,6 +837,7 @@ impl ModeState for MigrationDataLoadingState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::browser::MockBrowserOpener;
 
     /// # Parallel Execution Flow
     ///
@@ -1051,7 +1052,7 @@ mod tests {
             "test-pat".to_string(),
         )
         .unwrap();
-        MigrationApp::new(config.into(), client)
+        MigrationApp::new(config.into(), client, Box::new(MockBrowserOpener::new()))
     }
 
     /// # Quit Command Returns Exit

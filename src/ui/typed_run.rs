@@ -211,6 +211,7 @@ mod tests {
     };
     use crate::parsed_property::ParsedProperty;
     use crate::ui::MockEventSource;
+    use crate::ui::browser::MockBrowserOpener;
     use crate::ui::state::ErrorState;
     use ratatui::backend::TestBackend;
     use std::sync::Arc;
@@ -265,7 +266,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let mut app = MergeApp::new(config, client);
+        let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -297,7 +298,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let mut app = MigrationApp::new(config, client);
+        let mut app = MigrationApp::new(config, client, Box::new(MockBrowserOpener::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -329,7 +330,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let mut app = CleanupApp::new(config, client);
+        let mut app = CleanupApp::new(config, client, Box::new(MockBrowserOpener::new()));
 
         let events = MockEventSource::new().with_key(KeyCode::Char('q'));
 
@@ -361,7 +362,7 @@ mod tests {
             },
         });
         let client = create_test_client();
-        let mut app = MergeApp::new(config, client);
+        let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));
 
         let events = MockEventSource::new()
             .with_key(KeyCode::Down)

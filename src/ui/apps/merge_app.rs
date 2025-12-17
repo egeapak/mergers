@@ -6,7 +6,7 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{AppConfig, CherryPickItem},
-    ui::{AppBase, AppMode},
+    ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -44,10 +44,14 @@ pub struct MergeApp {
 }
 
 impl MergeApp {
-    /// Creates a new MergeApp with the given configuration and client.
-    pub fn new(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new MergeApp with the given configuration, client, and browser opener.
+    pub fn new(
+        config: Arc<AppConfig>,
+        client: AzureDevOpsClient,
+        browser: Box<dyn BrowserOpener>,
+    ) -> Self {
         Self {
-            base: AppBase::new(config, client),
+            base: AppBase::new(config, client, browser),
             cherry_pick_items: Vec::new(),
             current_cherry_pick_index: 0,
         }
@@ -139,6 +143,7 @@ mod tests {
     use crate::{
         models::{DefaultModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
+        ui::browser::MockBrowserOpener,
     };
 
     fn create_test_config() -> Arc<AppConfig> {
@@ -187,7 +192,11 @@ mod tests {
     /// - current_cherry_pick_index is 0
     #[test]
     fn test_merge_app_initialization() {
-        let app = MergeApp::new(create_test_config(), create_test_client());
+        let app = MergeApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         assert!(app.cherry_pick_items.is_empty());
         assert_eq!(app.current_cherry_pick_index, 0);
@@ -204,7 +213,11 @@ mod tests {
     /// - Can call AppBase methods directly on MergeApp
     #[test]
     fn test_deref_to_app_base() {
-        let app = MergeApp::new(create_test_config(), create_test_client());
+        let app = MergeApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Access AppBase methods via Deref
         assert_eq!(app.organization(), "test_org");
@@ -245,7 +258,11 @@ mod tests {
             },
         });
 
-        let app = MergeApp::new(config, create_test_client());
+        let app = MergeApp::new(
+            config,
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
         assert_eq!(app.work_item_state(), "Custom State");
     }
 
@@ -261,7 +278,11 @@ mod tests {
     /// - Navigation works correctly through the queue
     #[test]
     fn test_cherry_pick_navigation() {
-        let mut app = MergeApp::new(create_test_config(), create_test_client());
+        let mut app = MergeApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Initially empty
         assert!(app.current_cherry_pick().is_none());
@@ -310,7 +331,11 @@ mod tests {
     /// - Can mutate AppBase fields via DerefMut
     #[test]
     fn test_deref_mut() {
-        let mut app = MergeApp::new(create_test_config(), create_test_client());
+        let mut app = MergeApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Mutate AppBase field via DerefMut
         app.version = Some("1.0.0".to_string());
@@ -331,7 +356,11 @@ mod tests {
     /// - base() and base_mut() work correctly
     #[test]
     fn test_app_mode_trait() {
-        let mut app = MergeApp::new(create_test_config(), create_test_client());
+        let mut app = MergeApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Test base()
         assert_eq!(app.base().organization(), "test_org");

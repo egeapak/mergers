@@ -6,7 +6,7 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{AppConfig, CleanupBranch},
-    ui::{AppBase, AppMode},
+    ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -42,10 +42,14 @@ pub struct CleanupApp {
 }
 
 impl CleanupApp {
-    /// Creates a new CleanupApp with the given configuration and client.
-    pub fn new(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new CleanupApp with the given configuration, client, and browser opener.
+    pub fn new(
+        config: Arc<AppConfig>,
+        client: AzureDevOpsClient,
+        browser: Box<dyn BrowserOpener>,
+    ) -> Self {
         Self {
-            base: AppBase::new(config, client),
+            base: AppBase::new(config, client, browser),
             cleanup_branches: Vec::new(),
         }
     }
@@ -142,6 +146,7 @@ mod tests {
     use crate::{
         models::{CleanupModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
+        ui::browser::MockBrowserOpener,
     };
 
     fn create_test_config() -> Arc<AppConfig> {
@@ -189,7 +194,11 @@ mod tests {
     /// - cleanup_branches is empty initially
     #[test]
     fn test_cleanup_app_initialization() {
-        let app = CleanupApp::new(create_test_config(), create_test_client());
+        let app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         assert!(app.cleanup_branches.is_empty());
         assert_eq!(app.total_count(), 0);
@@ -207,7 +216,11 @@ mod tests {
     /// - Can call AppBase methods directly on CleanupApp
     #[test]
     fn test_deref_to_app_base() {
-        let app = CleanupApp::new(create_test_config(), create_test_client());
+        let app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Access AppBase methods via Deref
         assert_eq!(app.organization(), "test_org");
@@ -227,7 +240,11 @@ mod tests {
     /// - Returns configured cleanup target
     #[test]
     fn test_cleanup_target() {
-        let app = CleanupApp::new(create_test_config(), create_test_client());
+        let app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
         assert_eq!(app.cleanup_target(), "release/1.0");
     }
 
@@ -245,7 +262,11 @@ mod tests {
     fn test_branch_selection() {
         use crate::models::CleanupStatus;
 
-        let mut app = CleanupApp::new(create_test_config(), create_test_client());
+        let mut app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Add some test branches
         app.cleanup_branches = vec![
@@ -306,7 +327,11 @@ mod tests {
     fn test_get_selected_branches() {
         use crate::models::CleanupStatus;
 
-        let mut app = CleanupApp::new(create_test_config(), create_test_client());
+        let mut app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         app.cleanup_branches = vec![
             CleanupBranch {
@@ -352,7 +377,11 @@ mod tests {
     /// - base() and base_mut() work correctly
     #[test]
     fn test_app_mode_trait() {
-        let mut app = CleanupApp::new(create_test_config(), create_test_client());
+        let mut app = CleanupApp::new(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+        );
 
         // Test base()
         assert_eq!(app.base().organization(), "test_org");
