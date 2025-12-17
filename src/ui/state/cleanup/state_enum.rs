@@ -155,40 +155,72 @@ impl AppState for CleanupModeState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Future Use)
+// TypedAppState Implementation
 // ============================================================================
 //
-// This implementation is for the future typed run loop. Currently placeholder
-// as individual states need to be migrated to implement TypedAppState first.
+// This implementation delegates to the inner state's TypedAppState implementation,
+// providing fully typed state transitions without Box<dyn AppState>.
 
 #[async_trait]
 impl TypedAppState for CleanupModeState {
     type App = CleanupApp;
     type StateEnum = CleanupModeState;
 
-    fn ui(&mut self, _f: &mut Frame, _app: &CleanupApp) {
-        // Future: When individual states implement TypedAppState,
-        // this will delegate to inner states with type-safe app references.
-        unimplemented!("Use AppState::ui() with &App for now")
+    fn ui(&mut self, f: &mut Frame, app: &CleanupApp) {
+        match self {
+            CleanupModeState::SettingsConfirmation(state) => state.render(f),
+            CleanupModeState::DataLoading(state) => TypedAppState::ui(state, f, app),
+            CleanupModeState::BranchSelection(state) => TypedAppState::ui(state, f, app),
+            CleanupModeState::Execution(state) => TypedAppState::ui(state, f, app),
+            CleanupModeState::Results(state) => TypedAppState::ui(state, f, app),
+            CleanupModeState::Error(state) => state.render(f, app.error_message()),
+        }
     }
 
     async fn process_key(
         &mut self,
-        _code: KeyCode,
-        _app: &mut CleanupApp,
+        code: KeyCode,
+        app: &mut CleanupApp,
     ) -> TypedStateChange<CleanupModeState> {
-        // Future: When individual states implement TypedAppState,
-        // this will delegate to inner states with type-safe app references.
-        unimplemented!("Use AppState::process_key() with &mut App for now")
+        match self {
+            CleanupModeState::SettingsConfirmation(state) => state.handle_key(code, |config| {
+                CleanupModeState::DataLoading(CleanupDataLoadingState::new(config.clone()))
+            }),
+            CleanupModeState::DataLoading(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            CleanupModeState::BranchSelection(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            CleanupModeState::Execution(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            CleanupModeState::Results(state) => TypedAppState::process_key(state, code, app).await,
+            CleanupModeState::Error(state) => state.handle_key(code),
+        }
     }
 
     async fn process_mouse(
         &mut self,
-        _event: MouseEvent,
-        _app: &mut CleanupApp,
+        event: MouseEvent,
+        app: &mut CleanupApp,
     ) -> TypedStateChange<CleanupModeState> {
-        // Future: Will delegate to inner state's TypedAppState implementation
-        TypedStateChange::Keep
+        match self {
+            CleanupModeState::SettingsConfirmation(_) => TypedStateChange::Keep,
+            CleanupModeState::DataLoading(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::BranchSelection(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::Execution(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::Results(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            CleanupModeState::Error(_) => TypedStateChange::Keep,
+        }
     }
 
     fn name(&self) -> &'static str {

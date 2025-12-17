@@ -160,40 +160,76 @@ impl AppState for MigrationModeState {
 }
 
 // ============================================================================
-// TypedAppState Implementation (Future Use)
+// TypedAppState Implementation
 // ============================================================================
 //
-// This implementation is for the future typed run loop. Currently placeholder
-// as individual states need to be migrated to implement TypedAppState first.
+// This implementation delegates to the inner state's TypedAppState implementation,
+// providing fully typed state transitions without Box<dyn AppState>.
 
 #[async_trait]
 impl TypedAppState for MigrationModeState {
     type App = MigrationApp;
     type StateEnum = MigrationModeState;
 
-    fn ui(&mut self, _f: &mut Frame, _app: &MigrationApp) {
-        // Future: When individual states implement TypedAppState,
-        // this will delegate to inner states with type-safe app references.
-        unimplemented!("Use AppState::ui() with &App for now")
+    fn ui(&mut self, f: &mut Frame, app: &MigrationApp) {
+        match self {
+            MigrationModeState::SettingsConfirmation(state) => state.render(f),
+            MigrationModeState::DataLoading(state) => TypedAppState::ui(state.as_mut(), f, app),
+            MigrationModeState::Results(state) => TypedAppState::ui(state, f, app),
+            MigrationModeState::VersionInput(state) => TypedAppState::ui(state, f, app),
+            MigrationModeState::Tagging(state) => TypedAppState::ui(state, f, app),
+            MigrationModeState::Error(state) => state.render(f, app.error_message()),
+        }
     }
 
     async fn process_key(
         &mut self,
-        _code: KeyCode,
-        _app: &mut MigrationApp,
+        code: KeyCode,
+        app: &mut MigrationApp,
     ) -> TypedStateChange<MigrationModeState> {
-        // Future: When individual states implement TypedAppState,
-        // this will delegate to inner states with type-safe app references.
-        unimplemented!("Use AppState::process_key() with &mut App for now")
+        match self {
+            MigrationModeState::SettingsConfirmation(state) => state.handle_key(code, |config| {
+                MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(
+                    config.clone(),
+                )))
+            }),
+            MigrationModeState::DataLoading(state) => {
+                TypedAppState::process_key(state.as_mut(), code, app).await
+            }
+            MigrationModeState::Results(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            MigrationModeState::VersionInput(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            MigrationModeState::Tagging(state) => {
+                TypedAppState::process_key(state, code, app).await
+            }
+            MigrationModeState::Error(state) => state.handle_key(code),
+        }
     }
 
     async fn process_mouse(
         &mut self,
-        _event: MouseEvent,
-        _app: &mut MigrationApp,
+        event: MouseEvent,
+        app: &mut MigrationApp,
     ) -> TypedStateChange<MigrationModeState> {
-        // Future: Will delegate to inner state's TypedAppState implementation
-        TypedStateChange::Keep
+        match self {
+            MigrationModeState::SettingsConfirmation(_) => TypedStateChange::Keep,
+            MigrationModeState::DataLoading(state) => {
+                TypedAppState::process_mouse(state.as_mut(), event, app).await
+            }
+            MigrationModeState::Results(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            MigrationModeState::VersionInput(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            MigrationModeState::Tagging(state) => {
+                TypedAppState::process_mouse(state, event, app).await
+            }
+            MigrationModeState::Error(_) => TypedStateChange::Keep,
+        }
     }
 
     fn name(&self) -> &'static str {

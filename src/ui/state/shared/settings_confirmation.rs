@@ -3,6 +3,7 @@ use crate::{
     parsed_property::ParsedProperty,
     ui::state::default::DataLoadingState,
     ui::state::migration::MigrationDataLoadingState,
+    ui::state::typed::TypedStateChange,
     ui::{
         App,
         state::{AppState, StateChange},
@@ -25,6 +26,68 @@ pub struct SettingsConfirmationState {
 impl SettingsConfirmationState {
     pub fn new(config: AppConfig) -> Self {
         Self { config }
+    }
+
+    /// Get a reference to the config.
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    /// Render the settings confirmation UI.
+    ///
+    /// This is a mode-agnostic rendering method that can be called from
+    /// any mode's TypedAppState implementation.
+    pub fn render(&mut self, f: &mut Frame) {
+        let area = f.area();
+
+        // Create layout with some margins for better appearance
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0)])
+            .split(area.inner(Margin {
+                horizontal: 2,
+                vertical: 1,
+            }));
+
+        let settings_lines = self.create_settings_display();
+
+        let settings_paragraph = Paragraph::new(settings_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Configuration Settings")
+                    .title_style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .wrap(Wrap { trim: true })
+            .alignment(Alignment::Left);
+
+        f.render_widget(settings_paragraph, layout[0]);
+    }
+
+    /// Handle a key press and return the typed state change.
+    ///
+    /// This is a mode-agnostic key handler that takes a closure to construct
+    /// the next state when Enter is pressed. Each mode can provide its own
+    /// data loading state constructor.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - The key code pressed
+    /// * `make_next_state` - A closure that takes the config and returns the next state
+    pub fn handle_key<S, F>(&self, code: KeyCode, make_next_state: F) -> TypedStateChange<S>
+    where
+        F: FnOnce(&AppConfig) -> S,
+    {
+        match code {
+            KeyCode::Enter => TypedStateChange::Change(make_next_state(&self.config)),
+            KeyCode::Char('q') | KeyCode::Esc => TypedStateChange::Exit,
+            _ => TypedStateChange::Keep,
+        }
     }
 
     fn format_property_with_source<T: std::fmt::Display>(
@@ -280,35 +343,7 @@ impl SettingsConfirmationState {
 #[async_trait]
 impl AppState for SettingsConfirmationState {
     fn ui(&mut self, f: &mut Frame, _app: &App) {
-        let area = f.area();
-
-        // Create layout with some margins for better appearance
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0)])
-            .split(area.inner(Margin {
-                horizontal: 2,
-                vertical: 1,
-            }));
-
-        let settings_lines = self.create_settings_display();
-
-        let settings_paragraph = Paragraph::new(settings_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Configuration Settings")
-                    .title_style(
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    )
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: true })
-            .alignment(Alignment::Left);
-
-        f.render_widget(settings_paragraph, layout[0]);
+        self.render(f);
     }
 
     async fn process_key(&mut self, code: KeyCode, _app: &mut App) -> StateChange {

@@ -1,6 +1,7 @@
-use crate::{
-    ui::App,
-    ui::state::{AppState, StateChange},
+use crate::ui::state::typed::TypedStateChange;
+use crate::ui::{
+    App,
+    state::{AppState, StateChange},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -23,11 +24,12 @@ impl ErrorState {
     pub fn new() -> Self {
         Self
     }
-}
 
-#[async_trait]
-impl AppState for ErrorState {
-    fn ui(&mut self, f: &mut Frame, app: &App) {
+    /// Render the error UI with the provided error message.
+    ///
+    /// This is a mode-agnostic rendering method that can be called from
+    /// any mode's TypedAppState implementation.
+    pub fn render(&mut self, f: &mut Frame, error_msg: Option<&str>) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
@@ -43,8 +45,8 @@ impl AppState for ErrorState {
             .alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
-        let error_msg = app.error_message().unwrap_or("Unknown error");
-        let error = Paragraph::new(error_msg)
+        let error_text = error_msg.unwrap_or("Unknown error");
+        let error = Paragraph::new(error_text)
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL))
             .wrap(Wrap { trim: true });
@@ -54,6 +56,24 @@ impl AppState for ErrorState {
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
         f.render_widget(help, chunks[2]);
+    }
+
+    /// Handle a key press and return the typed state change.
+    ///
+    /// This is a mode-agnostic key handler that can be called from
+    /// any mode's TypedAppState implementation.
+    pub fn handle_key<S>(&mut self, code: KeyCode) -> TypedStateChange<S> {
+        match code {
+            KeyCode::Char('q') => TypedStateChange::Exit,
+            _ => TypedStateChange::Keep,
+        }
+    }
+}
+
+#[async_trait]
+impl AppState for ErrorState {
+    fn ui(&mut self, f: &mut Frame, app: &App) {
+        self.render(f, app.error_message());
     }
 
     async fn process_key(&mut self, code: KeyCode, _app: &mut App) -> StateChange {
