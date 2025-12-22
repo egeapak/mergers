@@ -282,17 +282,37 @@ impl ModeState for CherryPickContinueState {
         f.render_widget(details_widget, content_chunks[1]);
 
         // Bottom: Instructions
-        let instructions = if is_complete {
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let instructions_lines = if is_complete {
             match success {
-                Some(true) => "Press any key to continue to next commit",
-                Some(false) => "r: Retry | s: Skip commit | a: Abort (cleanup)",
-                None => "Press any key to continue",
+                Some(true) => vec![Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("any key", key_style),
+                    Span::raw(" to continue to next commit"),
+                ])],
+                Some(false) => vec![Line::from(vec![
+                    Span::styled("r", key_style),
+                    Span::raw(": Retry | "),
+                    Span::styled("s", key_style),
+                    Span::raw(": Skip commit | "),
+                    Span::styled("a", key_style),
+                    Span::raw(": Abort (cleanup)"),
+                ])],
+                None => vec![Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("any key", key_style),
+                    Span::raw(" to continue"),
+                ])],
             }
         } else {
-            "Processing... Please wait (pre-commit hooks may take time)"
+            vec![Line::from(
+                "Processing... Please wait (pre-commit hooks may take time)",
+            )]
         };
 
-        let instructions_widget = Paragraph::new(instructions)
+        let instructions_widget = Paragraph::new(instructions_lines)
             .block(Block::default().borders(Borders::ALL).title("Instructions"))
             .style(Style::default().fg(Color::White));
         f.render_widget(instructions_widget, main_chunks[2]);

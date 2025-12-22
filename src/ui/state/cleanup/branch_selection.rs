@@ -177,19 +177,49 @@ impl ModeState for CleanupBranchSelectionState {
         // Help text
         let help_lines = vec![
             Line::from(vec![
-                Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "↑/↓",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Navigate  "),
-                Span::styled("Space", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "Space",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Toggle selection  "),
-                Span::styled("a", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "a",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Select all merged"),
             ]),
             Line::from(vec![
-                Span::styled("d", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "d",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Deselect all  "),
-                Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "Enter",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Proceed to cleanup  "),
-                Span::styled("q", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(": Exit"),
             ]),
         ];

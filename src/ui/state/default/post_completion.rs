@@ -285,6 +285,9 @@ impl ModeState for PostCompletionState {
         f.render_widget(task_list, main_chunks[2]);
 
         // Instructions
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let instructions = if self.completed {
             let mut lines = vec![
                 Line::from("🎉 All post-completion tasks have been processed!"),
@@ -303,14 +306,34 @@ impl ModeState for PostCompletionState {
 
             if self.has_failed_tasks() {
                 lines.extend(vec![
-                    Line::from("Press 'Enter' to return to completion summary"),
-                    Line::from("Press 'r' to retry failed tasks"),
-                    Line::from("Press 'q' to exit"),
+                    Line::from(vec![
+                        Span::raw("Press "),
+                        Span::styled("Enter", key_style),
+                        Span::raw(" to return to completion summary"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("Press "),
+                        Span::styled("r", key_style),
+                        Span::raw(" to retry failed tasks"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("Press "),
+                        Span::styled("q", key_style),
+                        Span::raw(" to exit"),
+                    ]),
                 ]);
             } else {
                 lines.extend(vec![
-                    Line::from("Press 'Enter' to return to completion summary"),
-                    Line::from("Press 'q' to exit"),
+                    Line::from(vec![
+                        Span::raw("Press "),
+                        Span::styled("Enter", key_style),
+                        Span::raw(" to return to completion summary"),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("Press "),
+                        Span::styled("q", key_style),
+                        Span::raw(" to exit"),
+                    ]),
                 ]);
             }
 
@@ -329,7 +352,11 @@ impl ModeState for PostCompletionState {
                     app.work_item_state()
                 )),
                 Line::from(""),
-                Line::from("Press 'q' to exit (tasks will continue in background)"),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to exit (tasks will continue in background)"),
+                ]),
             ]
         };
 

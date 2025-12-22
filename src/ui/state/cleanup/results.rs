@@ -259,11 +259,26 @@ impl ModeState for CleanupResultsState {
 
         // Help text
         let help_lines = vec![Line::from(vec![
-            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "Tab",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": Switch view  "),
-            Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "↑/↓",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": Navigate  "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                "q",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(": Exit"),
         ])];
 

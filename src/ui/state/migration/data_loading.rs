@@ -669,15 +669,30 @@ impl ModeState for MigrationDataLoadingState {
         f.render_widget(status_widget, chunks[2]);
 
         // Help text
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let help_text = if self.error.is_some() {
-            vec![Line::from("Press q to quit or r to retry")]
+            vec![Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("q", key_style),
+                Span::raw(" to quit or "),
+                Span::styled("r", key_style),
+                Span::raw(" to retry"),
+            ])]
         } else if matches!(self.loading_stage, LoadingStage::Complete) {
-            vec![Line::from(
-                "Analysis completed! Press any key to continue...",
-            )]
+            vec![Line::from(vec![
+                Span::raw("Analysis completed! Press "),
+                Span::styled("any key", key_style),
+                Span::raw(" to continue..."),
+            ])]
         } else {
             vec![
-                Line::from("Press q to cancel analysis"),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to cancel analysis"),
+                ]),
                 Line::from("Please wait while we analyze your pull requests..."),
             ]
         };
