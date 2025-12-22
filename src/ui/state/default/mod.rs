@@ -1,3 +1,4 @@
+mod aborting;
 mod cherry_pick;
 mod cherry_pick_continue;
 mod completion;
@@ -9,6 +10,7 @@ mod setup_repo;
 mod state_enum;
 mod version_input;
 
+pub use aborting::AbortingState;
 pub use cherry_pick::CherryPickState;
 pub use cherry_pick_continue::CherryPickContinueState;
 pub use completion::CompletionState;
