@@ -430,6 +430,9 @@ impl MigrationState {
     }
 
     fn render_help(&self, f: &mut Frame, area: Rect) {
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let help_text = vec![
             Line::from(vec![Span::styled(
                 "Navigation:",
@@ -437,22 +440,44 @@ impl MigrationState {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("  ↑/↓ - Navigate PRs | ←/→ - Switch tabs | o - Open PR in browser"),
-            Line::from("  d - Toggle details | q - Quit"),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("↑/↓", key_style),
+                Span::raw(" - Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(" - Switch tabs | "),
+                Span::styled("o", key_style),
+                Span::raw(" - Open PR in browser"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("d", key_style),
+                Span::raw(" - Toggle details | "),
+                Span::styled("q", key_style),
+                Span::raw(" - Quit"),
+            ]),
             Line::from(vec![Span::styled(
                 "Toggle Eligibility:",
                 Style::default()
                     .fg(Color::Magenta)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("  Space - Toggle PR eligibility (cycles through states)"),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Space", key_style),
+                Span::raw(" - Toggle PR eligibility (cycles through states)"),
+            ]),
             Line::from(vec![Span::styled(
                 "Next Step:",
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("  Enter - Proceed to Version Input for Tagging"),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("Enter", key_style),
+                Span::raw(" - Proceed to Version Input for Tagging"),
+            ]),
         ];
 
         let paragraph = Paragraph::new(help_text)

@@ -215,13 +215,31 @@ impl ModeState for CleanupDataLoadingState {
         f.render_widget(status, chunks[2]);
 
         // Help text
-        let help_text = if self.error.is_some() {
-            "Press 'q' to exit"
+        let help_lines = if self.error.is_some() {
+            vec![Line::from(vec![
+                Span::raw("Press "),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to exit"),
+            ])]
         } else {
-            "Loading... Press 'q' to cancel"
+            vec![Line::from(vec![
+                Span::raw("Loading... Press "),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to cancel"),
+            ])]
         };
 
-        let help = Paragraph::new(help_text)
+        let help = Paragraph::new(help_lines)
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));

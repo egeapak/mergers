@@ -359,6 +359,9 @@ impl MigrationTaggingState {
     }
 
     fn render_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let help_text = if self.is_complete {
             vec![
                 Line::from(vec![Span::styled(
@@ -369,12 +372,11 @@ impl MigrationTaggingState {
                 )]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Press ", Style::default().fg(Color::Gray)),
-                    Span::styled("any key", Style::default().fg(Color::Yellow)),
-                    Span::styled(" to return to results", Style::default().fg(Color::Gray)),
-                    Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("q", Style::default().fg(Color::Yellow)),
-                    Span::styled(" to quit", Style::default().fg(Color::Gray)),
+                    Span::raw("Press "),
+                    Span::styled("any key", key_style),
+                    Span::raw(" to return to results | "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to quit"),
                 ]),
             ]
         } else {

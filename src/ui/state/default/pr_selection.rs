@@ -962,12 +962,35 @@ impl PullRequestSelectionState {
         f.render_widget(status_widget, chunks[2]);
 
         // Render help
-        let help_text = if self.search_iteration_mode {
-            "n: Next | N: Previous | Esc/Enter: Exit search"
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_lines = if self.search_iteration_mode {
+            vec![Line::from(vec![
+                Span::styled("n", key_style),
+                Span::raw(": Next | "),
+                Span::styled("N", key_style),
+                Span::raw(": Previous | "),
+                Span::styled("Esc", key_style),
+                Span::raw("/"),
+                Span::styled("Enter", key_style),
+                Span::raw(": Exit search"),
+            ])]
         } else {
-            "!123: PR ID | #456: Work Item ID | PR:text | WI:text | Esc: Cancel"
+            vec![Line::from(vec![
+                Span::styled("!", key_style),
+                Span::raw("123: PR ID | "),
+                Span::styled("#", key_style),
+                Span::raw("456: Work Item ID | "),
+                Span::styled("PR:", key_style),
+                Span::raw("text | "),
+                Span::styled("WI:", key_style),
+                Span::raw("text | "),
+                Span::styled("Esc", key_style),
+                Span::raw(": Cancel"),
+            ])]
         };
-        let help_widget = Paragraph::new(help_text)
+        let help_widget = Paragraph::new(help_lines)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
         f.render_widget(help_widget, chunks[3]);
@@ -1109,9 +1132,26 @@ impl PullRequestSelectionState {
         f.render_widget(states_list, chunks[1]);
 
         // Render help
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let help_lines = vec![
-            Line::from("↑/↓: Navigate | Space: Toggle state | Enter: Apply filter"),
-            Line::from("c: Clear & apply | a: Select all states | Esc: Cancel"),
+            Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle state | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Apply filter"),
+            ]),
+            Line::from(vec![
+                Span::styled("c", key_style),
+                Span::raw(": Clear & apply | "),
+                Span::styled("a", key_style),
+                Span::raw(": Select all states | "),
+                Span::styled("Esc", key_style),
+                Span::raw(": Cancel"),
+            ]),
         ];
         let help_widget = Paragraph::new(help_lines)
             .style(Style::default().fg(Color::Gray))

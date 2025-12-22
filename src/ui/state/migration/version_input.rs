@@ -168,6 +168,9 @@ impl ModeState for MigrationVersionInputState {
         f.render_widget(not_marked_list, chunks[5]);
 
         // Help text
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let help_lines = vec![
             Line::from(vec![Span::styled(
                 "Instructions:",
@@ -175,9 +178,21 @@ impl ModeState for MigrationVersionInputState {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )]),
-            Line::from("  • Type your version number and press Enter to continue"),
-            Line::from("  • Use Esc to go back to PR results"),
-            Line::from("  • Use Backspace to edit your input"),
+            Line::from(vec![
+                Span::raw("  • Type your version number and press "),
+                Span::styled("Enter", key_style),
+                Span::raw(" to continue"),
+            ]),
+            Line::from(vec![
+                Span::raw("  • Use "),
+                Span::styled("Esc", key_style),
+                Span::raw(" to go back to PR results"),
+            ]),
+            Line::from(vec![
+                Span::raw("  • Use "),
+                Span::styled("Backspace", key_style),
+                Span::raw(" to edit your input"),
+            ]),
         ];
 
         let help = Paragraph::new(help_lines)
