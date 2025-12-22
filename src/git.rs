@@ -198,7 +198,11 @@ pub fn validate_git_ref(reference: &str) -> std::result::Result<(), GitError> {
     Ok(())
 }
 
-pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf, TempDir)> {
+pub fn shallow_clone_repo(
+    ssh_url: &str,
+    target_branch: &str,
+    run_hooks: bool,
+) -> Result<(PathBuf, TempDir)> {
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let repo_path = temp_dir.path().to_path_buf();
 
@@ -225,11 +229,14 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf
     }
 
     // Disable hooks to prevent commit hook failures during cherry-pick operations
-    Command::new("git")
-        .current_dir(&repo_path)
-        .args(["config", "core.hooksPath", "/dev/null"])
-        .output()
-        .context("Failed to configure hooks path")?;
+    // unless --run-hooks is specified
+    if !run_hooks {
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "core.hooksPath", "/dev/null"])
+            .output()
+            .context("Failed to configure hooks path")?;
+    }
 
     Ok((repo_path, temp_dir))
 }
@@ -238,6 +245,7 @@ pub fn create_worktree(
     base_repo_path: &Path,
     target_branch: &str,
     version: &str,
+    run_hooks: bool,
 ) -> Result<PathBuf, RepositorySetupError> {
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
@@ -316,19 +324,22 @@ pub fn create_worktree(
     }
 
     // Disable hooks to prevent commit hook failures during cherry-pick operations
-    let config_output = Command::new("git")
-        .current_dir(&worktree_path)
-        .args(["config", "core.hooksPath", "/dev/null"])
-        .output()
-        .map_err(|e| {
-            RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
-        })?;
+    // unless --run-hooks is specified
+    if !run_hooks {
+        let config_output = Command::new("git")
+            .current_dir(&worktree_path)
+            .args(["config", "core.hooksPath", "/dev/null"])
+            .output()
+            .map_err(|e| {
+                RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
+            })?;
 
-    if !config_output.status.success() {
-        return Err(RepositorySetupError::Other(format!(
-            "Failed to configure hooks path: {}",
-            String::from_utf8_lossy(&config_output.stderr)
-        )));
+        if !config_output.status.success() {
+            return Err(RepositorySetupError::Other(format!(
+                "Failed to configure hooks path: {}",
+                String::from_utf8_lossy(&config_output.stderr)
+            )));
+        }
     }
 
     Ok(worktree_path)
@@ -420,6 +431,7 @@ pub fn setup_repository(
     ssh_url: &str,
     target_branch: &str,
     version: &str,
+    run_hooks: bool,
 ) -> Result<RepositorySetup, RepositorySetupError> {
     match local_repo {
         Some(repo_path) => {
@@ -446,11 +458,11 @@ pub fn setup_repository(
                 )));
             }
 
-            let worktree_path = create_worktree(repo_path, target_branch, version)?;
+            let worktree_path = create_worktree(repo_path, target_branch, version, run_hooks)?;
             Ok(RepositorySetup::Local(worktree_path))
         }
         None => {
-            let (repo_path, temp_dir) = shallow_clone_repo(ssh_url, target_branch)
+            let (repo_path, temp_dir) = shallow_clone_repo(ssh_url, target_branch, run_hooks)
                 .map_err(|e| RepositorySetupError::Other(e.to_string()))?;
             Ok(RepositorySetup::Clone(repo_path, temp_dir))
         }
@@ -1770,10 +1782,116 @@ mod tests {
             .unwrap();
 
         // Test worktree creation
-        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0").unwrap();
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
 
         assert!(worktree_path.exists());
         assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
+    }
+
+    /// # Create Worktree Hooks Disabled by Default
+    ///
+    /// Tests that git hooks are disabled when run_hooks=false (default).
+    ///
+    /// ## Test Scenario
+    /// - Creates a worktree with run_hooks=false
+    /// - Verifies that core.hooksPath is set to /dev/null
+    ///
+    /// ## Expected Outcome
+    /// - The worktree has hooks disabled via core.hooksPath=/dev/null
+    #[test]
+    fn test_create_worktree_hooks_disabled_by_default() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create worktree with hooks disabled (default)
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
+
+        // Verify hooks are disabled
+        let output = Command::new("git")
+            .current_dir(&worktree_path)
+            .args(["config", "--get", "core.hooksPath"])
+            .output()
+            .unwrap();
+
+        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert_eq!(
+            hooks_path, "/dev/null",
+            "Hooks should be disabled by default"
+        );
+    }
+
+    /// # Create Worktree Hooks Enabled with run_hooks Flag
+    ///
+    /// Tests that git hooks are NOT disabled when run_hooks=true.
+    ///
+    /// ## Test Scenario
+    /// - Creates a worktree with run_hooks=true
+    /// - Verifies that core.hooksPath is NOT set to /dev/null
+    ///
+    /// ## Expected Outcome
+    /// - The worktree does NOT have core.hooksPath set to /dev/null
+    #[test]
+    fn test_create_worktree_hooks_enabled_with_flag() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push the target branch to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create worktree with hooks enabled
+        let worktree_path = create_worktree(&repo_path, "target-branch", "2.0.0", true).unwrap();
+
+        // Verify hooks are NOT disabled
+        let output = Command::new("git")
+            .current_dir(&worktree_path)
+            .args(["config", "--get", "core.hooksPath"])
+            .output()
+            .unwrap();
+
+        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            hooks_path.is_empty() || hooks_path != "/dev/null",
+            "Hooks should NOT be disabled when run_hooks=true"
+        );
     }
 
     /// # Create Worktree Branch Exists
@@ -1818,7 +1936,7 @@ mod tests {
             .unwrap();
 
         // This should fail because worktree path already exists
-        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0", false);
         assert!(result.is_err());
 
         if let Err(RepositorySetupError::WorktreeExists(path)) = result {
@@ -1880,7 +1998,7 @@ mod tests {
 
         // This should succeed because current implementation doesn't use -b flag
         // It creates a detached HEAD instead, so existing branch doesn't conflict
-        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0", false);
         assert!(result.is_ok());
 
         let worktree_path = result.unwrap();
@@ -2018,7 +2136,7 @@ mod tests {
         std::fs::create_dir(&worktree_path).unwrap();
 
         // This should fail because path already exists
-        let result = create_worktree(&repo_path, "target-branch", "1.0.0");
+        let result = create_worktree(&repo_path, "target-branch", "1.0.0", false);
         assert!(result.is_err());
 
         if let Err(RepositorySetupError::WorktreeExists(_)) = result {
@@ -2088,7 +2206,7 @@ mod tests {
             .unwrap();
 
         // Create worktree
-        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0").unwrap();
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
         assert!(worktree_path.exists());
 
         // Force remove worktree
@@ -2444,11 +2562,11 @@ mod tests {
             .unwrap();
 
         // Create some migration worktrees
-        create_worktree(&repo_path, "target-branch", "migration-1.0.0").unwrap();
-        create_worktree(&repo_path, "target-branch", "migration-2.0.0").unwrap();
+        create_worktree(&repo_path, "target-branch", "migration-1.0.0", false).unwrap();
+        create_worktree(&repo_path, "target-branch", "migration-2.0.0", false).unwrap();
 
         // Also create a regular worktree that shouldn't be removed
-        create_worktree(&repo_path, "target-branch", "regular-1.0.0").unwrap();
+        create_worktree(&repo_path, "target-branch", "regular-1.0.0", false).unwrap();
 
         // Verify worktrees exist
         let worktree1_path = repo_path.join("next-migration-1.0.0");
@@ -3351,7 +3469,7 @@ mod tests {
             .unwrap();
 
         // Create worktree
-        let worktree_result = create_worktree(&repo_path, "target-branch", "v1.0.0");
+        let worktree_result = create_worktree(&repo_path, "target-branch", "v1.0.0", false);
         assert!(worktree_result.is_ok());
         let worktree_path = worktree_result.unwrap();
 

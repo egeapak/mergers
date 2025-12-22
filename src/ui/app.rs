@@ -515,6 +515,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -608,6 +609,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let app = App::from_config(default_config, client.clone());
@@ -649,6 +651,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -681,6 +684,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -712,6 +716,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -815,6 +820,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -844,6 +850,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Custom State".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let merge_app = App::new_merge(merge_config, client.clone());
@@ -886,6 +893,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -919,6 +927,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
