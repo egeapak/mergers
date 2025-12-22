@@ -310,16 +310,23 @@ impl ModeState for ConflictResolutionState {
 
         // Bottom: Instructions and Help
         let repo_path = app.repo_path().as_ref().unwrap().display();
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
         let instructions = vec![
             Line::from(vec![
                 Span::raw("Repository: "),
                 Span::styled(format!("{}", repo_path), Style::default().fg(Color::Cyan)),
             ]),
             Line::from("Please resolve conflicts in another terminal and stage the changes."),
-            Line::from(vec![Span::styled(
-                "c: Continue (after resolving) | s: Skip commit | a: Abort (cleanup)",
-                Style::default().fg(Color::Gray),
-            )]),
+            Line::from(vec![
+                Span::styled("c", key_style),
+                Span::raw(": Continue (after resolving) | "),
+                Span::styled("s", key_style),
+                Span::raw(": Skip commit | "),
+                Span::styled("a", key_style),
+                Span::raw(": Abort (cleanup)"),
+            ]),
         ];
 
         let instructions_widget = Paragraph::new(instructions)

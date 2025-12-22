@@ -12,6 +12,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
 };
 use std::time::Instant;
@@ -206,13 +207,29 @@ impl ModeState for CleanupExecutionState {
         f.render_widget(list, chunks[2]);
 
         // Help text
-        let help_text = if self.is_complete {
-            "Cleanup complete. Press Enter to view results, or 'q' to exit"
+        let help_lines = if self.is_complete {
+            vec![Line::from(vec![
+                Span::raw("Cleanup complete. Press "),
+                Span::styled(
+                    "Enter",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to view results, or "),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to exit"),
+            ])]
         } else {
-            "Deleting branches... Please wait"
+            vec![Line::from("Deleting branches... Please wait")]
         };
 
-        let help = Paragraph::new(help_text)
+        let help = Paragraph::new(help_lines)
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
