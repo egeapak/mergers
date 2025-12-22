@@ -260,6 +260,7 @@ mod tests {
         let config = Arc::new(MergeConfig {
             shared: create_shared_config(),
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
         let client = create_test_client();
         let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));
@@ -350,6 +351,7 @@ mod tests {
         let config = Arc::new(MergeConfig {
             shared: create_shared_config(),
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
         let client = create_test_client();
         let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));

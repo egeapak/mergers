@@ -404,6 +404,7 @@ pub fn create_test_config_default() -> AppConfig {
         shared: create_test_shared_config(),
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -480,6 +481,7 @@ pub fn create_test_config_all_defaults() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -518,6 +520,7 @@ pub fn create_test_config_cli_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Cli("Done".to_string(), "Done".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -557,6 +560,7 @@ pub fn create_test_config_env_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -597,6 +601,7 @@ pub fn create_test_config_file_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }

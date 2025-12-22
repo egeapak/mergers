@@ -72,6 +72,15 @@ impl MergeApp {
         self.config().work_item_state.value()
     }
 
+    /// Returns whether to run git hooks during cherry-pick operations.
+    ///
+    /// This provides direct, type-safe access to the merge-specific
+    /// run_hooks configuration without runtime pattern matching.
+    /// When false (the default), hooks are disabled at repo initialization.
+    pub fn run_hooks(&self) -> bool {
+        *self.config().run_hooks.value()
+    }
+
     /// Returns the current cherry-pick item, if any.
     pub fn current_cherry_pick(&self) -> Option<&CherryPickItem> {
         self.cherry_pick_items.get(self.current_cherry_pick_index)
@@ -167,6 +176,7 @@ mod tests {
                 skip_confirmation: false,
             },
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         })
     }
 
@@ -255,6 +265,7 @@ mod tests {
                 skip_confirmation: false,
             },
             work_item_state: ParsedProperty::Default("Custom State".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
 
         let app = MergeApp::new(

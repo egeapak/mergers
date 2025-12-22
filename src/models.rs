@@ -78,6 +78,10 @@ pub struct MergeArgs {
     /// State to set work items to after successful merge [default: Next Merged]
     #[arg(long, help_heading = "Merge Options")]
     pub work_item_state: Option<String>,
+
+    /// Run git hooks during cherry-pick operations (hooks are skipped by default)
+    #[arg(long, help_heading = "Merge Options")]
+    pub run_hooks: bool,
 }
 
 /// Arguments specific to migration mode
@@ -326,6 +330,9 @@ pub struct SharedConfig {
 #[derive(Debug, Clone)]
 pub struct DefaultModeConfig {
     pub work_item_state: ParsedProperty<String>,
+    /// Whether to run git hooks during cherry-pick operations (default: false).
+    /// When false, hooks are disabled at repo initialization by setting core.hooksPath=/dev/null.
+    pub run_hooks: ParsedProperty<bool>,
 }
 
 /// Configuration specific to migration mode
@@ -373,6 +380,8 @@ pub struct MergeConfig {
     pub shared: SharedConfig,
     /// State to set work items to after successful merge.
     pub work_item_state: ParsedProperty<String>,
+    /// Whether to run git hooks during cherry-pick operations (default: false).
+    pub run_hooks: ParsedProperty<bool>,
 }
 
 impl AppModeConfig for MergeConfig {
@@ -388,6 +397,7 @@ impl MergeConfig {
             shared: self.shared.clone(),
             default: DefaultModeConfig {
                 work_item_state: self.work_item_state.clone(),
+                run_hooks: self.run_hooks.clone(),
             },
         }
     }
@@ -504,6 +514,7 @@ impl AppConfig {
             AppConfig::Default { shared, default } => MergeConfig {
                 shared,
                 work_item_state: default.work_item_state,
+                run_hooks: default.run_hooks,
             },
             _ => panic!("into_merge_config called on non-Default variant"),
         }
@@ -545,6 +556,7 @@ impl AppConfig {
             AppConfig::Default { shared, default } => Some(MergeConfig {
                 shared,
                 work_item_state: default.work_item_state,
+                run_hooks: default.run_hooks,
             }),
             _ => None,
         }
@@ -602,6 +614,7 @@ impl Args {
             Commands::Merge(MergeArgs {
                 shared: SharedArgs::default(),
                 work_item_state: None,
+                run_hooks: false,
             })
         });
 
@@ -664,6 +677,8 @@ impl Args {
                 .tag_prefix
                 .as_ref()
                 .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            // run_hooks is handled separately per command (MergeArgs has it, not SharedArgs)
+            run_hooks: None,
         };
 
         // Merge configs: file < git_remote < env < cli
@@ -742,6 +757,13 @@ impl Args {
                         None => merged_config
                             .work_item_state
                             .unwrap_or_else(|| ParsedProperty::Default("Next Merged".to_string())),
+                    },
+                    run_hooks: if merge_args.run_hooks {
+                        ParsedProperty::Cli(true, "true".to_string())
+                    } else {
+                        merged_config
+                            .run_hooks
+                            .unwrap_or(ParsedProperty::Default(false))
                     },
                 },
             }),
@@ -950,6 +972,7 @@ mod tests {
                     skip_confirmation: true,
                 },
                 work_item_state: Some("Done".to_string()),
+                run_hooks: false,
             })),
             create_config: false,
         }
@@ -1103,6 +1126,7 @@ mod tests {
     fn test_default_config_creation() {
         let default_config = DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Done".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         };
 
         assert_eq!(
@@ -1175,6 +1199,7 @@ mod tests {
             shared: shared.clone(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Done".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         };
 
@@ -1926,6 +1951,7 @@ mod tests {
                 ..Default::default()
             },
             work_item_state: None,
+            run_hooks: false,
         };
 
         // Use the trait method
@@ -1982,6 +2008,7 @@ mod tests {
                 ..Default::default()
             },
             work_item_state: None,
+            run_hooks: false,
         });
 
         let migrate_cmd = Commands::Migrate(MigrateArgs {

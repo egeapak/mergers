@@ -124,6 +124,7 @@ impl App {
                 let typed_config = Arc::new(MergeConfig {
                     shared,
                     work_item_state: default.work_item_state,
+                    run_hooks: default.run_hooks,
                 });
                 App::new_merge(typed_config, client)
             }
@@ -163,6 +164,7 @@ impl App {
                 let typed_config = Arc::new(MergeConfig {
                     shared,
                     work_item_state: default.work_item_state,
+                    run_hooks: default.run_hooks,
                 });
                 App::Merge(MergeApp::new(typed_config, client, browser))
             }
@@ -579,6 +581,7 @@ mod tests {
         Arc::new(MergeConfig {
             shared: create_shared_config(),
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         })
     }
 
@@ -701,6 +704,7 @@ mod tests {
             shared: create_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let app = App::from_config(default_config, client.clone());
@@ -906,6 +910,7 @@ mod tests {
         let merge_config = Arc::new(MergeConfig {
             shared: create_shared_config(),
             work_item_state: ParsedProperty::Default("Custom State".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
         let merge_app = App::new_merge(merge_config, client.clone());
         assert_eq!(merge_app.work_item_state(), "Custom State");

@@ -117,7 +117,9 @@ impl SetupRepoState {
             target_branch = app.target_branch().to_string();
             local_repo_path = app.local_repo().map(std::path::PathBuf::from);
             let local_repo = app.local_repo();
-            setup_result = git::setup_repository(local_repo, &ssh_url, &target_branch, &version);
+            let run_hooks = app.run_hooks();
+            setup_result =
+                git::setup_repository(local_repo, &ssh_url, &target_branch, &version, run_hooks);
 
             // Extract cherry-pick data
             let selected_prs = app.get_selected_prs();
