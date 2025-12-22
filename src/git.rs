@@ -224,6 +224,13 @@ pub fn shallow_clone_repo(ssh_url: &str, target_branch: &str) -> Result<(PathBuf
         );
     }
 
+    // Disable hooks to prevent commit hook failures during cherry-pick operations
+    Command::new("git")
+        .current_dir(&repo_path)
+        .args(["config", "core.hooksPath", "/dev/null"])
+        .output()
+        .context("Failed to configure hooks path")?;
+
     Ok((repo_path, temp_dir))
 }
 
@@ -305,6 +312,22 @@ pub fn create_worktree(
         return Err(RepositorySetupError::Other(format!(
             "Failed to create worktree: {}",
             stderr
+        )));
+    }
+
+    // Disable hooks to prevent commit hook failures during cherry-pick operations
+    let config_output = Command::new("git")
+        .current_dir(&worktree_path)
+        .args(["config", "core.hooksPath", "/dev/null"])
+        .output()
+        .map_err(|e| {
+            RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
+        })?;
+
+    if !config_output.status.success() {
+        return Err(RepositorySetupError::Other(format!(
+            "Failed to configure hooks path: {}",
+            String::from_utf8_lossy(&config_output.stderr)
         )));
     }
 
