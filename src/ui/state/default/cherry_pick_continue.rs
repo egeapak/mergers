@@ -1,10 +1,9 @@
 use super::MergeState;
 use crate::{
-    git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::typed::{ModeState, StateChange},
-    ui::state::{CherryPickState, ConflictResolutionState},
+    ui::state::{AbortingState, CherryPickState, ConflictResolutionState},
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -358,19 +357,17 @@ impl ModeState for CherryPickContinueState {
                         ))
                     }
                     KeyCode::Char('a') => {
-                        // Abort entire process with cleanup
+                        // Abort entire process with cleanup - use AbortingState for immediate UI feedback
                         let repo_path_opt = app.repo_path();
-                        let repo_path = repo_path_opt.as_ref().unwrap();
+                        let repo_path = repo_path_opt.as_ref().unwrap().to_path_buf();
                         let version_opt = app.version();
-                        let version = version_opt.as_ref().unwrap();
+                        let version = version_opt.as_ref().unwrap().to_string();
                         let target_branch = app.target_branch().to_string();
-                        let _ = git::cleanup_cherry_pick(
-                            None, // base_repo_path is no longer stored in App
+                        StateChange::Change(MergeState::Aborting(AbortingState::new(
                             repo_path,
                             version,
-                            &target_branch,
-                        );
-                        StateChange::Change(MergeState::Completion(super::CompletionState::new()))
+                            target_branch,
+                        )))
                     }
                     _ => StateChange::Keep,
                 }

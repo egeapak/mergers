@@ -5,9 +5,9 @@
 //! provides compile-time type safety and eliminates virtual dispatch overhead.
 
 use super::{
-    CherryPickContinueState, CherryPickState, CompletionState, ConflictResolutionState,
-    DataLoadingState, PostCompletionState, PullRequestSelectionState, SetupRepoState,
-    VersionInputState,
+    AbortingState, CherryPickContinueState, CherryPickState, CompletionState,
+    ConflictResolutionState, DataLoadingState, PostCompletionState, PullRequestSelectionState,
+    SetupRepoState, VersionInputState,
 };
 use crate::ui::apps::MergeApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
@@ -33,9 +33,10 @@ use ratatui::Frame;
 /// 6. `CherryPick` - Cherry-pick selected commits
 /// 7. `ConflictResolution` - Handle merge conflicts (if any)
 /// 8. `CherryPickContinue` - Continue after conflict resolution
-/// 9. `Completion` - Show completion summary
-/// 10. `PostCompletion` - Handle post-merge tasks
-/// 11. `Error` - Display error messages
+/// 9. `Aborting` - Cleanup during abort with background processing
+/// 10. `Completion` - Show completion summary
+/// 11. `PostCompletion` - Handle post-merge tasks
+/// 12. `Error` - Display error messages
 ///
 /// # Example
 ///
@@ -67,6 +68,8 @@ pub enum MergeState {
     ConflictResolution(ConflictResolutionState),
     /// Continue cherry-pick after resolution.
     CherryPickContinue(CherryPickContinueState),
+    /// Aborting state with background cleanup.
+    Aborting(AbortingState),
     /// Completion summary screen.
     Completion(CompletionState),
     /// Post-completion tasks screen.
@@ -107,6 +110,7 @@ impl MergeState {
             MergeState::CherryPick(_) => "CherryPick",
             MergeState::ConflictResolution(_) => "ConflictResolution",
             MergeState::CherryPickContinue(_) => "CherryPickContinue",
+            MergeState::Aborting(_) => "Aborting",
             MergeState::Completion(_) => "Completion",
             MergeState::PostCompletion(_) => "PostCompletion",
             MergeState::Error(_) => "Error",
@@ -135,6 +139,7 @@ impl AppState for MergeState {
             MergeState::CherryPick(state) => ModeState::ui(state, f, app),
             MergeState::CherryPickContinue(state) => ModeState::ui(state, f, app),
             MergeState::ConflictResolution(state) => ModeState::ui(state, f, app),
+            MergeState::Aborting(state) => ModeState::ui(state, f, app),
             MergeState::Completion(state) => ModeState::ui(state, f, app),
             MergeState::PostCompletion(state) => ModeState::ui(state, f, app),
             MergeState::Error(state) => state.render(f, app.error_message()),
@@ -155,6 +160,7 @@ impl AppState for MergeState {
             MergeState::CherryPick(state) => ModeState::process_key(state, code, app).await,
             MergeState::CherryPickContinue(state) => ModeState::process_key(state, code, app).await,
             MergeState::ConflictResolution(state) => ModeState::process_key(state, code, app).await,
+            MergeState::Aborting(state) => ModeState::process_key(state, code, app).await,
             MergeState::Completion(state) => ModeState::process_key(state, code, app).await,
             MergeState::PostCompletion(state) => ModeState::process_key(state, code, app).await,
             MergeState::Error(state) => state.handle_key(code),
@@ -177,6 +183,7 @@ impl AppState for MergeState {
             MergeState::ConflictResolution(state) => {
                 ModeState::process_mouse(state, event, app).await
             }
+            MergeState::Aborting(state) => ModeState::process_mouse(state, event, app).await,
             MergeState::Completion(state) => ModeState::process_mouse(state, event, app).await,
             MergeState::PostCompletion(state) => ModeState::process_mouse(state, event, app).await,
             MergeState::Error(_) => StateChange::Keep,
