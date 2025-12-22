@@ -206,9 +206,7 @@ pub async fn run_cleanup_mode<B: ratatui::backend::Backend>(
 mod tests {
     use super::*;
     use crate::api::AzureDevOpsClient;
-    use crate::models::{
-        AppConfig, CleanupModeConfig, DefaultModeConfig, MigrationModeConfig, SharedConfig,
-    };
+    use crate::models::{CleanupConfig, MergeConfig, MigrationConfig, SharedConfig};
     use crate::parsed_property::ParsedProperty;
     use crate::ui::MockEventSource;
     use crate::ui::browser::MockBrowserOpener;
@@ -259,11 +257,9 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let config = Arc::new(AppConfig::Default {
+        let config = Arc::new(MergeConfig {
             shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-            },
+            work_item_state: ParsedProperty::Default("Next Merged".to_string()),
         });
         let client = create_test_client();
         let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));
@@ -291,11 +287,9 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let config = Arc::new(AppConfig::Migration {
+        let config = Arc::new(MigrationConfig {
             shared: create_shared_config(),
-            migration: MigrationModeConfig {
-                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
-            },
+            terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
         });
         let client = create_test_client();
         let mut app = MigrationApp::new(config, client, Box::new(MockBrowserOpener::new()));
@@ -323,11 +317,9 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let config = Arc::new(AppConfig::Cleanup {
+        let config = Arc::new(CleanupConfig {
             shared: create_shared_config(),
-            cleanup: CleanupModeConfig {
-                target: ParsedProperty::Default("main".to_string()),
-            },
+            target: ParsedProperty::Default("main".to_string()),
         });
         let client = create_test_client();
         let mut app = CleanupApp::new(config, client, Box::new(MockBrowserOpener::new()));
@@ -355,11 +347,9 @@ mod tests {
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
-        let config = Arc::new(AppConfig::Default {
+        let config = Arc::new(MergeConfig {
             shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-            },
+            work_item_state: ParsedProperty::Default("Next Merged".to_string()),
         });
         let client = create_test_client();
         let mut app = MergeApp::new(config, client, Box::new(MockBrowserOpener::new()));

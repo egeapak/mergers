@@ -1067,7 +1067,9 @@ mod tests {
             "test-pat".to_string(),
         )
         .unwrap();
-        MigrationApp::new(config.into(), client, Box::new(MockBrowserOpener::new()))
+        // Convert AppConfig to MigrationConfig
+        let migration_config = Arc::new(config.into_migration_config());
+        MigrationApp::new(migration_config, client, Box::new(MockBrowserOpener::new()))
     }
 
     /// # Quit Command Returns Exit
