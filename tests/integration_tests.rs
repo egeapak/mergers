@@ -598,6 +598,7 @@ fn test_args_cli_precedence() {
                 skip_confirmation: false,
             },
             work_item_state: None,
+            run_hooks: false,
         })),
         create_config: false,
     };

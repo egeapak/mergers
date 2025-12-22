@@ -402,6 +402,7 @@ mod tests {
             },
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         }
     }

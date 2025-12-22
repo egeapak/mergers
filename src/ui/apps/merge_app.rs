@@ -69,6 +69,17 @@ impl MergeApp {
         }
     }
 
+    /// Returns whether to run git hooks during cherry-pick operations.
+    ///
+    /// When false (the default), hooks are disabled at repo initialization.
+    pub fn run_hooks(&self) -> bool {
+        match &*self.config {
+            AppConfig::Default { default, .. } => *default.run_hooks.value(),
+            AppConfig::Migration { .. } => false, // fallback
+            AppConfig::Cleanup { .. } => false,   // fallback
+        }
+    }
+
     /// Returns the current cherry-pick item, if any.
     pub fn current_cherry_pick(&self) -> Option<&CherryPickItem> {
         self.cherry_pick_items.get(self.current_cherry_pick_index)
@@ -165,6 +176,7 @@ mod tests {
             },
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         })
     }
@@ -255,6 +267,7 @@ mod tests {
             },
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Custom State".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
 

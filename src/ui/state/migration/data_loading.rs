@@ -223,6 +223,7 @@ impl MigrationDataLoadingState {
             &repo_details.ssh_url,
             config.shared().target_branch.value(),
             &migration_id,
+            false, // run_hooks: not applicable for migration mode
         )
         .context("Failed to setup repository")?;
 
