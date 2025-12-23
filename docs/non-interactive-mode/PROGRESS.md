@@ -14,7 +14,7 @@ This document tracks the implementation progress of the non-interactive merge mo
 
 | Phase | Status | Progress |
 |-------|--------|----------|
-| Phase 1: Foundation | Not Started | 0% |
+| Phase 1: Foundation | Complete | 100% |
 | Phase 2: Core Operations | Not Started | 0% |
 | Phase 3: Output System | Not Started | 0% |
 | Phase 4: Non-Interactive Runner | Not Started | 0% |
@@ -22,58 +22,60 @@ This document tracks the implementation progress of the non-interactive merge mo
 | Phase 6: Interactive Mode Integration | Not Started | 0% |
 | Phase 7: Testing & Documentation | Not Started | 0% |
 
-**Overall Progress:** 0%
+**Overall Progress:** ~14%
 
 ---
 
 ## Phase 1: Foundation (Core Infrastructure)
 
-**Status:** Not Started
+**Status:** Complete ✅
 **Estimated Effort:** Medium
 
 ### Tasks
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Create `src/core/mod.rs` module structure | ⬜ Not Started | |
-| Define `ExitCode` enum | ⬜ Not Started | |
-| Create `src/core/state/mod.rs` | ⬜ Not Started | |
-| Implement `MergeStateFile` struct | ⬜ Not Started | |
-| Implement `StateCherryPickItem` struct | ⬜ Not Started | |
-| Implement `MergePhase` enum | ⬜ Not Started | |
-| Implement `MergeStatus` enum | ⬜ Not Started | |
-| Implement `StateItemStatus` enum | ⬜ Not Started | |
-| Implement per-repo path hashing | ⬜ Not Started | SHA-256, first 16 chars |
-| Implement `state_dir()` with XDG + env override | ⬜ Not Started | |
-| Implement `path_for_repo()` | ⬜ Not Started | |
-| Implement `lock_path_for_repo()` | ⬜ Not Started | |
-| Implement `LockGuard` struct | ⬜ Not Started | |
-| Implement `acquire_lock()` | ⬜ Not Started | |
-| Implement stale lock detection | ⬜ Not Started | Check if PID still running |
-| Implement `save()` for state file | ⬜ Not Started | Atomic write |
-| Implement `load()` for state file | ⬜ Not Started | |
-| Add `run_hooks` field to MergeStateFile | ⬜ Not Started | Captures setting at start |
-| Add `sha2` dependency to Cargo.toml | ⬜ Not Started | |
-| Add `dirs` dependency to Cargo.toml | ⬜ Not Started | |
-| Add `MergeSubcommand` enum to models.rs | ⬜ Not Started | |
-| Add `MergeRunArgs` struct | ⬜ Not Started | Include --run-hooks flag |
-| Add `MergeContinueArgs` struct | ⬜ Not Started | |
-| Add `MergeAbortArgs` struct | ⬜ Not Started | |
-| Add `MergeStatusArgs` struct | ⬜ Not Started | |
-| Add `MergeCompleteArgs` struct | ⬜ Not Started | |
-| Add `OutputFormat` enum | ⬜ Not Started | text, json, ndjson |
-| Write unit tests for state file | ⬜ Not Started | |
-| Write unit tests for path hashing | ⬜ Not Started | |
-| Write unit tests for locking | ⬜ Not Started | |
-| Write unit tests for run_hooks serialization | ⬜ Not Started | |
+| Create `src/core/mod.rs` module structure | ✅ Complete | |
+| Define `ExitCode` enum | ✅ Complete | |
+| Create `src/core/state/mod.rs` | ✅ Complete | |
+| Implement `MergeStateFile` struct | ✅ Complete | |
+| Implement `StateCherryPickItem` struct | ✅ Complete | |
+| Implement `MergePhase` enum | ✅ Complete | |
+| Implement `MergeStatus` enum | ✅ Complete | |
+| Implement `StateItemStatus` enum | ✅ Complete | |
+| Implement per-repo path hashing | ✅ Complete | SHA-256, first 16 chars |
+| Implement `state_dir()` with XDG + env override | ✅ Complete | |
+| Implement `path_for_repo()` | ✅ Complete | |
+| Implement `lock_path_for_repo()` | ✅ Complete | |
+| Implement `LockGuard` struct | ✅ Complete | |
+| Implement `acquire_lock()` | ✅ Complete | |
+| Implement stale lock detection | ✅ Complete | Check if PID still running |
+| Implement `save()` for state file | ✅ Complete | Atomic write |
+| Implement `load()` for state file | ✅ Complete | |
+| Add `run_hooks` field to MergeStateFile | ✅ Complete | Captures setting at start |
+| Add `sha2` dependency to Cargo.toml | ✅ Complete | |
+| Add `dirs` dependency to Cargo.toml | ✅ Complete | Already present |
+| Add `libc` dependency to Cargo.toml | ✅ Complete | For Unix process check |
+| Add `MergeSubcommand` enum to models.rs | ✅ Complete | |
+| Add `MergeRunArgs` struct | ✅ Complete | Include --run-hooks flag |
+| Add `MergeContinueArgs` struct | ✅ Complete | |
+| Add `MergeAbortArgs` struct | ✅ Complete | |
+| Add `MergeStatusArgs` struct | ✅ Complete | |
+| Add `MergeCompleteArgs` struct | ✅ Complete | |
+| Add `OutputFormat` enum | ✅ Complete | text, json, ndjson |
+| Write unit tests for state file | ✅ Complete | |
+| Write unit tests for path hashing | ✅ Complete | |
+| Write unit tests for locking | ✅ Complete | |
+| Write unit tests for run_hooks serialization | ✅ Complete | |
 
 ### Files Created/Modified
 
-- [ ] `src/core/mod.rs`
-- [ ] `src/core/state/mod.rs`
-- [ ] `src/core/state/file.rs`
-- [ ] `src/models.rs`
-- [ ] `Cargo.toml`
+- [x] `src/core/mod.rs`
+- [x] `src/core/state/mod.rs`
+- [x] `src/core/state/file.rs`
+- [x] `src/models.rs`
+- [x] `Cargo.toml`
+- [x] `src/lib.rs` (added core module export)
 
 ### Blockers
 
