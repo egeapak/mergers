@@ -82,6 +82,10 @@ pub struct MergeArgs {
     /// Run git hooks during cherry-pick operations (hooks are skipped by default)
     #[arg(long, help_heading = "Merge Options")]
     pub run_hooks: bool,
+
+    /// Subcommand for non-interactive operations
+    #[command(subcommand)]
+    pub subcommand: Option<MergeSubcommand>,
 }
 
 /// Arguments specific to migration mode
@@ -177,6 +181,7 @@ impl From<MergeRunArgs> for MergeArgs {
             shared: args.shared,
             work_item_state: args.work_item_state,
             run_hooks: args.run_hooks,
+            subcommand: None,
         }
     }
 }
@@ -794,6 +799,7 @@ impl Args {
                 shared: SharedArgs::default(),
                 work_item_state: None,
                 run_hooks: false,
+                subcommand: None,
             })
         });
 
@@ -1152,6 +1158,7 @@ mod tests {
                 },
                 work_item_state: Some("Done".to_string()),
                 run_hooks: false,
+                subcommand: None,
             })),
             create_config: false,
         }
@@ -2131,6 +2138,7 @@ mod tests {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         };
 
         // Use the trait method
@@ -2188,6 +2196,7 @@ mod tests {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         });
 
         let migrate_cmd = Commands::Migrate(MigrateArgs {

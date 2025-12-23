@@ -48,8 +48,23 @@ pub use api::AzureDevOpsClient;
 pub use config::Config;
 pub use error::{ApiError, ConfigError, GitError, MergersError, UiError};
 pub use models::{
-    AppConfig, Args, Commands, DefaultModeConfig, MergeArgs, MigrateArgs, MigrationModeConfig,
-    SharedArgs, SharedConfig,
+    AppConfig,
+    Args,
+    Commands,
+    DefaultModeConfig,
+    // Non-interactive mode types
+    MergeAbortArgs,
+    MergeArgs,
+    MergeCompleteArgs,
+    MergeContinueArgs,
+    MergeRunArgs,
+    MergeStatusArgs,
+    MergeSubcommand,
+    MigrateArgs,
+    MigrationModeConfig,
+    OutputFormat,
+    SharedArgs,
+    SharedConfig,
 };
 pub use parsed_property::ParsedProperty;
 

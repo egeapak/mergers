@@ -599,6 +599,7 @@ fn test_args_cli_precedence() {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         })),
         create_config: false,
     };
