@@ -1,7 +1,7 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{
-        AppConfig, CherryPickItem, CherryPickStatus, CleanupModeConfig, CreatedBy,
+        AppConfig, AppModeConfig, CherryPickItem, CherryPickStatus, CleanupModeConfig, CreatedBy,
         DefaultModeConfig, Label, MergeCommit, MigrationAnalysis, MigrationModeConfig, PullRequest,
         PullRequestWithWorkItems, SharedConfig, WorkItem, WorkItemFields,
     },
@@ -283,12 +283,13 @@ impl TuiTestHarness {
             }
             (App::Merge(app), None) => {
                 // Default: use SettingsConfirmation or DataLoading based on config
-                let config = app.config.as_ref().clone();
-                let state = if config.shared().skip_confirmation {
+                let typed_config = app.config.as_ref();
+                let state = if typed_config.shared().skip_confirmation {
                     MergeState::DataLoading(DataLoadingState::new())
                 } else {
+                    let app_config = typed_config.to_app_config();
                     MergeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
-                        config,
+                        app_config,
                     )))
                 };
                 crate::ui::run_merge_app_with_state(&mut self.terminal, app, event_source, state)
@@ -305,14 +306,15 @@ impl TuiTestHarness {
             }
             (App::Migration(app), None) => {
                 // Default: use SettingsConfirmation or DataLoading based on config
-                let config = app.config.as_ref().clone();
-                let state = if config.shared().skip_confirmation {
+                let typed_config = app.config.as_ref();
+                let app_config = typed_config.to_app_config();
+                let state = if typed_config.shared().skip_confirmation {
                     MigrationModeState::DataLoading(Box::new(
-                        crate::ui::state::MigrationDataLoadingState::new(config),
+                        crate::ui::state::MigrationDataLoadingState::new(app_config),
                     ))
                 } else {
                     MigrationModeState::SettingsConfirmation(Box::new(
-                        SettingsConfirmationState::new(config),
+                        SettingsConfirmationState::new(app_config),
                     ))
                 };
                 crate::ui::run_migration_app_with_state(
@@ -329,14 +331,15 @@ impl TuiTestHarness {
             }
             (App::Cleanup(app), None) => {
                 // Default: use SettingsConfirmation or DataLoading based on config
-                let config = app.config.as_ref().clone();
-                let state = if config.shared().skip_confirmation {
+                let typed_config = app.config.as_ref();
+                let app_config = typed_config.to_app_config();
+                let state = if typed_config.shared().skip_confirmation {
                     CleanupModeState::DataLoading(crate::ui::state::CleanupDataLoadingState::new(
-                        config,
+                        app_config,
                     ))
                 } else {
                     CleanupModeState::SettingsConfirmation(Box::new(
-                        SettingsConfirmationState::new(config),
+                        SettingsConfirmationState::new(app_config),
                     ))
                 };
                 crate::ui::run_cleanup_app_with_state(&mut self.terminal, app, event_source, state)
@@ -401,6 +404,7 @@ pub fn create_test_config_default() -> AppConfig {
         shared: create_test_shared_config(),
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -477,6 +481,7 @@ pub fn create_test_config_all_defaults() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -515,6 +520,7 @@ pub fn create_test_config_cli_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Cli("Done".to_string(), "Done".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -554,6 +560,7 @@ pub fn create_test_config_env_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }
@@ -594,6 +601,7 @@ pub fn create_test_config_file_values() -> AppConfig {
         },
         default: DefaultModeConfig {
             work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         },
     }
 }

@@ -5,7 +5,7 @@
 
 use crate::{
     api::AzureDevOpsClient,
-    models::{AppConfig, CherryPickItem},
+    models::{CherryPickItem, MergeConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
@@ -19,12 +19,19 @@ use std::{
 /// the development branch to a target release branch. It tracks the
 /// cherry-pick queue and current progress.
 ///
+/// # Type Safety
+///
+/// `MergeApp` uses `MergeConfig` as its configuration type, providing
+/// compile-time type safety. The work_item_state is accessed directly
+/// without pattern matching.
+///
 /// # Field Access
 ///
 /// Mode-specific fields are accessed directly on `MergeApp`:
 /// ```ignore
 /// let items = &app.cherry_pick_items;
 /// let index = app.current_cherry_pick_index;
+/// let state = app.work_item_state(); // Direct access, no pattern matching
 /// ```
 ///
 /// Shared fields are accessed via `Deref` to [`AppBase`]:
@@ -33,8 +40,8 @@ use std::{
 /// let prs = &app.pull_requests;
 /// ```
 pub struct MergeApp {
-    /// Shared application state.
-    base: AppBase,
+    /// Shared application state with MergeConfig.
+    base: AppBase<MergeConfig>,
 
     /// Queue of items to cherry-pick.
     pub cherry_pick_items: Vec<CherryPickItem>,
@@ -46,7 +53,7 @@ pub struct MergeApp {
 impl MergeApp {
     /// Creates a new MergeApp with the given configuration, client, and browser opener.
     pub fn new(
-        config: Arc<AppConfig>,
+        config: Arc<MergeConfig>,
         client: AzureDevOpsClient,
         browser: Box<dyn BrowserOpener>,
     ) -> Self {
@@ -59,14 +66,19 @@ impl MergeApp {
 
     /// Returns the work item state to set after merging.
     ///
-    /// This is only meaningful in merge mode; migration and cleanup modes
-    /// return a default value.
+    /// This provides direct, type-safe access to the merge-specific
+    /// work_item_state configuration without runtime pattern matching.
     pub fn work_item_state(&self) -> &str {
-        match &*self.config {
-            AppConfig::Default { default, .. } => default.work_item_state.value(),
-            AppConfig::Migration { .. } => "Next Merged", // fallback
-            AppConfig::Cleanup { .. } => "Next Merged",   // fallback
-        }
+        self.config().work_item_state.value()
+    }
+
+    /// Returns whether to run git hooks during cherry-pick operations.
+    ///
+    /// This provides direct, type-safe access to the merge-specific
+    /// run_hooks configuration without runtime pattern matching.
+    /// When false (the default), hooks are disabled at repo initialization.
+    pub fn run_hooks(&self) -> bool {
+        *self.config().run_hooks.value()
     }
 
     /// Returns the current cherry-pick item, if any.
@@ -114,7 +126,7 @@ impl MergeApp {
 }
 
 impl Deref for MergeApp {
-    type Target = AppBase;
+    type Target = AppBase<MergeConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.base
@@ -128,11 +140,13 @@ impl DerefMut for MergeApp {
 }
 
 impl AppMode for MergeApp {
-    fn base(&self) -> &AppBase {
+    type Config = MergeConfig;
+
+    fn base(&self) -> &AppBase<MergeConfig> {
         &self.base
     }
 
-    fn base_mut(&mut self) -> &mut AppBase {
+    fn base_mut(&mut self) -> &mut AppBase<MergeConfig> {
         &mut self.base
     }
 }
@@ -141,13 +155,11 @@ impl AppMode for MergeApp {
 mod tests {
     use super::*;
     use crate::{
-        models::{DefaultModeConfig, SharedConfig},
-        parsed_property::ParsedProperty,
-        ui::browser::MockBrowserOpener,
+        models::SharedConfig, parsed_property::ParsedProperty, ui::browser::MockBrowserOpener,
     };
 
-    fn create_test_config() -> Arc<AppConfig> {
-        Arc::new(AppConfig::Default {
+    fn create_test_config() -> Arc<MergeConfig> {
+        Arc::new(MergeConfig {
             shared: SharedConfig {
                 organization: ParsedProperty::Default("test_org".to_string()),
                 project: ParsedProperty::Default("test_project".to_string()),
@@ -163,9 +175,8 @@ mod tests {
                 since: None,
                 skip_confirmation: false,
             },
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-            },
+            work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         })
     }
 
@@ -237,7 +248,7 @@ mod tests {
     /// - Returns configured work_item_state value
     #[test]
     fn test_work_item_state() {
-        let config = Arc::new(AppConfig::Default {
+        let config = Arc::new(MergeConfig {
             shared: SharedConfig {
                 organization: ParsedProperty::Default("test_org".to_string()),
                 project: ParsedProperty::Default("test_project".to_string()),
@@ -253,9 +264,8 @@ mod tests {
                 since: None,
                 skip_confirmation: false,
             },
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Custom State".to_string()),
-            },
+            work_item_state: ParsedProperty::Default("Custom State".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
 
         let app = MergeApp::new(

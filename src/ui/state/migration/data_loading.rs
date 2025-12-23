@@ -223,6 +223,7 @@ impl MigrationDataLoadingState {
             &repo_details.ssh_url,
             config.shared().target_branch.value(),
             &migration_id,
+            false, // run_hooks: not applicable for migration mode
         )
         .context("Failed to setup repository")?;
 
@@ -1067,7 +1068,9 @@ mod tests {
             "test-pat".to_string(),
         )
         .unwrap();
-        MigrationApp::new(config.into(), client, Box::new(MockBrowserOpener::new()))
+        // Convert AppConfig to MigrationConfig
+        let migration_config = Arc::new(config.into_migration_config());
+        MigrationApp::new(migration_config, client, Box::new(MockBrowserOpener::new()))
     }
 
     /// # Quit Command Returns Exit

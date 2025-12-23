@@ -5,7 +5,7 @@
 
 use crate::{
     api::AzureDevOpsClient,
-    models::{AppConfig, CleanupBranch},
+    models::{CleanupBranch, CleanupConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
@@ -19,6 +19,12 @@ use std::{
 /// from the repository. It tracks which branches are candidates for
 /// deletion and their selection state.
 ///
+/// # Type Safety
+///
+/// `CleanupApp` uses `CleanupConfig` as its configuration type, providing
+/// compile-time type safety. The cleanup target is accessed directly
+/// without pattern matching.
+///
 /// # Field Access
 ///
 /// Mode-specific fields are accessed directly on `CleanupApp`:
@@ -26,6 +32,7 @@ use std::{
 /// for branch in &app.cleanup_branches {
 ///     // process branch...
 /// }
+/// let target = app.cleanup_target(); // Direct access, no pattern matching
 /// ```
 ///
 /// Shared fields are accessed via `Deref` to [`AppBase`]:
@@ -34,8 +41,8 @@ use std::{
 /// let prs = &app.pull_requests;
 /// ```
 pub struct CleanupApp {
-    /// Shared application state.
-    base: AppBase,
+    /// Shared application state with CleanupConfig.
+    base: AppBase<CleanupConfig>,
 
     /// Branches that are candidates for cleanup.
     pub cleanup_branches: Vec<CleanupBranch>,
@@ -44,7 +51,7 @@ pub struct CleanupApp {
 impl CleanupApp {
     /// Creates a new CleanupApp with the given configuration, client, and browser opener.
     pub fn new(
-        config: Arc<AppConfig>,
+        config: Arc<CleanupConfig>,
         client: AzureDevOpsClient,
         browser: Box<dyn BrowserOpener>,
     ) -> Self {
@@ -55,11 +62,11 @@ impl CleanupApp {
     }
 
     /// Returns the cleanup target branch.
+    ///
+    /// This provides direct, type-safe access to the cleanup-specific
+    /// target configuration without runtime pattern matching.
     pub fn cleanup_target(&self) -> &str {
-        match &*self.config {
-            AppConfig::Cleanup { cleanup, .. } => cleanup.target.value(),
-            _ => self.target_branch(), // fallback to shared target_branch
-        }
+        self.config().target.value()
     }
 
     /// Returns the number of branches selected for cleanup.
@@ -117,7 +124,7 @@ impl CleanupApp {
 }
 
 impl Deref for CleanupApp {
-    type Target = AppBase;
+    type Target = AppBase<CleanupConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.base
@@ -131,11 +138,13 @@ impl DerefMut for CleanupApp {
 }
 
 impl AppMode for CleanupApp {
-    fn base(&self) -> &AppBase {
+    type Config = CleanupConfig;
+
+    fn base(&self) -> &AppBase<CleanupConfig> {
         &self.base
     }
 
-    fn base_mut(&mut self) -> &mut AppBase {
+    fn base_mut(&mut self) -> &mut AppBase<CleanupConfig> {
         &mut self.base
     }
 }
@@ -144,13 +153,11 @@ impl AppMode for CleanupApp {
 mod tests {
     use super::*;
     use crate::{
-        models::{CleanupModeConfig, SharedConfig},
-        parsed_property::ParsedProperty,
-        ui::browser::MockBrowserOpener,
+        models::SharedConfig, parsed_property::ParsedProperty, ui::browser::MockBrowserOpener,
     };
 
-    fn create_test_config() -> Arc<AppConfig> {
-        Arc::new(AppConfig::Cleanup {
+    fn create_test_config() -> Arc<CleanupConfig> {
+        Arc::new(CleanupConfig {
             shared: SharedConfig {
                 organization: ParsedProperty::Default("test_org".to_string()),
                 project: ParsedProperty::Default("test_project".to_string()),
@@ -166,9 +173,7 @@ mod tests {
                 since: None,
                 skip_confirmation: false,
             },
-            cleanup: CleanupModeConfig {
-                target: ParsedProperty::Default("release/1.0".to_string()),
-            },
+            target: ParsedProperty::Default("release/1.0".to_string()),
         })
     }
 

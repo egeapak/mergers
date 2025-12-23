@@ -2,10 +2,19 @@
 //!
 //! This module provides [`AppBase`] which contains state shared across
 //! merge, migration, and cleanup modes.
+//!
+//! # Type Safety
+//!
+//! `AppBase` is generic over the configuration type `C: AppModeConfig`,
+//! allowing compile-time type safety for mode-specific configurations.
+//! Mode-specific apps use their specific config type:
+//! - `MergeApp` uses `AppBase<MergeConfig>`
+//! - `MigrationApp` uses `AppBase<MigrationConfig>`
+//! - `CleanupApp` uses `AppBase<CleanupConfig>`
 
 use crate::{
     api::AzureDevOpsClient,
-    models::{AppConfig, PullRequestWithWorkItems, WorkItem},
+    models::{AppModeConfig, PullRequestWithWorkItems, WorkItem},
     ui::{WorktreeContext, browser::BrowserOpener},
 };
 use std::{path::Path, sync::Arc};
@@ -16,11 +25,29 @@ use std::{path::Path, sync::Arc};
 /// of whether the app is running in merge, migration, or cleanup mode.
 /// This includes configuration, the API client, and worktree management.
 ///
+/// # Type Parameter
+///
+/// * `C` - The configuration type, which must implement [`AppModeConfig`].
+///   This provides compile-time type safety, ensuring each app mode receives
+///   its correct configuration type.
+///
+/// # Example
+///
+/// ```ignore
+/// use crate::models::MergeConfig;
+///
+/// // MergeApp uses AppBase with MergeConfig
+/// struct MergeApp {
+///     base: AppBase<MergeConfig>,
+///     // mode-specific fields...
+/// }
+/// ```
+///
 /// Mode-specific apps (MergeApp, MigrationApp, CleanupApp) contain an
 /// `AppBase` and implement `Deref`/`DerefMut` to it for ergonomic access.
-pub struct AppBase {
+pub struct AppBase<C: AppModeConfig> {
     /// Application configuration (shared via Arc for thread-safety).
-    pub config: Arc<AppConfig>,
+    pub config: Arc<C>,
 
     /// Loaded pull requests with their associated work items.
     pub pull_requests: Vec<PullRequestWithWorkItems>,
@@ -41,13 +68,9 @@ pub struct AppBase {
     browser: Box<dyn BrowserOpener>,
 }
 
-impl AppBase {
+impl<C: AppModeConfig> AppBase<C> {
     /// Creates a new AppBase with the given configuration, client, and browser opener.
-    pub fn new(
-        config: Arc<AppConfig>,
-        client: AzureDevOpsClient,
-        browser: Box<dyn BrowserOpener>,
-    ) -> Self {
+    pub fn new(config: Arc<C>, client: AzureDevOpsClient, browser: Box<dyn BrowserOpener>) -> Self {
         Self {
             config,
             pull_requests: Vec::new(),
@@ -221,7 +244,7 @@ impl AppBase {
 mod tests {
     use super::*;
     use crate::{
-        models::{DefaultModeConfig, SharedConfig},
+        models::{AppConfig, DefaultModeConfig, SharedConfig},
         parsed_property::ParsedProperty,
         ui::browser::MockBrowserOpener,
     };
@@ -271,6 +294,7 @@ mod tests {
             shared: create_test_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -300,6 +324,7 @@ mod tests {
             shared: create_test_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -337,6 +362,7 @@ mod tests {
             shared,
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();
@@ -365,6 +391,7 @@ mod tests {
             shared: create_test_shared_config(),
             default: DefaultModeConfig {
                 work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+                run_hooks: ParsedProperty::Default(false),
             },
         });
         let client = create_test_client();

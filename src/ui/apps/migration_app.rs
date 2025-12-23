@@ -5,7 +5,7 @@
 
 use crate::{
     api::AzureDevOpsClient,
-    models::{AppConfig, MigrationAnalysis},
+    models::{MigrationAnalysis, MigrationConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use std::{
@@ -19,6 +19,12 @@ use std::{
 /// migrated to a target branch. It categorizes PRs based on their commit
 /// presence and work item states.
 ///
+/// # Type Safety
+///
+/// `MigrationApp` uses `MigrationConfig` as its configuration type, providing
+/// compile-time type safety. The terminal_states is accessed directly
+/// without pattern matching.
+///
 /// # Field Access
 ///
 /// Mode-specific fields are accessed directly on `MigrationApp`:
@@ -26,6 +32,7 @@ use std::{
 /// if let Some(analysis) = &app.migration_analysis {
 ///     // use analysis...
 /// }
+/// let states = app.terminal_states(); // Direct access, no pattern matching
 /// ```
 ///
 /// Shared fields are accessed via `Deref` to [`AppBase`]:
@@ -34,8 +41,8 @@ use std::{
 /// let prs = &app.pull_requests;
 /// ```
 pub struct MigrationApp {
-    /// Shared application state.
-    base: AppBase,
+    /// Shared application state with MigrationConfig.
+    base: AppBase<MigrationConfig>,
 
     /// Migration analysis results, if analysis has been performed.
     pub migration_analysis: Option<MigrationAnalysis>,
@@ -44,7 +51,7 @@ pub struct MigrationApp {
 impl MigrationApp {
     /// Creates a new MigrationApp with the given configuration, client, and browser opener.
     pub fn new(
-        config: Arc<AppConfig>,
+        config: Arc<MigrationConfig>,
         client: AzureDevOpsClient,
         browser: Box<dyn BrowserOpener>,
     ) -> Self {
@@ -55,11 +62,11 @@ impl MigrationApp {
     }
 
     /// Returns the terminal states for work items (states that indicate completion).
+    ///
+    /// This provides direct, type-safe access to the migration-specific
+    /// terminal_states configuration without runtime pattern matching.
     pub fn terminal_states(&self) -> &[String] {
-        match &*self.config {
-            AppConfig::Migration { migration, .. } => migration.terminal_states.value(),
-            _ => &[], // fallback for non-migration modes
-        }
+        self.config().terminal_states.value()
     }
 
     /// Mark a PR as manually eligible - moves it to eligible regardless of automatic analysis.
@@ -196,7 +203,7 @@ impl MigrationApp {
 }
 
 impl Deref for MigrationApp {
-    type Target = AppBase;
+    type Target = AppBase<MigrationConfig>;
 
     fn deref(&self) -> &Self::Target {
         &self.base
@@ -210,11 +217,13 @@ impl DerefMut for MigrationApp {
 }
 
 impl AppMode for MigrationApp {
-    fn base(&self) -> &AppBase {
+    type Config = MigrationConfig;
+
+    fn base(&self) -> &AppBase<MigrationConfig> {
         &self.base
     }
 
-    fn base_mut(&mut self) -> &mut AppBase {
+    fn base_mut(&mut self) -> &mut AppBase<MigrationConfig> {
         &mut self.base
     }
 }
@@ -223,13 +232,11 @@ impl AppMode for MigrationApp {
 mod tests {
     use super::*;
     use crate::{
-        models::{MigrationModeConfig, SharedConfig},
-        parsed_property::ParsedProperty,
-        ui::browser::MockBrowserOpener,
+        models::SharedConfig, parsed_property::ParsedProperty, ui::browser::MockBrowserOpener,
     };
 
-    fn create_test_config() -> Arc<AppConfig> {
-        Arc::new(AppConfig::Migration {
+    fn create_test_config() -> Arc<MigrationConfig> {
+        Arc::new(MigrationConfig {
             shared: SharedConfig {
                 organization: ParsedProperty::Default("test_org".to_string()),
                 project: ParsedProperty::Default("test_project".to_string()),
@@ -245,12 +252,10 @@ mod tests {
                 since: None,
                 skip_confirmation: false,
             },
-            migration: MigrationModeConfig {
-                terminal_states: ParsedProperty::Default(vec![
-                    "Closed".to_string(),
-                    "Resolved".to_string(),
-                ]),
-            },
+            terminal_states: ParsedProperty::Default(vec![
+                "Closed".to_string(),
+                "Resolved".to_string(),
+            ]),
         })
     }
 

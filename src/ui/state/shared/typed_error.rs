@@ -65,7 +65,7 @@ impl<A, S> TypedErrorState<A, S> {
 
 impl<A, S> TypedErrorState<A, S>
 where
-    A: AppMode + Send + Sync + std::ops::Deref<Target = crate::ui::AppBase>,
+    A: AppMode + Send + Sync,
     S: Send + Sync + 'static,
 {
     /// Render the error UI.
@@ -85,8 +85,12 @@ where
             .alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
-        // Access error_message from AppBase via Deref
-        let error_msg = app.error_message.as_deref().unwrap_or("Unknown error");
+        // Access error_message from AppBase via AppMode trait
+        let error_msg = app
+            .base()
+            .error_message
+            .as_deref()
+            .unwrap_or("Unknown error");
         let error = Paragraph::new(error_msg)
             .style(Style::default().fg(Color::White))
             .block(Block::default().borders(Borders::ALL))

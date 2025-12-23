@@ -42,6 +42,7 @@ struct ConfigFile {
     pub max_concurrent_network: Option<usize>,
     pub max_concurrent_processing: Option<usize>,
     pub tag_prefix: Option<String>,
+    pub run_hooks: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -58,6 +59,7 @@ pub struct Config {
     pub max_concurrent_network: Option<ParsedProperty<usize>>,
     pub max_concurrent_processing: Option<ParsedProperty<usize>>,
     pub tag_prefix: Option<ParsedProperty<String>>,
+    pub run_hooks: Option<ParsedProperty<bool>>,
 }
 
 impl Default for Config {
@@ -75,6 +77,7 @@ impl Default for Config {
             max_concurrent_network: Some(ParsedProperty::Default(100)),
             max_concurrent_processing: Some(ParsedProperty::Default(10)),
             tag_prefix: Some(ParsedProperty::Default("merged-".to_string())),
+            run_hooks: Some(ParsedProperty::Default(false)),
         }
     }
 }
@@ -131,6 +134,9 @@ impl Config {
             tag_prefix: config_file
                 .tag_prefix
                 .map(|v| ParsedProperty::File(v.clone(), config_path.clone(), v)),
+            run_hooks: config_file
+                .run_hooks
+                .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
         })
     }
 
@@ -171,6 +177,7 @@ impl Config {
                 max_concurrent_network: None,
                 max_concurrent_processing: None,
                 tag_prefix: None,
+                run_hooks: None,
             },
             _ => Self::default(),
         }
@@ -215,6 +222,11 @@ impl Config {
             tag_prefix: std::env::var("MERGERS_TAG_PREFIX")
                 .ok()
                 .map(|v| ParsedProperty::Env(v.clone(), v)),
+            run_hooks: std::env::var("MERGERS_RUN_HOOKS").ok().and_then(|s| {
+                s.parse::<bool>()
+                    .ok()
+                    .map(|v| ParsedProperty::Env(v, s.clone()))
+            }),
         }
     }
 
@@ -261,6 +273,7 @@ impl Config {
                 .max_concurrent_processing
                 .or(self.max_concurrent_processing),
             tag_prefix: other.tag_prefix.or(self.tag_prefix),
+            run_hooks: other.run_hooks.or(self.run_hooks),
         }
     }
 
@@ -654,6 +667,7 @@ mod tests {
             max_concurrent_network: None,
             max_concurrent_processing: Some(ParsedProperty::Default(5)),
             tag_prefix: Some(ParsedProperty::Default("base-".to_string())),
+            run_hooks: None,
         };
 
         let other = Config {
@@ -669,6 +683,7 @@ mod tests {
             max_concurrent_network: Some(ParsedProperty::Default(200)),
             max_concurrent_processing: Some(ParsedProperty::Default(15)),
             tag_prefix: None,
+            run_hooks: None,
         };
 
         let merged = base.merge(other);
@@ -747,6 +762,7 @@ mod tests {
             max_concurrent_network: None,
             max_concurrent_processing: None,
             tag_prefix: None,
+            run_hooks: None,
         };
 
         let empty2 = Config {
@@ -762,6 +778,7 @@ mod tests {
             max_concurrent_network: None,
             max_concurrent_processing: None,
             tag_prefix: None,
+            run_hooks: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1203,6 +1220,7 @@ invalid toml syntax here [
             max_concurrent_network: Some(ParsedProperty::Default(200)),
             max_concurrent_processing: Some(ParsedProperty::Default(20)),
             tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
+            run_hooks: Some(ParsedProperty::Default(false)),
         };
 
         // Test serialization to TOML (serializes with enum variant info)

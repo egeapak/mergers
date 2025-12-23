@@ -1,3 +1,4 @@
+use crate::models::AppModeConfig;
 use ratatui::Terminal;
 use state::{
     CleanupDataLoadingState, CleanupModeState, DataLoadingState, MergeState,
@@ -57,33 +58,42 @@ pub async fn run_app_with_events<B: ratatui::backend::Backend>(
 ) -> anyhow::Result<()> {
     match app {
         App::Merge(merge_app) => {
-            let config = merge_app.config.as_ref().clone();
-            let initial_state = if config.shared().skip_confirmation {
+            let typed_config = merge_app.config.as_ref();
+            let initial_state = if typed_config.shared().skip_confirmation {
                 MergeState::DataLoading(DataLoadingState::new())
             } else {
-                MergeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(config)))
+                let app_config = typed_config.to_app_config();
+                MergeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
+                    app_config,
+                )))
             };
             typed_run::run_merge_mode(terminal, merge_app, event_source, initial_state).await
         }
         App::Migration(migration_app) => {
-            let config = migration_app.config.as_ref().clone();
-            let initial_state = if config.shared().skip_confirmation {
-                MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(config)))
+            let typed_config = migration_app.config.as_ref();
+            let initial_state = if typed_config.shared().skip_confirmation {
+                let app_config = typed_config.to_app_config();
+                MigrationModeState::DataLoading(Box::new(MigrationDataLoadingState::new(
+                    app_config,
+                )))
             } else {
+                let app_config = typed_config.to_app_config();
                 MigrationModeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
-                    config,
+                    app_config,
                 )))
             };
             typed_run::run_migration_mode(terminal, migration_app, event_source, initial_state)
                 .await
         }
         App::Cleanup(cleanup_app) => {
-            let config = cleanup_app.config.as_ref().clone();
-            let initial_state = if config.shared().skip_confirmation {
-                CleanupModeState::DataLoading(CleanupDataLoadingState::new(config))
+            let typed_config = cleanup_app.config.as_ref();
+            let initial_state = if typed_config.shared().skip_confirmation {
+                let app_config = typed_config.to_app_config();
+                CleanupModeState::DataLoading(CleanupDataLoadingState::new(app_config))
             } else {
+                let app_config = typed_config.to_app_config();
                 CleanupModeState::SettingsConfirmation(Box::new(SettingsConfirmationState::new(
-                    config,
+                    app_config,
                 )))
             };
             typed_run::run_cleanup_mode(terminal, cleanup_app, event_source, initial_state).await
