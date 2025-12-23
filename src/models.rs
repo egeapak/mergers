@@ -347,7 +347,130 @@ pub struct CleanupModeConfig {
     pub target: ParsedProperty<String>,
 }
 
-/// Resolved configuration with mode-specific settings
+// ============================================================================
+// Type-Safe App Configuration System
+// ============================================================================
+
+/// Trait for mode-specific configurations with compile-time type safety.
+///
+/// This trait is implemented by each mode-specific config struct, providing
+/// a common interface for accessing shared configuration while ensuring
+/// type-safe access to mode-specific fields.
+///
+/// # Example
+///
+/// ```ignore
+/// fn process_config<C: AppModeConfig>(config: &C) {
+///     let org = config.shared().organization.value();
+///     // Access shared config...
+/// }
+/// ```
+pub trait AppModeConfig: Clone + Send + Sync + std::fmt::Debug {
+    /// Returns a reference to the shared configuration.
+    fn shared(&self) -> &SharedConfig;
+}
+
+/// Complete configuration for merge mode with compile-time type safety.
+///
+/// This struct combines `SharedConfig` with merge-specific settings,
+/// providing type-safe access without runtime pattern matching.
+#[derive(Debug, Clone)]
+pub struct MergeConfig {
+    /// Shared configuration common to all modes.
+    pub shared: SharedConfig,
+    /// State to set work items to after successful merge.
+    pub work_item_state: ParsedProperty<String>,
+    /// Whether to run git hooks during cherry-pick operations (default: false).
+    pub run_hooks: ParsedProperty<bool>,
+}
+
+impl AppModeConfig for MergeConfig {
+    fn shared(&self) -> &SharedConfig {
+        &self.shared
+    }
+}
+
+impl MergeConfig {
+    /// Converts to AppConfig for backward compatibility with state types.
+    pub fn to_app_config(&self) -> AppConfig {
+        AppConfig::Default {
+            shared: self.shared.clone(),
+            default: DefaultModeConfig {
+                work_item_state: self.work_item_state.clone(),
+                run_hooks: self.run_hooks.clone(),
+            },
+        }
+    }
+}
+
+/// Complete configuration for migration mode with compile-time type safety.
+///
+/// This struct combines `SharedConfig` with migration-specific settings,
+/// providing type-safe access without runtime pattern matching.
+#[derive(Debug, Clone)]
+pub struct MigrationConfig {
+    /// Shared configuration common to all modes.
+    pub shared: SharedConfig,
+    /// Work item states that indicate completion.
+    pub terminal_states: ParsedProperty<Vec<String>>,
+}
+
+impl AppModeConfig for MigrationConfig {
+    fn shared(&self) -> &SharedConfig {
+        &self.shared
+    }
+}
+
+impl MigrationConfig {
+    /// Converts to AppConfig for backward compatibility with state types.
+    pub fn to_app_config(&self) -> AppConfig {
+        AppConfig::Migration {
+            shared: self.shared.clone(),
+            migration: MigrationModeConfig {
+                terminal_states: self.terminal_states.clone(),
+            },
+        }
+    }
+}
+
+/// Complete configuration for cleanup mode with compile-time type safety.
+///
+/// This struct combines `SharedConfig` with cleanup-specific settings,
+/// providing type-safe access without runtime pattern matching.
+#[derive(Debug, Clone)]
+pub struct CleanupConfig {
+    /// Shared configuration common to all modes.
+    pub shared: SharedConfig,
+    /// Target branch to check for merged patches.
+    pub target: ParsedProperty<String>,
+}
+
+impl AppModeConfig for CleanupConfig {
+    fn shared(&self) -> &SharedConfig {
+        &self.shared
+    }
+}
+
+impl CleanupConfig {
+    /// Converts to AppConfig for backward compatibility with state types.
+    pub fn to_app_config(&self) -> AppConfig {
+        AppConfig::Cleanup {
+            shared: self.shared.clone(),
+            cleanup: CleanupModeConfig {
+                target: self.target.clone(),
+            },
+        }
+    }
+}
+
+// ============================================================================
+// Legacy AppConfig Enum (for backward compatibility)
+// ============================================================================
+
+/// Resolved configuration with mode-specific settings.
+///
+/// This enum is maintained for backward compatibility. New code should prefer
+/// the type-safe config structs ([`MergeConfig`], [`MigrationConfig`], [`CleanupConfig`]).
 #[derive(Debug, Clone)]
 pub enum AppConfig {
     Default {
@@ -379,6 +502,100 @@ impl AppConfig {
 
     pub fn is_cleanup_mode(&self) -> bool {
         matches!(self, AppConfig::Cleanup { .. })
+    }
+
+    /// Converts to MergeConfig if this is a Default variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-Default variant.
+    pub fn into_merge_config(self) -> MergeConfig {
+        match self {
+            AppConfig::Default { shared, default } => MergeConfig {
+                shared,
+                work_item_state: default.work_item_state,
+                run_hooks: default.run_hooks,
+            },
+            _ => panic!("into_merge_config called on non-Default variant"),
+        }
+    }
+
+    /// Converts to MigrationConfig if this is a Migration variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-Migration variant.
+    pub fn into_migration_config(self) -> MigrationConfig {
+        match self {
+            AppConfig::Migration { shared, migration } => MigrationConfig {
+                shared,
+                terminal_states: migration.terminal_states,
+            },
+            _ => panic!("into_migration_config called on non-Migration variant"),
+        }
+    }
+
+    /// Converts to CleanupConfig if this is a Cleanup variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-Cleanup variant.
+    pub fn into_cleanup_config(self) -> CleanupConfig {
+        match self {
+            AppConfig::Cleanup { shared, cleanup } => CleanupConfig {
+                shared,
+                target: cleanup.target,
+            },
+            _ => panic!("into_cleanup_config called on non-Cleanup variant"),
+        }
+    }
+
+    /// Tries to convert to MergeConfig, returning None if not a Default variant.
+    pub fn try_into_merge_config(self) -> Option<MergeConfig> {
+        match self {
+            AppConfig::Default { shared, default } => Some(MergeConfig {
+                shared,
+                work_item_state: default.work_item_state,
+                run_hooks: default.run_hooks,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Tries to convert to MigrationConfig, returning None if not a Migration variant.
+    pub fn try_into_migration_config(self) -> Option<MigrationConfig> {
+        match self {
+            AppConfig::Migration { shared, migration } => Some(MigrationConfig {
+                shared,
+                terminal_states: migration.terminal_states,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Tries to convert to CleanupConfig, returning None if not a Cleanup variant.
+    pub fn try_into_cleanup_config(self) -> Option<CleanupConfig> {
+        match self {
+            AppConfig::Cleanup { shared, cleanup } => Some(CleanupConfig {
+                shared,
+                target: cleanup.target,
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Implement AppModeConfig for AppConfig to allow backward compatibility.
+///
+/// This allows existing code using `AppBase` with `Arc<AppConfig>` to continue
+/// working while new code can use the type-safe config structs.
+impl AppModeConfig for AppConfig {
+    fn shared(&self) -> &SharedConfig {
+        match self {
+            AppConfig::Default { shared, .. } => shared,
+            AppConfig::Migration { shared, .. } => shared,
+            AppConfig::Cleanup { shared, .. } => shared,
+        }
     }
 }
 

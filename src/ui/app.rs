@@ -7,10 +7,10 @@
 use crate::{
     api::AzureDevOpsClient,
     models::{
-        AppConfig, CherryPickItem, CleanupBranch, MigrationAnalysis, PullRequestWithWorkItems,
-        WorkItem,
+        AppConfig, AppModeConfig, CherryPickItem, CleanupBranch, CleanupConfig, MergeConfig,
+        MigrationAnalysis, MigrationConfig, PullRequestWithWorkItems, SharedConfig, WorkItem,
     },
-    ui::AppBase,
+    ui::AppMode,
     ui::apps::{CleanupApp, MergeApp, MigrationApp},
     ui::browser::SystemBrowserOpener,
 };
@@ -52,16 +52,16 @@ pub enum App {
 
 impl App {
     // ========================================================================
-    // Constructors
+    // Constructors - Type-Safe
     // ========================================================================
 
-    /// Creates a new App for merge mode.
-    pub fn new_merge(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new App for merge mode with type-safe MergeConfig.
+    pub fn new_merge(config: Arc<MergeConfig>, client: AzureDevOpsClient) -> Self {
         App::Merge(MergeApp::new(config, client, Box::new(SystemBrowserOpener)))
     }
 
-    /// Creates a new App for migration mode.
-    pub fn new_migration(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new App for migration mode with type-safe MigrationConfig.
+    pub fn new_migration(config: Arc<MigrationConfig>, client: AzureDevOpsClient) -> Self {
         App::Migration(MigrationApp::new(
             config,
             client,
@@ -69,8 +69,8 @@ impl App {
         ))
     }
 
-    /// Creates a new App for cleanup mode.
-    pub fn new_cleanup(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
+    /// Creates a new App for cleanup mode with type-safe CleanupConfig.
+    pub fn new_cleanup(config: Arc<CleanupConfig>, client: AzureDevOpsClient) -> Self {
         App::Cleanup(CleanupApp::new(
             config,
             client,
@@ -78,36 +78,56 @@ impl App {
         ))
     }
 
+    // ========================================================================
+    // Constructors - From AppConfig (backward compatibility)
+    // ========================================================================
+
     /// Creates a new App with empty pull requests for the appropriate mode
     /// based on the configuration.
     ///
-    /// This is the primary constructor that determines the mode from config.
+    /// This is the primary constructor that determines the mode from config
+    /// and converts to the appropriate type-safe config internally.
     pub fn new(
         pull_requests: Vec<PullRequestWithWorkItems>,
         config: Arc<AppConfig>,
         client: AzureDevOpsClient,
     ) -> Self {
-        let mut app = if config.is_migration_mode() {
-            App::new_migration(config, client)
-        } else if config.is_cleanup_mode() {
-            App::new_cleanup(config, client)
-        } else {
-            App::new_merge(config, client)
-        };
-
-        // Set the pull requests on the base
-        app.base_mut().pull_requests = pull_requests;
+        let mut app = Self::from_config(config, client);
+        *app.pull_requests_mut() = pull_requests;
         app
     }
 
     /// Creates a new App from configuration, determining mode automatically.
+    ///
+    /// This constructor converts the `AppConfig` enum to the appropriate
+    /// type-safe config struct internally.
     pub fn from_config(config: Arc<AppConfig>, client: AzureDevOpsClient) -> Self {
-        if config.is_migration_mode() {
-            App::new_migration(config, client)
-        } else if config.is_cleanup_mode() {
-            App::new_cleanup(config, client)
-        } else {
-            App::new_merge(config, client)
+        // Unwrap the Arc to get owned AppConfig for conversion
+        let config = Arc::try_unwrap(config).unwrap_or_else(|arc| (*arc).clone());
+
+        match config {
+            AppConfig::Migration { shared, migration } => {
+                let typed_config = Arc::new(MigrationConfig {
+                    shared,
+                    terminal_states: migration.terminal_states,
+                });
+                App::new_migration(typed_config, client)
+            }
+            AppConfig::Cleanup { shared, cleanup } => {
+                let typed_config = Arc::new(CleanupConfig {
+                    shared,
+                    target: cleanup.target,
+                });
+                App::new_cleanup(typed_config, client)
+            }
+            AppConfig::Default { shared, default } => {
+                let typed_config = Arc::new(MergeConfig {
+                    shared,
+                    work_item_state: default.work_item_state,
+                    run_hooks: default.run_hooks,
+                });
+                App::new_merge(typed_config, client)
+            }
         }
     }
 
@@ -122,117 +142,156 @@ impl App {
         client: AzureDevOpsClient,
         browser: Box<dyn crate::ui::browser::BrowserOpener>,
     ) -> Self {
-        let mut app = if config.is_migration_mode() {
-            App::Migration(MigrationApp::new(config, client, browser))
-        } else if config.is_cleanup_mode() {
-            App::Cleanup(CleanupApp::new(config, client, browser))
-        } else {
-            App::Merge(MergeApp::new(config, client, browser))
+        // Unwrap the Arc to get owned AppConfig for conversion
+        let config = Arc::try_unwrap(config).unwrap_or_else(|arc| (*arc).clone());
+
+        let mut app = match config {
+            AppConfig::Migration { shared, migration } => {
+                let typed_config = Arc::new(MigrationConfig {
+                    shared,
+                    terminal_states: migration.terminal_states,
+                });
+                App::Migration(MigrationApp::new(typed_config, client, browser))
+            }
+            AppConfig::Cleanup { shared, cleanup } => {
+                let typed_config = Arc::new(CleanupConfig {
+                    shared,
+                    target: cleanup.target,
+                });
+                App::Cleanup(CleanupApp::new(typed_config, client, browser))
+            }
+            AppConfig::Default { shared, default } => {
+                let typed_config = Arc::new(MergeConfig {
+                    shared,
+                    work_item_state: default.work_item_state,
+                    run_hooks: default.run_hooks,
+                });
+                App::Merge(MergeApp::new(typed_config, client, browser))
+            }
         };
 
-        // Set the pull requests on the base
-        app.base_mut().pull_requests = pull_requests;
+        *app.pull_requests_mut() = pull_requests;
         app
     }
 
     // ========================================================================
-    // Base Access
+    // Shared Config Access
     // ========================================================================
 
-    /// Returns a reference to the shared AppBase.
-    pub fn base(&self) -> &AppBase {
+    /// Returns a reference to the shared configuration.
+    ///
+    /// This provides access to configuration fields that are common across
+    /// all modes (organization, project, repository, etc.).
+    pub fn shared_config(&self) -> &SharedConfig {
         match self {
-            App::Merge(app) => app,
-            App::Migration(app) => app,
-            App::Cleanup(app) => app,
-        }
-    }
-
-    /// Returns a mutable reference to the shared AppBase.
-    pub fn base_mut(&mut self) -> &mut AppBase {
-        match self {
-            App::Merge(app) => app,
-            App::Migration(app) => app,
-            App::Cleanup(app) => app,
+            App::Merge(app) => app.config().shared(),
+            App::Migration(app) => app.config().shared(),
+            App::Cleanup(app) => app.config().shared(),
         }
     }
 
     // ========================================================================
-    // Shared Field Access (delegating to AppBase)
+    // Shared Field Access
     // ========================================================================
-
-    /// Returns the application configuration.
-    pub fn config(&self) -> &Arc<AppConfig> {
-        &self.base().config
-    }
 
     /// Returns a reference to the pull requests.
     pub fn pull_requests(&self) -> &Vec<PullRequestWithWorkItems> {
-        &self.base().pull_requests
+        match self {
+            App::Merge(app) => &app.pull_requests,
+            App::Migration(app) => &app.pull_requests,
+            App::Cleanup(app) => &app.pull_requests,
+        }
     }
 
     /// Returns a mutable reference to the pull requests.
     pub fn pull_requests_mut(&mut self) -> &mut Vec<PullRequestWithWorkItems> {
-        &mut self.base_mut().pull_requests
+        match self {
+            App::Merge(app) => &mut app.pull_requests,
+            App::Migration(app) => &mut app.pull_requests,
+            App::Cleanup(app) => &mut app.pull_requests,
+        }
     }
 
     /// Returns a reference to the API client.
     pub fn client(&self) -> &AzureDevOpsClient {
-        &self.base().client
+        match self {
+            App::Merge(app) => &app.client,
+            App::Migration(app) => &app.client,
+            App::Cleanup(app) => &app.client,
+        }
     }
 
     /// Returns the version string if set.
     pub fn version(&self) -> Option<&str> {
-        self.base().version.as_deref()
+        match self {
+            App::Merge(app) => app.version.as_deref(),
+            App::Migration(app) => app.version.as_deref(),
+            App::Cleanup(app) => app.version.as_deref(),
+        }
     }
 
     /// Sets the version string.
     pub fn set_version(&mut self, version: Option<String>) {
-        self.base_mut().version = version;
+        match self {
+            App::Merge(app) => app.version = version,
+            App::Migration(app) => app.version = version,
+            App::Cleanup(app) => app.version = version,
+        }
     }
 
     /// Returns the error message if set.
     pub fn error_message(&self) -> Option<&str> {
-        self.base().error_message.as_deref()
+        match self {
+            App::Merge(app) => app.error_message.as_deref(),
+            App::Migration(app) => app.error_message.as_deref(),
+            App::Cleanup(app) => app.error_message.as_deref(),
+        }
     }
 
     /// Sets the error message.
     pub fn set_error_message(&mut self, msg: Option<String>) {
-        self.base_mut().error_message = msg;
+        match self {
+            App::Merge(app) => app.error_message = msg,
+            App::Migration(app) => app.error_message = msg,
+            App::Cleanup(app) => app.error_message = msg,
+        }
     }
 
     // ========================================================================
-    // Configuration Getters (delegating to AppBase)
+    // Configuration Getters
     // ========================================================================
 
     /// Returns the Azure DevOps organization name.
     pub fn organization(&self) -> &str {
-        self.base().organization()
+        self.shared_config().organization.value()
     }
 
     /// Returns the Azure DevOps project name.
     pub fn project(&self) -> &str {
-        self.base().project()
+        self.shared_config().project.value()
     }
 
     /// Returns the repository name.
     pub fn repository(&self) -> &str {
-        self.base().repository()
+        self.shared_config().repository.value()
     }
 
     /// Returns the development branch name.
     pub fn dev_branch(&self) -> &str {
-        self.base().dev_branch()
+        self.shared_config().dev_branch.value()
     }
 
     /// Returns the target branch name.
     pub fn target_branch(&self) -> &str {
-        self.base().target_branch()
+        self.shared_config().target_branch.value()
     }
 
     /// Returns the local repository path, if configured.
     pub fn local_repo(&self) -> Option<&str> {
-        self.base().local_repo()
+        self.shared_config()
+            .local_repo
+            .as_ref()
+            .map(|p| p.value().as_str())
     }
 
     /// Returns the work item state to set after merging.
@@ -246,62 +305,88 @@ impl App {
 
     /// Returns the maximum concurrent network operations allowed.
     pub fn max_concurrent_network(&self) -> usize {
-        self.base().max_concurrent_network()
+        *self.shared_config().max_concurrent_network.value()
     }
 
     /// Returns the maximum concurrent processing operations allowed.
     pub fn max_concurrent_processing(&self) -> usize {
-        self.base().max_concurrent_processing()
+        *self.shared_config().max_concurrent_processing.value()
     }
 
     /// Returns the tag prefix for merged PRs.
     pub fn tag_prefix(&self) -> &str {
-        self.base().tag_prefix()
+        self.shared_config().tag_prefix.value()
     }
 
     /// Returns the "since" date filter as originally specified.
     pub fn since(&self) -> Option<&str> {
-        self.base().since()
+        self.shared_config()
+            .since
+            .as_ref()
+            .and_then(|d| d.original())
     }
 
     // ========================================================================
-    // Helper Methods (delegating to AppBase)
+    // Helper Methods
     // ========================================================================
 
     /// Returns all selected pull requests, sorted by closed date.
     pub fn get_selected_prs(&self) -> Vec<&PullRequestWithWorkItems> {
-        self.base().get_selected_prs()
+        match self {
+            App::Merge(app) => app.get_selected_prs(),
+            App::Migration(app) => app.get_selected_prs(),
+            App::Cleanup(app) => app.get_selected_prs(),
+        }
     }
 
     /// Opens a pull request in the default browser.
     pub fn open_pr_in_browser(&self, pr_id: i32) {
-        self.base().open_pr_in_browser(pr_id)
+        match self {
+            App::Merge(app) => app.open_pr_in_browser(pr_id),
+            App::Migration(app) => app.open_pr_in_browser(pr_id),
+            App::Cleanup(app) => app.open_pr_in_browser(pr_id),
+        }
     }
 
     /// Opens work items in the default browser.
     pub fn open_work_items_in_browser(&self, work_items: &[WorkItem]) {
-        self.base().open_work_items_in_browser(work_items)
+        match self {
+            App::Merge(app) => app.open_work_items_in_browser(work_items),
+            App::Migration(app) => app.open_work_items_in_browser(work_items),
+            App::Cleanup(app) => app.open_work_items_in_browser(work_items),
+        }
     }
 
     // ========================================================================
-    // Legacy Field Compatibility
-    // These provide backward compatibility with code that accessed App fields directly
+    // Worktree Operations
     // ========================================================================
 
     /// Returns the repository path (for worktree operations).
     pub fn repo_path(&self) -> Option<&std::path::Path> {
-        self.base().worktree.repo_path()
+        match self {
+            App::Merge(app) => app.worktree.repo_path(),
+            App::Migration(app) => app.worktree.repo_path(),
+            App::Cleanup(app) => app.worktree.repo_path(),
+        }
     }
 
     /// Sets the repository path (delegating to worktree context).
     pub fn set_repo_path(&mut self, path: Option<std::path::PathBuf>) {
-        self.base_mut().worktree.set_repo_path(path);
+        match self {
+            App::Merge(app) => app.worktree.set_repo_path(path),
+            App::Migration(app) => app.worktree.set_repo_path(path),
+            App::Cleanup(app) => app.worktree.set_repo_path(path),
+        }
     }
 
     /// Sets the temp directory to keep it alive.
     #[allow(dead_code)]
     pub fn set_temp_dir(&mut self, temp_dir: Option<TempDir>) {
-        self.base_mut().worktree.set_temp_dir(temp_dir);
+        match self {
+            App::Merge(app) => app.worktree.set_temp_dir(temp_dir),
+            App::Migration(app) => app.worktree.set_temp_dir(temp_dir),
+            App::Cleanup(app) => app.worktree.set_temp_dir(temp_dir),
+        }
     }
 
     // ========================================================================
@@ -441,7 +526,11 @@ impl App {
 
     /// Cleans up the migration worktree if one was created.
     pub fn cleanup_worktree(&mut self) {
-        self.base_mut().worktree.cleanup();
+        match self {
+            App::Merge(app) => app.worktree.cleanup(),
+            App::Migration(app) => app.worktree.cleanup(),
+            App::Cleanup(app) => app.worktree.cleanup(),
+        }
     }
 
     /// Cleans up the migration worktree if one was created.
@@ -488,6 +577,31 @@ mod tests {
         }
     }
 
+    fn create_merge_config() -> Arc<MergeConfig> {
+        Arc::new(MergeConfig {
+            shared: create_shared_config(),
+            work_item_state: ParsedProperty::Default("Next Merged".to_string()),
+            run_hooks: ParsedProperty::Default(false),
+        })
+    }
+
+    fn create_migration_config() -> Arc<MigrationConfig> {
+        Arc::new(MigrationConfig {
+            shared: create_shared_config(),
+            terminal_states: ParsedProperty::Default(vec![
+                "Closed".to_string(),
+                "Done".to_string(),
+            ]),
+        })
+    }
+
+    fn create_cleanup_config() -> Arc<CleanupConfig> {
+        Arc::new(CleanupConfig {
+            shared: create_shared_config(),
+            target: ParsedProperty::Default("main".to_string()),
+        })
+    }
+
     fn create_test_client() -> AzureDevOpsClient {
         AzureDevOpsClient::new(
             "test_org".to_string(),
@@ -511,13 +625,7 @@ mod tests {
     /// - Merge-specific fields are accessible
     #[test]
     fn test_app_new_merge() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
 
         let app = App::new_merge(config, client);
@@ -542,15 +650,7 @@ mod tests {
     /// - Migration-specific fields are accessible
     #[test]
     fn test_app_new_migration() {
-        let config = Arc::new(AppConfig::Migration {
-            shared: create_shared_config(),
-            migration: MigrationModeConfig {
-                terminal_states: ParsedProperty::Default(vec![
-                    "Closed".to_string(),
-                    "Done".to_string(),
-                ]),
-            },
-        });
+        let config = create_migration_config();
         let client = create_test_client();
 
         let app = App::new_migration(config, client);
@@ -574,12 +674,7 @@ mod tests {
     /// - Cleanup-specific fields are accessible
     #[test]
     fn test_app_new_cleanup() {
-        let config = Arc::new(AppConfig::Cleanup {
-            shared: create_shared_config(),
-            cleanup: CleanupModeConfig {
-                target: ParsedProperty::Default("main".to_string()),
-            },
-        });
+        let config = create_cleanup_config();
         let client = create_test_client();
 
         let app = App::new_cleanup(config, client);
@@ -647,13 +742,7 @@ mod tests {
     /// - All config properties return expected values
     #[test]
     fn test_app_config_accessors() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
         let app = App::new_merge(config, client);
 
@@ -669,32 +758,26 @@ mod tests {
         assert!(app.since().is_none());
     }
 
-    /// # App Base Access
+    /// # App Field Access
     ///
-    /// Tests that base() and base_mut() work correctly.
+    /// Tests that shared fields are accessible through App.
     ///
     /// ## Test Scenario
-    /// - Creates App and accesses/modifies base
+    /// - Creates App and accesses/modifies shared fields
     ///
     /// ## Expected Outcome
-    /// - Can read and write to base fields
+    /// - Can read and write to shared fields
     #[test]
-    fn test_app_base_access() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+    fn test_app_field_access() {
+        let config = create_merge_config();
         let client = create_test_client();
         let mut app = App::new_merge(config, client);
 
-        // Read from base
-        assert!(app.base().pull_requests.is_empty());
+        // Read pull_requests
+        assert!(app.pull_requests().is_empty());
 
-        // Write to base
-        app.base_mut().version = Some("1.0.0".to_string());
+        // Write version
+        app.set_version(Some("1.0.0".to_string()));
         assert_eq!(app.version(), Some("1.0.0"));
     }
 
@@ -712,13 +795,7 @@ mod tests {
     fn test_app_merge_cherry_pick_operations() {
         use crate::models::CherryPickStatus;
 
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
         let mut app = App::new_merge(config, client);
 
@@ -750,12 +827,7 @@ mod tests {
     /// - Migration fields accessible in migration mode
     #[test]
     fn test_app_migration_operations() {
-        let config = Arc::new(AppConfig::Migration {
-            shared: create_shared_config(),
-            migration: MigrationModeConfig {
-                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
-            },
-        });
+        let config = create_migration_config();
         let client = create_test_client();
         let mut app = App::new_migration(config, client);
 
@@ -781,12 +853,7 @@ mod tests {
     fn test_app_cleanup_operations() {
         use crate::models::CleanupStatus;
 
-        let config = Arc::new(AppConfig::Cleanup {
-            shared: create_shared_config(),
-            cleanup: CleanupModeConfig {
-                target: ParsedProperty::Default("main".to_string()),
-            },
-        });
+        let config = create_cleanup_config();
         let client = create_test_client();
         let mut app = App::new_cleanup(config, client);
 
@@ -816,13 +883,7 @@ mod tests {
     /// - Returns empty slice (no panic)
     #[test]
     fn test_app_cleanup_branches_in_merge_mode() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
         let app = App::new_merge(config, client);
 
@@ -846,33 +907,21 @@ mod tests {
         let client = create_test_client();
 
         // Merge mode with custom state
-        let merge_config = Arc::new(AppConfig::Default {
+        let merge_config = Arc::new(MergeConfig {
             shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Custom State".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
+            work_item_state: ParsedProperty::Default("Custom State".to_string()),
+            run_hooks: ParsedProperty::Default(false),
         });
         let merge_app = App::new_merge(merge_config, client.clone());
         assert_eq!(merge_app.work_item_state(), "Custom State");
 
         // Migration mode - fallback
-        let migration_config = Arc::new(AppConfig::Migration {
-            shared: create_shared_config(),
-            migration: MigrationModeConfig {
-                terminal_states: ParsedProperty::Default(vec!["Closed".to_string()]),
-            },
-        });
+        let migration_config = create_migration_config();
         let migration_app = App::new_migration(migration_config, client.clone());
         assert_eq!(migration_app.work_item_state(), "Next Merged");
 
         // Cleanup mode - fallback
-        let cleanup_config = Arc::new(AppConfig::Cleanup {
-            shared: create_shared_config(),
-            cleanup: CleanupModeConfig {
-                target: ParsedProperty::Default("main".to_string()),
-            },
-        });
+        let cleanup_config = create_cleanup_config();
         let cleanup_app = App::new_cleanup(cleanup_config, client);
         assert_eq!(cleanup_app.work_item_state(), "Next Merged");
     }
@@ -889,13 +938,7 @@ mod tests {
     /// - Error message can be read and written
     #[test]
     fn test_app_error_message() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
         let mut app = App::new_merge(config, client);
 
@@ -923,13 +966,7 @@ mod tests {
     /// - Version can be read and written
     #[test]
     fn test_app_version() {
-        let config = Arc::new(AppConfig::Default {
-            shared: create_shared_config(),
-            default: DefaultModeConfig {
-                work_item_state: ParsedProperty::Default("Next Merged".to_string()),
-                run_hooks: ParsedProperty::Default(false),
-            },
-        });
+        let config = create_merge_config();
         let client = create_test_client();
         let mut app = App::new_merge(config, client);
 

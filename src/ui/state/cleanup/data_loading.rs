@@ -80,12 +80,8 @@ impl CleanupDataLoadingState {
         }
 
         let repo_path = local_repo.unwrap().to_string();
-        let target_branch = if let crate::models::AppConfig::Cleanup { cleanup, .. } = &*app.config
-        {
-            cleanup.target.value().to_string()
-        } else {
-            app.target_branch().to_string()
-        };
+        // With typed configs, we can directly access the cleanup target
+        let target_branch = app.cleanup_target().to_string();
 
         self.status = "Loading patch branches...".to_string();
         self.progress = 0.1;
