@@ -15,7 +15,7 @@ use crate::core::output::{
     ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, ProgressEvent, ProgressSummary,
     StatusInfo, SummaryInfo, SummaryItem, SummaryResult,
 };
-use crate::core::state::{MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
+use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 
 use super::merge_engine::{MergeEngine, acquire_lock};
 use super::traits::{MergeRunnerConfig, RunResult};
@@ -203,15 +203,28 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Load state file
-        let mut state = match MergeStateFile::load_for_repo(&repo_path) {
+        // Early lock check (before loading state)
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error("Another merge operation is in progress");
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
                 self.emit_error("No state file found for this repository");
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
-                self.emit_error(&format!("Failed to load state: {}", e));
+                self.emit_error(&format!("{}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
@@ -303,14 +316,28 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Load state file
-        let mut state = match MergeStateFile::load_for_repo(&repo_path) {
+        // Early lock check (before loading state)
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error("Another merge operation is in progress");
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
                 self.emit_error("No state file found for this repository");
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
+                self.emit_error(&format!("{}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
@@ -373,14 +400,15 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Load state file
-        let state = match MergeStateFile::load_for_repo(&repo_path) {
+        // Load and validate state file
+        let state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
                 self.emit_error("No state file found for this repository");
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
+                self.emit_error(&format!("{}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
@@ -468,14 +496,28 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Load state file
-        let mut state = match MergeStateFile::load_for_repo(&repo_path) {
+        // Early lock check (before loading state)
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error("Another merge operation is in progress");
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
                 self.emit_error("No state file found for this repository");
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
+                self.emit_error(&format!("{}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };

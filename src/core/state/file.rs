@@ -269,6 +269,47 @@ impl MergeStateFile {
         }
     }
 
+    /// Loads and validates a state file for a repository.
+    ///
+    /// Returns a detailed error if the state file is corrupted or invalid.
+    /// The error message includes suggestions for recovery.
+    pub fn load_and_validate_for_repo(repo_path: &Path) -> Result<Option<Self>> {
+        let state_path = path_for_repo(repo_path)?;
+        if !state_path.exists() {
+            return Ok(None);
+        }
+
+        // Try to load the file
+        let state = match Self::load(&state_path) {
+            Ok(s) => s,
+            Err(e) => {
+                // Provide actionable error message for parse failures
+                anyhow::bail!(
+                    "State file corrupted: {}\n\n\
+                     To recover, either:\n  \
+                     1. Run 'mergers merge abort' to clean up, or\n  \
+                     2. Manually delete the state file at: {}",
+                    e,
+                    state_path.display()
+                );
+            }
+        };
+
+        // Validate the loaded state
+        if let Err(e) = state.validate() {
+            anyhow::bail!(
+                "{}\n\n\
+                 To recover, either:\n  \
+                 1. Run 'mergers merge abort' to clean up, or\n  \
+                 2. Manually delete the state file at: {}",
+                e,
+                state_path.display()
+            );
+        }
+
+        Ok(Some(state))
+    }
+
     /// Saves the state file to disk atomically.
     ///
     /// Uses write-to-temp-then-rename pattern for atomicity.
@@ -335,6 +376,60 @@ impl MergeStateFile {
             }
         }
         counts
+    }
+
+    /// Validates the state file for consistency and correctness.
+    ///
+    /// Checks:
+    /// - Schema version is supported
+    /// - Required fields are present and valid
+    /// - Index is within bounds
+    /// - Phase-specific invariants are met
+    pub fn validate(&self) -> Result<()> {
+        // Check schema version
+        if self.schema_version != SCHEMA_VERSION {
+            anyhow::bail!(
+                "Unsupported schema version: {} (expected {}). \
+                 The state file may have been created by a different version of mergers.",
+                self.schema_version,
+                SCHEMA_VERSION
+            );
+        }
+
+        // Check required fields
+        if self.repo_path.as_os_str().is_empty() {
+            anyhow::bail!("State file corrupted: missing required field 'repo_path'");
+        }
+
+        if self.organization.is_empty() {
+            anyhow::bail!("State file corrupted: missing required field 'organization'");
+        }
+
+        if self.project.is_empty() {
+            anyhow::bail!("State file corrupted: missing required field 'project'");
+        }
+
+        if self.repository.is_empty() {
+            anyhow::bail!("State file corrupted: missing required field 'repository'");
+        }
+
+        // Check index bounds
+        if !self.cherry_pick_items.is_empty() && self.current_index > self.cherry_pick_items.len() {
+            anyhow::bail!(
+                "State file corrupted: current_index ({}) exceeds cherry_pick_items count ({})",
+                self.current_index,
+                self.cherry_pick_items.len()
+            );
+        }
+
+        // Check phase-specific invariants
+        if self.phase == MergePhase::AwaitingConflictResolution && self.conflicted_files.is_none() {
+            anyhow::bail!(
+                "State file corrupted: phase is 'AwaitingConflictResolution' but no conflicted_files recorded"
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -428,6 +523,29 @@ pub struct LockGuard {
 }
 
 impl LockGuard {
+    /// Checks if a lock exists for the given repository without acquiring it.
+    ///
+    /// Returns `true` if another process holds the lock, `false` otherwise.
+    /// This is useful for early detection before loading state files.
+    pub fn is_locked(repo_path: &Path) -> Result<bool> {
+        let lock_path = lock_path_for_repo(repo_path)?;
+
+        if !lock_path.exists() {
+            return Ok(false);
+        }
+
+        // Check if the process holding the lock is still alive
+        if let Ok(content) = fs::read_to_string(&lock_path)
+            && let Ok(pid) = content.trim().parse::<u32>()
+            && is_process_alive(pid)
+        {
+            return Ok(true);
+        }
+
+        // Lock file exists but is stale
+        Ok(false)
+    }
+
     /// Attempts to acquire a lock for the given repository.
     ///
     /// Returns `Ok(Some(guard))` if the lock was acquired,

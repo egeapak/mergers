@@ -145,7 +145,8 @@ impl MergeApp {
     /// Creates a new state file for the merge operation.
     ///
     /// This is called during repo setup to establish the state file for
-    /// potential cross-mode resume (TUI → CLI).
+    /// potential cross-mode resume (TUI → CLI). Also acquires a lock for
+    /// exclusive merge access.
     pub fn create_state_file(
         &mut self,
         repo_path: PathBuf,
@@ -153,6 +154,21 @@ impl MergeApp {
         is_worktree: bool,
         merge_version: &str,
     ) -> Result<PathBuf> {
+        // Acquire lock first to ensure exclusive access
+        match LockGuard::acquire(&repo_path) {
+            Ok(Some(guard)) => {
+                self.lock_guard = Some(guard);
+            }
+            Ok(None) => {
+                return Err(anyhow::anyhow!(
+                    "Another merge operation is in progress for this repository"
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to acquire lock: {}", e));
+            }
+        }
+
         let config = self.config();
         let state_file = MergeStateFile::new(
             repo_path,
