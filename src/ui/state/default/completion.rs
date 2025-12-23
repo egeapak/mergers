@@ -1,4 +1,5 @@
 use crate::{
+    core::state::MergeStatus,
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
@@ -304,7 +305,16 @@ impl ModeState for CompletionState {
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         match code {
-            KeyCode::Char('q') => StateChange::Exit,
+            KeyCode::Char('q') => {
+                // Mark state file as completed and clean up before exit
+                if let Some(state_file) = app.state_file_mut() {
+                    state_file.final_status = Some(MergeStatus::Success);
+                    state_file.completed_at = Some(chrono::Utc::now());
+                    let _ = state_file.save_for_repo();
+                }
+                let _ = app.cleanup_state_file();
+                StateChange::Exit
+            }
             KeyCode::Up => {
                 self.previous(app);
                 StateChange::Keep

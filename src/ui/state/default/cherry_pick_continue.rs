@@ -1,5 +1,6 @@
 use super::MergeState;
 use crate::{
+    core::state::{MergePhase, StateItemStatus},
     models::CherryPickStatus,
     ui::apps::MergeApp,
     ui::state::typed::{ModeState, StateChange},
@@ -333,6 +334,12 @@ impl ModeState for CherryPickContinueState {
                 let current_index = app.current_cherry_pick_index();
                 app.cherry_pick_items_mut()[current_index].status = CherryPickStatus::Success;
                 app.set_current_cherry_pick_index(current_index + 1);
+
+                // Update state file with success status and resume cherry-picking phase
+                let _ = app.update_state_item_status(current_index, StateItemStatus::Success);
+                let _ = app.clear_state_conflicted_files();
+                let _ = app.update_state_phase(MergePhase::CherryPicking);
+
                 StateChange::Change(MergeState::CherryPick(
                     CherryPickState::continue_after_conflict(),
                 ))
@@ -352,6 +359,13 @@ impl ModeState for CherryPickContinueState {
                         app.cherry_pick_items_mut()[current_index].status =
                             CherryPickStatus::Skipped;
                         app.set_current_cherry_pick_index(current_index + 1);
+
+                        // Update state file with skipped status and resume cherry-picking phase
+                        let _ =
+                            app.update_state_item_status(current_index, StateItemStatus::Skipped);
+                        let _ = app.clear_state_conflicted_files();
+                        let _ = app.update_state_phase(MergePhase::CherryPicking);
+
                         StateChange::Change(MergeState::CherryPick(
                             CherryPickState::continue_after_conflict(),
                         ))

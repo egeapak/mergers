@@ -1,5 +1,6 @@
 use super::MergeState;
 use crate::{
+    core::state::{MergePhase, StateItemStatus},
     git,
     models::CherryPickStatus,
     ui::apps::MergeApp,
@@ -266,6 +267,8 @@ pub fn process_next_commit(app: &mut MergeApp) -> StateChange<MergeState> {
 
     // Check if we're done with all commits
     if app.current_cherry_pick_index() >= app.cherry_pick_items().len() {
+        // Update state file phase to Completing
+        let _ = app.update_state_phase(MergePhase::Completing);
         return StateChange::Change(MergeState::Completion(CompletionState::new()));
     }
 
@@ -280,32 +283,62 @@ pub fn process_next_commit(app: &mut MergeApp) -> StateChange<MergeState> {
     item.status = CherryPickStatus::InProgress;
     let commit_id = item.commit_id.clone();
 
+    // Sync current index to state file
+    let _ = app.sync_state_current_index();
+
     match git::cherry_pick_commit(&repo_path, &commit_id) {
         Ok(git::CherryPickResult::Success) => {
+            let item = &mut app.cherry_pick_items_mut()[current_index];
             item.status = CherryPickStatus::Success;
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
+
+            // Update state file with success status
+            let _ = app.update_state_item_status(current_index, StateItemStatus::Success);
+
             // Return to the same state to continue processing and show UI update
             StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),
             ))
         }
         Ok(git::CherryPickResult::Conflict(files)) => {
+            let item = &mut app.cherry_pick_items_mut()[current_index];
             item.status = CherryPickStatus::Conflict;
+
+            // Update state file with conflict status and phase
+            let _ = app.update_state_item_status(current_index, StateItemStatus::Conflict);
+            let _ = app.set_state_conflicted_files(files.clone());
+            let _ = app.update_state_phase(MergePhase::AwaitingConflictResolution);
+
             StateChange::Change(MergeState::ConflictResolution(
                 ConflictResolutionState::new(files),
             ))
         }
         Ok(git::CherryPickResult::Failed(msg)) => {
-            item.status = CherryPickStatus::Failed(msg);
+            let item = &mut app.cherry_pick_items_mut()[current_index];
+            item.status = CherryPickStatus::Failed(msg.clone());
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
+
+            // Update state file with failed status
+            let _ = app
+                .update_state_item_status(current_index, StateItemStatus::Failed { message: msg });
+
             // Return to the same state to continue processing and show UI update
             StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),
             ))
         }
         Err(e) => {
-            item.status = CherryPickStatus::Failed(e.to_string());
+            let err_msg = e.to_string();
+            let item = &mut app.cherry_pick_items_mut()[current_index];
+            item.status = CherryPickStatus::Failed(err_msg.clone());
             app.set_current_cherry_pick_index(app.current_cherry_pick_index() + 1);
+
+            // Update state file with failed status
+            let _ = app.update_state_item_status(
+                current_index,
+                StateItemStatus::Failed { message: err_msg },
+            );
+
             // Return to the same state to continue processing and show UI update
             StateChange::Change(MergeState::CherryPick(
                 CherryPickState::continue_after_conflict(),

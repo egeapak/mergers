@@ -3,6 +3,7 @@
 
 use super::MergeState;
 use crate::{
+    core::state::MergePhase,
     git,
     models::CherryPickItem,
     ui::apps::MergeApp,
@@ -179,6 +180,21 @@ impl SetupRepoState {
                         app.set_error_message(Some(format!("Failed to create branch: {}", e)));
                         StateChange::Change(MergeState::Error(ErrorState::new()))
                     } else {
+                        // Create state file for cross-mode resume support
+                        self.set_status("Initializing state file...".to_string());
+                        let repo_path = app.repo_path().as_ref().unwrap().to_path_buf();
+                        let base_repo_path = app.worktree.base_repo_path.clone();
+                        let is_worktree = base_repo_path.is_some();
+
+                        // State file creation is optional for TUI - silently ignore errors
+                        if app
+                            .create_state_file(repo_path, base_repo_path, is_worktree, &version)
+                            .is_ok()
+                        {
+                            // Set initial phase to CherryPicking
+                            let _ = app.update_state_phase(MergePhase::CherryPicking);
+                        }
+
                         StateChange::Change(MergeState::CherryPick(CherryPickState::new()))
                     }
                 }
