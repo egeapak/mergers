@@ -599,6 +599,7 @@ fn test_args_cli_precedence() {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         })),
         create_config: false,
     };
@@ -691,4 +692,1219 @@ fn test_client_creation_with_resolved_config() {
         std::env::remove_var("MERGERS_REPOSITORY");
         std::env::remove_var("MERGERS_PAT");
     }
+}
+
+// =============================================================================
+// Non-Interactive Mode Integration Tests
+// =============================================================================
+
+use mergers::core::ExitCode;
+use mergers::core::runner::{MergeRunnerConfig, NonInteractiveRunner, RunResult};
+use mergers::core::state::{
+    LockGuard, MergePhase, MergeStateFile, MergeStatus, STATE_DIR_ENV, StateCherryPickItem,
+    StateItemStatus, lock_path_for_repo, path_for_repo,
+};
+use mergers::models::OutputFormat;
+
+/// # State File Lifecycle
+///
+/// Tests the complete lifecycle of a state file: creation, updates, and completion.
+///
+/// ## Test Scenario
+/// - Creates a new state file with initial values
+/// - Updates the phase through various stages
+/// - Adds cherry-pick items and updates their statuses
+/// - Marks the merge as completed
+///
+/// ## Expected Outcome
+/// - State file is created and updated correctly at each stage
+/// - Final state reflects all changes
+#[test]
+#[file_serial(env_tests)]
+fn test_state_file_lifecycle() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    // Set state directory
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create new state file
+    let mut state = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "test-org".to_string(),
+        "test-project".to_string(),
+        "test-repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v1.0.0".to_string(),
+        "Next Merged".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+
+    // Add cherry-pick items
+    state.cherry_pick_items = vec![
+        StateCherryPickItem {
+            commit_id: "abc123".to_string(),
+            pr_id: 1,
+            pr_title: "PR 1".to_string(),
+            status: StateItemStatus::Pending,
+            work_item_ids: vec![100],
+        },
+        StateCherryPickItem {
+            commit_id: "def456".to_string(),
+            pr_id: 2,
+            pr_title: "PR 2".to_string(),
+            status: StateItemStatus::Pending,
+            work_item_ids: vec![101, 102],
+        },
+    ];
+
+    // Set to cherry-picking phase
+    state.phase = MergePhase::CherryPicking;
+    let state_path = state.save_for_repo().unwrap();
+    assert!(state_path.exists());
+
+    // Simulate first cherry-pick success
+    state.cherry_pick_items[0].status = StateItemStatus::Success;
+    state.current_index = 1;
+    state.save_for_repo().unwrap();
+
+    // Simulate conflict on second cherry-pick
+    state.cherry_pick_items[1].status = StateItemStatus::Conflict;
+    state.phase = MergePhase::AwaitingConflictResolution;
+    state.conflicted_files = Some(vec!["src/main.rs".to_string(), "Cargo.toml".to_string()]);
+    state.save_for_repo().unwrap();
+
+    // Load and verify conflict state
+    let loaded = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(loaded.phase, MergePhase::AwaitingConflictResolution);
+    assert_eq!(loaded.current_index, 1);
+    assert!(loaded.conflicted_files.is_some());
+    assert_eq!(loaded.conflicted_files.as_ref().unwrap().len(), 2);
+
+    // Simulate conflict resolution and continue
+    state.cherry_pick_items[1].status = StateItemStatus::Success;
+    state.phase = MergePhase::ReadyForCompletion;
+    state.conflicted_files = None;
+    state.current_index = 2;
+    state.save_for_repo().unwrap();
+
+    // Mark as completed
+    state.mark_completed(MergeStatus::Success).unwrap();
+
+    // Load and verify final state
+    let final_state = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(final_state.phase, MergePhase::Completed);
+    assert_eq!(final_state.final_status, Some(MergeStatus::Success));
+    assert!(final_state.completed_at.is_some());
+    assert_eq!(
+        final_state.cherry_pick_items[0].status,
+        StateItemStatus::Success
+    );
+    assert_eq!(
+        final_state.cherry_pick_items[1].status,
+        StateItemStatus::Success
+    );
+
+    // Cleanup
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # State File Cross-Mode Compatibility
+///
+/// Tests that state files created in one mode can be read and modified in another.
+///
+/// ## Test Scenario
+/// - Creates a state file simulating TUI mode (with conflict)
+/// - Loads the state file simulating CLI mode
+/// - Verifies all fields are accessible and correct
+///
+/// ## Expected Outcome
+/// - State file is fully compatible across modes
+#[test]
+#[file_serial(env_tests)]
+fn test_state_file_cross_mode_compatibility() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Simulate TUI creating state file
+    let mut tui_state = MergeStateFile::new(
+        repo_dir.clone(),
+        Some(temp_dir.path().join("base-repo")),
+        true, // is_worktree
+        "my-org".to_string(),
+        "my-project".to_string(),
+        "my-repo".to_string(),
+        "develop".to_string(),
+        "main".to_string(),
+        "v2.0.0".to_string(),
+        "Done".to_string(),
+        "release-".to_string(),
+        true, // run_hooks = true
+    );
+
+    tui_state.cherry_pick_items = vec![
+        StateCherryPickItem {
+            commit_id: "commit1".to_string(),
+            pr_id: 100,
+            pr_title: "Feature A".to_string(),
+            status: StateItemStatus::Success,
+            work_item_ids: vec![1000, 1001],
+        },
+        StateCherryPickItem {
+            commit_id: "commit2".to_string(),
+            pr_id: 101,
+            pr_title: "Feature B".to_string(),
+            status: StateItemStatus::Conflict,
+            work_item_ids: vec![1002],
+        },
+        StateCherryPickItem {
+            commit_id: "commit3".to_string(),
+            pr_id: 102,
+            pr_title: "Feature C".to_string(),
+            status: StateItemStatus::Pending,
+            work_item_ids: vec![],
+        },
+    ];
+
+    tui_state.phase = MergePhase::AwaitingConflictResolution;
+    tui_state.current_index = 1;
+    tui_state.conflicted_files = Some(vec!["lib/core.rs".to_string()]);
+    tui_state.save_for_repo().unwrap();
+
+    // Simulate CLI loading the state file
+    let cli_state = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+
+    // Verify all fields are preserved
+    assert_eq!(cli_state.organization, "my-org");
+    assert_eq!(cli_state.project, "my-project");
+    assert_eq!(cli_state.repository, "my-repo");
+    assert_eq!(cli_state.dev_branch, "develop");
+    assert_eq!(cli_state.target_branch, "main");
+    assert_eq!(cli_state.merge_version, "v2.0.0");
+    assert_eq!(cli_state.work_item_state, "Done");
+    assert_eq!(cli_state.tag_prefix, "release-");
+    assert!(cli_state.is_worktree);
+    assert!(cli_state.base_repo_path.is_some());
+    assert!(cli_state.run_hooks);
+    assert_eq!(cli_state.phase, MergePhase::AwaitingConflictResolution);
+    assert_eq!(cli_state.current_index, 1);
+    assert_eq!(cli_state.cherry_pick_items.len(), 3);
+
+    // Verify status counts
+    let counts = cli_state.status_counts();
+    assert_eq!(counts.success, 1);
+    assert_eq!(counts.conflict, 1);
+    assert_eq!(counts.pending, 1);
+    assert_eq!(counts.total(), 3);
+    assert_eq!(counts.completed(), 1);
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Lock Guard Prevents Concurrent Access
+///
+/// Tests that lock guards prevent multiple merge operations on the same repo.
+///
+/// ## Test Scenario
+/// - Acquires a lock on a repository
+/// - Attempts to acquire a second lock
+/// - Releases the first lock
+/// - Acquires a new lock successfully
+///
+/// ## Expected Outcome
+/// - Second lock acquisition fails while first is held
+/// - Lock can be acquired after release
+#[test]
+#[file_serial(env_tests)]
+fn test_lock_guard_prevents_concurrent_access() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // First lock acquisition
+    let guard1 = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(guard1.is_some(), "First lock should succeed");
+
+    // Second lock acquisition should fail
+    let guard2 = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(
+        guard2.is_none(),
+        "Second lock should fail while first is held"
+    );
+
+    // Drop first lock
+    drop(guard1);
+
+    // Now we should be able to acquire the lock again
+    let guard3 = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(guard3.is_some(), "Lock should succeed after release");
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Runner Configuration Validation
+///
+/// Tests that runner configuration is properly validated.
+///
+/// ## Test Scenario
+/// - Creates runner with various configurations
+/// - Tests output with different formats
+///
+/// ## Expected Outcome
+/// - Runners are created correctly with all configuration options
+#[test]
+fn test_runner_configuration() {
+    // Test with text format
+    let config1 = MergeRunnerConfig {
+        organization: "org1".to_string(),
+        project: "project1".to_string(),
+        repository: "repo1".to_string(),
+        pat: "pat1".to_string(),
+        dev_branch: "dev".to_string(),
+        target_branch: "main".to_string(),
+        version: "v1.0.0".to_string(),
+        tag_prefix: "merged-".to_string(),
+        work_item_state: "Done".to_string(),
+        select_by_states: Some("Ready".to_string()),
+        local_repo: None,
+        run_hooks: false,
+        output_format: OutputFormat::Text,
+        quiet: false,
+    };
+
+    let mut buffer1 = Vec::new();
+    let _runner1 = NonInteractiveRunner::with_writer(config1, &mut buffer1);
+
+    // Test with JSON format
+    let config2 = MergeRunnerConfig {
+        organization: "org2".to_string(),
+        project: "project2".to_string(),
+        repository: "repo2".to_string(),
+        pat: "pat2".to_string(),
+        dev_branch: "develop".to_string(),
+        target_branch: "release".to_string(),
+        version: "v2.0.0".to_string(),
+        tag_prefix: "release-".to_string(),
+        work_item_state: "Merged".to_string(),
+        select_by_states: None,
+        local_repo: Some(std::path::PathBuf::from("/path/to/repo")),
+        run_hooks: true,
+        output_format: OutputFormat::Json,
+        quiet: true,
+    };
+
+    let mut buffer2 = Vec::new();
+    let _runner2 = NonInteractiveRunner::with_writer(config2, &mut buffer2);
+
+    // Test with NDJSON format
+    let config3 = MergeRunnerConfig {
+        organization: "org3".to_string(),
+        project: "project3".to_string(),
+        repository: "repo3".to_string(),
+        pat: "pat3".to_string(),
+        dev_branch: "dev".to_string(),
+        target_branch: "next".to_string(),
+        version: "v3.0.0".to_string(),
+        tag_prefix: "v".to_string(),
+        work_item_state: "Complete".to_string(),
+        select_by_states: Some("Ready,Approved".to_string()),
+        local_repo: None,
+        run_hooks: false,
+        output_format: OutputFormat::Ndjson,
+        quiet: false,
+    };
+
+    let mut buffer3 = Vec::new();
+    let _runner3 = NonInteractiveRunner::with_writer(config3, &mut buffer3);
+}
+
+/// # Exit Code Mapping
+///
+/// Tests that exit codes are correctly mapped to results.
+///
+/// ## Test Scenario
+/// - Creates RunResult instances with various exit codes
+/// - Verifies the correct exit codes are produced
+///
+/// ## Expected Outcome
+/// - All exit codes map correctly to their meanings
+#[test]
+fn test_exit_code_mapping() {
+    // Success
+    let result = RunResult::success();
+    assert_eq!(result.exit_code, ExitCode::Success);
+
+    // Error
+    let result = RunResult::error(ExitCode::GeneralError, "Something failed");
+    assert_eq!(result.exit_code, ExitCode::GeneralError);
+    assert!(result.message.is_some());
+    assert!(result.message.unwrap().contains("failed"));
+
+    // Conflict
+    let result = RunResult::conflict(std::path::PathBuf::from("/state/path"));
+    assert_eq!(result.exit_code, ExitCode::Conflict);
+    assert!(result.state_file_path.is_some());
+
+    // Partial success
+    let result = RunResult::partial_success("3 of 5 succeeded");
+    assert_eq!(result.exit_code, ExitCode::PartialSuccess);
+
+    // No state file
+    let result = RunResult::error(ExitCode::NoStateFile, "No state file found");
+    assert_eq!(result.exit_code, ExitCode::NoStateFile);
+
+    // Invalid phase
+    let result = RunResult::error(ExitCode::InvalidPhase, "Cannot continue");
+    assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+
+    // No PRs matched
+    let result = RunResult::error(ExitCode::NoPRsMatched, "No PRs match criteria");
+    assert_eq!(result.exit_code, ExitCode::NoPRsMatched);
+
+    // Locked
+    let result = RunResult::error(ExitCode::Locked, "Another merge in progress");
+    assert_eq!(result.exit_code, ExitCode::Locked);
+}
+
+/// # State File Path Determinism
+///
+/// Tests that state file paths are deterministic based on repo path.
+///
+/// ## Test Scenario
+/// - Computes state file paths for the same repo multiple times
+/// - Computes paths for different repos
+///
+/// ## Expected Outcome
+/// - Same repo always produces same path
+/// - Different repos produce different paths
+#[test]
+#[file_serial(env_tests)]
+fn test_state_file_path_determinism() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo1 = temp_dir.path().join("repo1");
+    let repo2 = temp_dir.path().join("repo2");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo1).unwrap();
+    fs::create_dir_all(&repo2).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Same repo produces same path
+    let path1a = path_for_repo(&repo1).unwrap();
+    let path1b = path_for_repo(&repo1).unwrap();
+    let path1c = path_for_repo(&repo1).unwrap();
+    assert_eq!(path1a, path1b);
+    assert_eq!(path1b, path1c);
+
+    // Different repos produce different paths
+    let path2 = path_for_repo(&repo2).unwrap();
+    assert_ne!(path1a, path2);
+
+    // Paths follow expected format
+    assert!(
+        path1a
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("merge-")
+    );
+    assert!(
+        path1a
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .ends_with(".json")
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Mixed Item Status State File
+///
+/// Tests state file with various item statuses for proper serialization.
+///
+/// ## Test Scenario
+/// - Creates state file with all possible item statuses
+/// - Saves and loads the state file
+///
+/// ## Expected Outcome
+/// - All status types are correctly preserved through save/load cycle
+#[test]
+#[file_serial(env_tests)]
+fn test_mixed_item_status_state_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    let mut state = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "org".to_string(),
+        "project".to_string(),
+        "repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v1.0.0".to_string(),
+        "Done".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+
+    // Add items with all possible statuses
+    state.cherry_pick_items = vec![
+        StateCherryPickItem {
+            commit_id: "a1".to_string(),
+            pr_id: 1,
+            pr_title: "PR 1 - Pending".to_string(),
+            status: StateItemStatus::Pending,
+            work_item_ids: vec![],
+        },
+        StateCherryPickItem {
+            commit_id: "b2".to_string(),
+            pr_id: 2,
+            pr_title: "PR 2 - Success".to_string(),
+            status: StateItemStatus::Success,
+            work_item_ids: vec![10],
+        },
+        StateCherryPickItem {
+            commit_id: "c3".to_string(),
+            pr_id: 3,
+            pr_title: "PR 3 - Conflict".to_string(),
+            status: StateItemStatus::Conflict,
+            work_item_ids: vec![20, 21],
+        },
+        StateCherryPickItem {
+            commit_id: "d4".to_string(),
+            pr_id: 4,
+            pr_title: "PR 4 - Skipped".to_string(),
+            status: StateItemStatus::Skipped,
+            work_item_ids: vec![],
+        },
+        StateCherryPickItem {
+            commit_id: "e5".to_string(),
+            pr_id: 5,
+            pr_title: "PR 5 - Failed".to_string(),
+            status: StateItemStatus::Failed {
+                message: "Cherry-pick failed: merge conflict in lib/core.rs".to_string(),
+            },
+            work_item_ids: vec![30],
+        },
+    ];
+
+    state.save_for_repo().unwrap();
+
+    // Load and verify
+    let loaded = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(loaded.cherry_pick_items.len(), 5);
+
+    assert!(matches!(
+        loaded.cherry_pick_items[0].status,
+        StateItemStatus::Pending
+    ));
+    assert!(matches!(
+        loaded.cherry_pick_items[1].status,
+        StateItemStatus::Success
+    ));
+    assert!(matches!(
+        loaded.cherry_pick_items[2].status,
+        StateItemStatus::Conflict
+    ));
+    assert!(matches!(
+        loaded.cherry_pick_items[3].status,
+        StateItemStatus::Skipped
+    ));
+
+    if let StateItemStatus::Failed { message } = &loaded.cherry_pick_items[4].status {
+        assert!(message.contains("merge conflict"));
+    } else {
+        panic!("Expected Failed status");
+    }
+
+    // Verify counts
+    let counts = loaded.status_counts();
+    assert_eq!(counts.pending, 1);
+    assert_eq!(counts.success, 1);
+    assert_eq!(counts.conflict, 1);
+    assert_eq!(counts.skipped, 1);
+    assert_eq!(counts.failed, 1);
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Abort State File Update
+///
+/// Tests that aborting correctly updates the state file.
+///
+/// ## Test Scenario
+/// - Creates an in-progress state file
+/// - Updates it to aborted status
+///
+/// ## Expected Outcome
+/// - State file reflects aborted status with correct phase
+#[test]
+#[file_serial(env_tests)]
+fn test_abort_state_file_update() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    let mut state = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "org".to_string(),
+        "project".to_string(),
+        "repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v1.0.0".to_string(),
+        "Done".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+
+    state.cherry_pick_items = vec![
+        StateCherryPickItem {
+            commit_id: "a".to_string(),
+            pr_id: 1,
+            pr_title: "PR 1".to_string(),
+            status: StateItemStatus::Success,
+            work_item_ids: vec![],
+        },
+        StateCherryPickItem {
+            commit_id: "b".to_string(),
+            pr_id: 2,
+            pr_title: "PR 2".to_string(),
+            status: StateItemStatus::Pending,
+            work_item_ids: vec![],
+        },
+    ];
+
+    state.phase = MergePhase::CherryPicking;
+    state.current_index = 1;
+    state.save_for_repo().unwrap();
+
+    // Simulate abort
+    state.phase = MergePhase::Aborted;
+    state.final_status = Some(MergeStatus::Aborted);
+    state.completed_at = Some(chrono::Utc::now());
+    state.save_for_repo().unwrap();
+
+    // Load and verify
+    let loaded = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(loaded.phase, MergePhase::Aborted);
+    assert_eq!(loaded.final_status, Some(MergeStatus::Aborted));
+    assert!(loaded.completed_at.is_some());
+    assert!(loaded.phase.is_terminal());
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Complete State File Update
+///
+/// Tests the complete workflow from ready to completed.
+///
+/// ## Test Scenario
+/// - Creates a state file in ReadyForCompletion phase
+/// - Calls mark_completed to finish
+///
+/// ## Expected Outcome
+/// - State file is marked as completed with success status
+#[test]
+#[file_serial(env_tests)]
+fn test_complete_state_file_update() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    let mut state = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "org".to_string(),
+        "project".to_string(),
+        "repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v1.0.0".to_string(),
+        "Done".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+
+    state.cherry_pick_items = vec![
+        StateCherryPickItem {
+            commit_id: "a".to_string(),
+            pr_id: 1,
+            pr_title: "PR 1".to_string(),
+            status: StateItemStatus::Success,
+            work_item_ids: vec![100],
+        },
+        StateCherryPickItem {
+            commit_id: "b".to_string(),
+            pr_id: 2,
+            pr_title: "PR 2".to_string(),
+            status: StateItemStatus::Success,
+            work_item_ids: vec![101],
+        },
+    ];
+
+    state.phase = MergePhase::ReadyForCompletion;
+    state.current_index = 2;
+    state.save_for_repo().unwrap();
+
+    // Mark as completed
+    state.mark_completed(MergeStatus::Success).unwrap();
+
+    // Load and verify
+    let loaded = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(loaded.phase, MergePhase::Completed);
+    assert_eq!(loaded.final_status, Some(MergeStatus::Success));
+    assert!(loaded.completed_at.is_some());
+    assert!(loaded.phase.is_terminal());
+
+    // Test partial success
+    let mut state2 = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "org".to_string(),
+        "project".to_string(),
+        "repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v2.0.0".to_string(),
+        "Done".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+    state2.mark_completed(MergeStatus::PartialSuccess).unwrap();
+
+    let loaded2 = MergeStateFile::load_for_repo(&repo_dir).unwrap().unwrap();
+    assert_eq!(loaded2.final_status, Some(MergeStatus::PartialSuccess));
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+// =============================================================================
+// Phase 8: Lock File & Corrupted State Tests
+// =============================================================================
+
+/// # Lock Is Locked Check
+///
+/// Tests the is_locked helper function for early lock detection.
+///
+/// ## Test Scenario
+/// - Creates a lock file manually to simulate another process
+/// - Checks if is_locked returns true
+/// - Removes the lock and checks again
+///
+/// ## Expected Outcome
+/// - is_locked returns true when lock file exists with valid PID
+/// - is_locked returns false when no lock file exists
+#[test]
+#[file_serial(env_tests)]
+fn test_lock_is_locked_check() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Initially not locked
+    let is_locked = LockGuard::is_locked(&repo_dir).unwrap();
+    assert!(!is_locked, "Should not be locked initially");
+
+    // Acquire a lock
+    let guard = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(guard.is_some());
+
+    // Now should be locked
+    let is_locked = LockGuard::is_locked(&repo_dir).unwrap();
+    assert!(is_locked, "Should be locked after acquiring");
+
+    // Drop the guard
+    drop(guard);
+
+    // Should not be locked after release
+    let is_locked = LockGuard::is_locked(&repo_dir).unwrap();
+    assert!(!is_locked, "Should not be locked after release");
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Lock File Created During Lock Acquisition
+///
+/// Tests that lock file is created and contains the PID.
+///
+/// ## Test Scenario
+/// - Acquires a lock
+/// - Verifies lock file exists
+/// - Reads lock file content and verifies it contains current PID
+///
+/// ## Expected Outcome
+/// - Lock file is created at expected path
+/// - Lock file contains current process PID
+#[test]
+#[file_serial(env_tests)]
+fn test_lock_file_contains_pid() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    let lock_path = lock_path_for_repo(&repo_dir).unwrap();
+
+    // Lock file should not exist initially
+    assert!(!lock_path.exists());
+
+    // Acquire lock
+    let guard = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(guard.is_some());
+
+    // Lock file should now exist
+    assert!(lock_path.exists());
+
+    // Read and verify PID
+    let content = fs::read_to_string(&lock_path).unwrap();
+    let expected_pid = std::process::id().to_string();
+    assert_eq!(content.trim(), expected_pid);
+
+    // Drop the guard - file should be removed
+    drop(guard);
+    assert!(!lock_path.exists());
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Stale Lock File Detection
+///
+/// Tests that stale lock files (from dead processes) are detected and cleaned up.
+///
+/// ## Test Scenario
+/// - Creates a lock file with invalid PID (simulating dead process)
+/// - Attempts to acquire lock
+///
+/// ## Expected Outcome
+/// - Stale lock is detected and cleaned up
+/// - New lock can be acquired
+#[test]
+#[file_serial(env_tests)]
+fn test_stale_lock_file_cleanup() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    let lock_path = lock_path_for_repo(&repo_dir).unwrap();
+
+    // Create a stale lock file with invalid PID (very high number unlikely to exist)
+    fs::write(&lock_path, "999999999").unwrap();
+
+    // is_locked should return false for stale lock
+    let is_locked = LockGuard::is_locked(&repo_dir).unwrap();
+    assert!(!is_locked, "Stale lock should not be considered locked");
+
+    // Should be able to acquire the lock
+    let guard = LockGuard::acquire(&repo_dir).unwrap();
+    assert!(guard.is_some(), "Should acquire lock over stale lock");
+
+    drop(guard);
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Corrupted State File - Invalid JSON
+///
+/// Tests that corrupted JSON state files are handled gracefully.
+///
+/// ## Test Scenario
+/// - Creates a state file with invalid JSON
+/// - Attempts to load and validate it
+///
+/// ## Expected Outcome
+/// - Loading fails with clear error message
+/// - Error suggests recovery options
+#[test]
+#[file_serial(env_tests)]
+fn test_corrupted_state_file_invalid_json() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create invalid JSON file
+    let state_path = path_for_repo(&repo_dir).unwrap();
+    fs::write(&state_path, "{ invalid json content }").unwrap();
+
+    // Try to load and validate
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("corrupted") || error_msg.contains("parse"),
+        "Error should mention corruption: {}",
+        error_msg
+    );
+    assert!(
+        error_msg.contains("abort") || error_msg.contains("delete"),
+        "Error should suggest recovery: {}",
+        error_msg
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Corrupted State File - Invalid Schema Version
+///
+/// Tests that state files with unsupported schema versions are rejected.
+///
+/// ## Test Scenario
+/// - Creates a state file with schema_version = 999
+/// - Attempts to load and validate it
+///
+/// ## Expected Outcome
+/// - Validation fails with clear error about schema version
+#[test]
+#[file_serial(env_tests)]
+fn test_corrupted_state_file_invalid_schema_version() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create state file with invalid schema version
+    let state_json = r#"{
+        "schema_version": 999,
+        "created_at": "2024-01-15T10:00:00Z",
+        "updated_at": "2024-01-15T10:30:00Z",
+        "repo_path": "/test/repo",
+        "is_worktree": false,
+        "organization": "org",
+        "project": "project",
+        "repository": "repo",
+        "dev_branch": "dev",
+        "target_branch": "next",
+        "merge_version": "v1.0.0",
+        "cherry_pick_items": [],
+        "current_index": 0,
+        "phase": "loading",
+        "work_item_state": "Done",
+        "tag_prefix": "merged-"
+    }"#;
+
+    let state_path = path_for_repo(&repo_dir).unwrap();
+    fs::write(&state_path, state_json).unwrap();
+
+    // Try to load and validate
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("schema version") || error_msg.contains("Unsupported"),
+        "Error should mention schema version: {}",
+        error_msg
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Corrupted State File - Invalid Index
+///
+/// Tests that state files with out-of-bounds index are rejected.
+///
+/// ## Test Scenario
+/// - Creates a state file where current_index exceeds items count
+/// - Attempts to load and validate it
+///
+/// ## Expected Outcome
+/// - Validation fails with clear error about index
+#[test]
+#[file_serial(env_tests)]
+fn test_corrupted_state_file_invalid_index() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create state file with invalid index (index=5 but only 2 items)
+    let state_json = r#"{
+        "schema_version": 1,
+        "created_at": "2024-01-15T10:00:00Z",
+        "updated_at": "2024-01-15T10:30:00Z",
+        "repo_path": "/test/repo",
+        "is_worktree": false,
+        "organization": "org",
+        "project": "project",
+        "repository": "repo",
+        "dev_branch": "dev",
+        "target_branch": "next",
+        "merge_version": "v1.0.0",
+        "cherry_pick_items": [
+            {"commit_id": "a", "pr_id": 1, "pr_title": "PR 1", "status": "pending", "work_item_ids": []},
+            {"commit_id": "b", "pr_id": 2, "pr_title": "PR 2", "status": "pending", "work_item_ids": []}
+        ],
+        "current_index": 10,
+        "phase": "cherry_picking",
+        "work_item_state": "Done",
+        "tag_prefix": "merged-"
+    }"#;
+
+    let state_path = path_for_repo(&repo_dir).unwrap();
+    fs::write(&state_path, state_json).unwrap();
+
+    // Try to load and validate
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("current_index") || error_msg.contains("exceeds"),
+        "Error should mention index issue: {}",
+        error_msg
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Corrupted State File - Missing Required Fields
+///
+/// Tests that state files with missing required fields are rejected.
+///
+/// ## Test Scenario
+/// - Creates a state file with empty organization
+/// - Attempts to load and validate it
+///
+/// ## Expected Outcome
+/// - Validation fails with clear error about missing field
+#[test]
+#[file_serial(env_tests)]
+fn test_corrupted_state_file_missing_fields() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create state file with empty organization (required field)
+    let state_json = r#"{
+        "schema_version": 1,
+        "created_at": "2024-01-15T10:00:00Z",
+        "updated_at": "2024-01-15T10:30:00Z",
+        "repo_path": "/test/repo",
+        "is_worktree": false,
+        "organization": "",
+        "project": "project",
+        "repository": "repo",
+        "dev_branch": "dev",
+        "target_branch": "next",
+        "merge_version": "v1.0.0",
+        "cherry_pick_items": [],
+        "current_index": 0,
+        "phase": "loading",
+        "work_item_state": "Done",
+        "tag_prefix": "merged-"
+    }"#;
+
+    let state_path = path_for_repo(&repo_dir).unwrap();
+    fs::write(&state_path, state_json).unwrap();
+
+    // Try to load and validate
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("organization") || error_msg.contains("missing"),
+        "Error should mention missing field: {}",
+        error_msg
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # State File Validation - Phase Consistency
+///
+/// Tests that phase-specific invariants are validated.
+///
+/// ## Test Scenario
+/// - Creates a state file in AwaitingConflictResolution phase but no conflicted_files
+/// - Attempts to load and validate it
+///
+/// ## Expected Outcome
+/// - Validation fails due to phase inconsistency
+#[test]
+#[file_serial(env_tests)]
+fn test_state_file_phase_consistency_validation() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create state file with inconsistent phase (conflict but no conflicted_files)
+    let state_json = r#"{
+        "schema_version": 1,
+        "created_at": "2024-01-15T10:00:00Z",
+        "updated_at": "2024-01-15T10:30:00Z",
+        "repo_path": "/test/repo",
+        "is_worktree": false,
+        "organization": "org",
+        "project": "project",
+        "repository": "repo",
+        "dev_branch": "dev",
+        "target_branch": "next",
+        "merge_version": "v1.0.0",
+        "cherry_pick_items": [
+            {"commit_id": "a", "pr_id": 1, "pr_title": "PR 1", "status": "conflict", "work_item_ids": []}
+        ],
+        "current_index": 0,
+        "phase": "awaiting_conflict_resolution",
+        "work_item_state": "Done",
+        "tag_prefix": "merged-"
+    }"#;
+
+    let state_path = path_for_repo(&repo_dir).unwrap();
+    fs::write(&state_path, state_json).unwrap();
+
+    // Try to load and validate
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_err());
+
+    let error_msg = result.unwrap_err().to_string();
+    assert!(
+        error_msg.contains("AwaitingConflictResolution") || error_msg.contains("conflicted_files"),
+        "Error should mention phase inconsistency: {}",
+        error_msg
+    );
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Valid State File Passes Validation
+///
+/// Tests that valid state files pass validation.
+///
+/// ## Test Scenario
+/// - Creates a properly formed state file
+/// - Loads and validates it
+///
+/// ## Expected Outcome
+/// - Validation passes without errors
+#[test]
+#[file_serial(env_tests)]
+fn test_valid_state_file_passes_validation() {
+    let temp_dir = TempDir::new().unwrap();
+    let state_dir = temp_dir.path().join("state");
+    let repo_dir = temp_dir.path().join("repo");
+    fs::create_dir_all(&state_dir).unwrap();
+    fs::create_dir_all(&repo_dir).unwrap();
+
+    unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+
+    // Create valid state file
+    let mut state = MergeStateFile::new(
+        repo_dir.clone(),
+        None,
+        false,
+        "org".to_string(),
+        "project".to_string(),
+        "repo".to_string(),
+        "dev".to_string(),
+        "next".to_string(),
+        "v1.0.0".to_string(),
+        "Done".to_string(),
+        "merged-".to_string(),
+        false,
+    );
+
+    state.cherry_pick_items = vec![StateCherryPickItem {
+        commit_id: "a".to_string(),
+        pr_id: 1,
+        pr_title: "PR 1".to_string(),
+        status: StateItemStatus::Success,
+        work_item_ids: vec![],
+    }];
+    state.phase = MergePhase::ReadyForCompletion;
+    state.current_index = 1;
+    state.save_for_repo().unwrap();
+
+    // Load and validate - should succeed
+    let result = MergeStateFile::load_and_validate_for_repo(&repo_dir);
+    assert!(result.is_ok(), "Valid state file should pass validation");
+    assert!(result.unwrap().is_some());
+
+    unsafe { std::env::remove_var(STATE_DIR_ENV) };
+}
+
+/// # Lock Exit Code 7
+///
+/// Tests that exit code 7 is returned when locked.
+///
+/// ## Test Scenario
+/// - Tests that ExitCode::Locked has value 7
+///
+/// ## Expected Outcome
+/// - ExitCode::Locked.code() returns 7
+#[test]
+fn test_lock_exit_code_7() {
+    assert_eq!(ExitCode::Locked.code(), 7);
+    assert_eq!(
+        ExitCode::Locked.description(),
+        "Another merge operation is in progress"
+    );
 }

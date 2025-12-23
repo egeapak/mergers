@@ -5,7 +5,7 @@ use clap::{Args as ClapArgs, Parser, Subcommand};
 use serde::Deserialize;
 
 /// Shared arguments used by all commands
-#[derive(ClapArgs, Clone, Default)]
+#[derive(ClapArgs, Clone, Default, Debug)]
 pub struct SharedArgs {
     /// Local repository path (positional argument, takes precedence over --local-repo)
     pub path: Option<String>,
@@ -82,6 +82,10 @@ pub struct MergeArgs {
     /// Run git hooks during cherry-pick operations (hooks are skipped by default)
     #[arg(long, help_heading = "Merge Options")]
     pub run_hooks: bool,
+
+    /// Subcommand for non-interactive operations
+    #[command(subcommand)]
+    pub subcommand: Option<MergeSubcommand>,
 }
 
 /// Arguments specific to migration mode
@@ -108,6 +112,186 @@ pub struct CleanupArgs {
     /// Target branch to check for merged patches (defaults to --target-branch)
     #[arg(long, help_heading = "Cleanup Options")]
     pub target: Option<String>,
+}
+
+// ============================================================================
+// Non-Interactive Merge Mode CLI Arguments
+// ============================================================================
+
+/// Output format for non-interactive mode.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    /// Human-readable text output.
+    #[default]
+    Text,
+    /// JSON summary at the end.
+    Json,
+    /// Newline-delimited JSON (one event per line).
+    Ndjson,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputFormat::Text => write!(f, "text"),
+            OutputFormat::Json => write!(f, "json"),
+            OutputFormat::Ndjson => write!(f, "ndjson"),
+        }
+    }
+}
+
+/// Arguments for the `merge run` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeRunArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
+    /// State to set work items to after successful merge [default: Next Merged]
+    #[arg(long, help_heading = "Merge Options")]
+    pub work_item_state: Option<String>,
+
+    /// Run git hooks during cherry-pick operations (hooks are skipped by default)
+    #[arg(long, help_heading = "Merge Options")]
+    pub run_hooks: bool,
+
+    /// Run in non-interactive mode (for CI/AI agents)
+    #[arg(short = 'n', long, help_heading = "Non-Interactive Mode")]
+    pub non_interactive: bool,
+
+    /// Merge branch version (required with --non-interactive)
+    #[arg(long, help_heading = "Non-Interactive Mode")]
+    pub version: Option<String>,
+
+    /// Comma-separated work item states for PR filtering
+    #[arg(long, help_heading = "Non-Interactive Mode")]
+    pub select_by_state: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
+}
+
+impl From<MergeRunArgs> for MergeArgs {
+    fn from(args: MergeRunArgs) -> Self {
+        MergeArgs {
+            shared: args.shared,
+            work_item_state: args.work_item_state,
+            run_hooks: args.run_hooks,
+            subcommand: None,
+        }
+    }
+}
+
+/// Arguments for the `merge continue` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeContinueArgs {
+    /// Repository path (auto-detected if in repo)
+    #[arg(long, help_heading = "Repository")]
+    pub repo: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
+}
+
+/// Arguments for the `merge abort` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeAbortArgs {
+    /// Repository path (auto-detected if in repo)
+    #[arg(long, help_heading = "Repository")]
+    pub repo: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+}
+
+/// Arguments for the `merge status` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeStatusArgs {
+    /// Repository path (auto-detected if in repo)
+    #[arg(long, help_heading = "Repository")]
+    pub repo: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+}
+
+/// Arguments for the `merge complete` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeCompleteArgs {
+    /// Repository path (auto-detected if in repo)
+    #[arg(long, help_heading = "Repository")]
+    pub repo: Option<String>,
+
+    /// State to set work items to (required)
+    #[arg(long, help_heading = "Completion Options")]
+    pub next_state: String,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
+}
+
+/// Subcommands for the merge mode.
+#[derive(Subcommand, Clone, Debug)]
+pub enum MergeSubcommand {
+    /// Start a new merge operation
+    #[command(
+        about = "Start a new merge operation",
+        long_about = "Start a new merge operation, either interactively (TUI) or non-interactively.\n\n\
+            In non-interactive mode (-n), PRs are filtered by work item state and cherry-picked\n\
+            automatically. On conflict, the process exits with code 2 for resolution."
+    )]
+    Run(Box<MergeRunArgs>),
+
+    /// Continue merge after resolving conflicts
+    #[command(
+        about = "Continue merge after resolving conflicts",
+        long_about = "Continue a merge operation that was paused due to conflicts.\n\n\
+            This command reads the state file, verifies conflicts are resolved,\n\
+            and continues cherry-picking remaining commits."
+    )]
+    Continue(MergeContinueArgs),
+
+    /// Abort and clean up an in-progress merge
+    #[command(
+        about = "Abort and clean up an in-progress merge",
+        long_about = "Abort an in-progress merge operation and clean up.\n\n\
+            This removes the worktree, deletes the working branch, and aborts\n\
+            any in-progress cherry-pick."
+    )]
+    Abort(MergeAbortArgs),
+
+    /// Show status of current merge operation
+    #[command(
+        about = "Show status of current merge operation",
+        long_about = "Show the current status of an in-progress merge operation.\n\n\
+            Displays the current phase, progress, and any conflicts."
+    )]
+    Status(MergeStatusArgs),
+
+    /// Complete merge by tagging PRs and updating work items
+    #[command(
+        about = "Complete merge by tagging PRs and updating work items",
+        long_about = "Complete a merge operation after all cherry-picks are done.\n\n\
+            This tags successful PRs in Azure DevOps and updates work items\n\
+            to the specified next state."
+    )]
+    Complete(MergeCompleteArgs),
 }
 
 /// Trait to extract shared arguments from command-specific argument structs
@@ -615,6 +799,7 @@ impl Args {
                 shared: SharedArgs::default(),
                 work_item_state: None,
                 run_hooks: false,
+                subcommand: None,
             })
         });
 
@@ -973,6 +1158,7 @@ mod tests {
                 },
                 work_item_state: Some("Done".to_string()),
                 run_hooks: false,
+                subcommand: None,
             })),
             create_config: false,
         }
@@ -1952,6 +2138,7 @@ mod tests {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         };
 
         // Use the trait method
@@ -2009,6 +2196,7 @@ mod tests {
             },
             work_item_state: None,
             run_hooks: false,
+            subcommand: None,
         });
 
         let migrate_cmd = Commands::Migrate(MigrateArgs {

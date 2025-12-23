@@ -25,7 +25,7 @@ serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.145"
 ratatui = "=0.29.0"
 crossterm = "=0.29.0"
-chrono = "=0.4.42"
+chrono = { version = "=0.4.42", features = ["serde"] }
 anyhow = "=1.0.100"
 thiserror = "=2.0.17"
 secrecy = "=0.10.3"
@@ -38,6 +38,8 @@ ego-tree = "=0.10.0"
 toml = "=0.9.8"
 dirs = "=6.0.0"
 regex = "=1.12.2"
+sha2 = "=0.10.9"
+libc = "=0.2.172"
 time = "0.3"
 
 # Azure DevOps API client

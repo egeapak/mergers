@@ -197,6 +197,66 @@ The tool supports multiple configuration sources with precedence:
 - Supports both modern and legacy Azure DevOps URL formats
 - Implements pagination and rate limiting for API calls
 
+## Non-Interactive Merge Mode
+
+The tool supports a non-interactive mode designed for CI/CD pipelines and AI agents.
+
+### CLI Commands
+
+**Start a new merge:**
+```bash
+mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next"
+```
+
+**Check status:**
+```bash
+mergers merge status [--repo /path/to/repo] [--output json|text|ndjson]
+```
+
+**Continue after conflict resolution:**
+```bash
+mergers merge continue [--repo /path/to/repo]
+```
+
+**Abort a merge:**
+```bash
+mergers merge abort [--repo /path/to/repo]
+```
+
+**Complete merge (tag PRs, update work items):**
+```bash
+mergers merge complete --next-state "Done" [--repo /path/to/repo]
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Conflict - manual resolution needed |
+| 3 | Partial success (some operations failed) |
+| 4 | No state file found |
+| 5 | Invalid phase for operation |
+| 6 | No PRs matched criteria |
+| 7 | Locked (another merge in progress) |
+
+### Output Formats
+
+- `text` (default): Human-readable progress with Unicode symbols
+- `json`: Single JSON object with summary at end
+- `ndjson`: Streaming newline-delimited JSON (one event per line)
+
+### State Files
+
+State files are stored in `~/.local/state/mergers/` (Linux) or equivalent XDG directory.
+Override with `MERGERS_STATE_DIR` environment variable.
+
+State files enable:
+- Resume after conflicts
+- Cross-mode handoff (TUI → CLI)
+- Progress tracking
+
 ## Post-Task Completion Checklist
 
 **IMPORTANT**: After completing any code modifications, always run these commands before considering the task complete:

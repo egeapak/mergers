@@ -5,11 +5,14 @@
 
 use crate::{
     api::AzureDevOpsClient,
-    models::{CherryPickItem, MergeConfig},
+    core::state::{LockGuard, MergePhase, MergeStateFile, StateCherryPickItem, StateItemStatus},
+    models::{CherryPickItem, CherryPickStatus, MergeConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
 };
+use anyhow::Result;
 use std::{
     ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -48,6 +51,15 @@ pub struct MergeApp {
 
     /// Index of the currently processing cherry-pick item.
     pub current_cherry_pick_index: usize,
+
+    /// State file for cross-mode resume support.
+    /// Created during repo setup, updated during cherry-picks.
+    state_file: Option<MergeStateFile>,
+
+    /// Lock guard for exclusive merge access.
+    /// Held for the duration of the TUI session.
+    #[allow(dead_code)]
+    lock_guard: Option<LockGuard>,
 }
 
 impl MergeApp {
@@ -61,6 +73,8 @@ impl MergeApp {
             base: AppBase::new(config, client, browser),
             cherry_pick_items: Vec::new(),
             current_cherry_pick_index: 0,
+            state_file: None,
+            lock_guard: None,
         }
     }
 
@@ -122,6 +136,222 @@ impl MergeApp {
     /// Sets the current cherry-pick index.
     pub fn set_current_cherry_pick_index(&mut self, idx: usize) {
         self.current_cherry_pick_index = idx;
+    }
+
+    // ==========================================================================
+    // State File Management (for cross-mode resume support)
+    // ==========================================================================
+
+    /// Creates a new state file for the merge operation.
+    ///
+    /// This is called during repo setup to establish the state file for
+    /// potential cross-mode resume (TUI → CLI). Also acquires a lock for
+    /// exclusive merge access.
+    pub fn create_state_file(
+        &mut self,
+        repo_path: PathBuf,
+        base_repo_path: Option<PathBuf>,
+        is_worktree: bool,
+        merge_version: &str,
+    ) -> Result<PathBuf> {
+        // Acquire lock first to ensure exclusive access
+        match LockGuard::acquire(&repo_path) {
+            Ok(Some(guard)) => {
+                self.lock_guard = Some(guard);
+            }
+            Ok(None) => {
+                return Err(anyhow::anyhow!(
+                    "Another merge operation is in progress for this repository"
+                ));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to acquire lock: {}", e));
+            }
+        }
+
+        let config = self.config();
+        let state_file = MergeStateFile::new(
+            repo_path,
+            base_repo_path,
+            is_worktree,
+            config.shared.organization.value().clone(),
+            config.shared.project.value().clone(),
+            config.shared.repository.value().clone(),
+            config.shared.dev_branch.value().clone(),
+            config.shared.target_branch.value().clone(),
+            merge_version.to_string(),
+            config.work_item_state.value().clone(),
+            config.shared.tag_prefix.value().clone(),
+            *config.run_hooks.value(),
+        );
+        self.state_file = Some(state_file);
+        self.save_state_file()
+    }
+
+    /// Sets the state file (for resuming from existing state).
+    pub fn set_state_file(&mut self, state_file: MergeStateFile) {
+        self.state_file = Some(state_file);
+    }
+
+    /// Sets the lock guard for exclusive merge access.
+    pub fn set_lock_guard(&mut self, lock_guard: LockGuard) {
+        self.lock_guard = Some(lock_guard);
+    }
+
+    /// Returns a reference to the state file, if any.
+    pub fn state_file(&self) -> Option<&MergeStateFile> {
+        self.state_file.as_ref()
+    }
+
+    /// Returns a mutable reference to the state file, if any.
+    pub fn state_file_mut(&mut self) -> Option<&mut MergeStateFile> {
+        self.state_file.as_mut()
+    }
+
+    /// Updates the phase in the state file and saves.
+    pub fn update_state_phase(&mut self, phase: MergePhase) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            let path = state_file.set_phase(phase)?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sets the cherry-pick items in the state file.
+    ///
+    /// Converts TUI CherryPickItems to StateCherryPickItems.
+    /// Work item IDs should be provided via the work_items_map.
+    pub fn set_state_cherry_pick_items(
+        &mut self,
+        work_items_map: &std::collections::HashMap<i32, Vec<i32>>,
+    ) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            let state_items: Vec<StateCherryPickItem> = self
+                .cherry_pick_items
+                .iter()
+                .map(|item| StateCherryPickItem {
+                    commit_id: item.commit_id.clone(),
+                    pr_id: item.pr_id,
+                    pr_title: item.pr_title.clone(),
+                    status: cherry_pick_status_to_state(&item.status),
+                    work_item_ids: work_items_map.get(&item.pr_id).cloned().unwrap_or_default(),
+                })
+                .collect();
+            state_file.cherry_pick_items = state_items;
+            state_file.current_index = self.current_cherry_pick_index;
+            let path = state_file.save_for_repo()?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Updates the status of a cherry-pick item in the state file.
+    pub fn update_state_item_status(
+        &mut self,
+        index: usize,
+        status: StateItemStatus,
+    ) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            if let Some(item) = state_file.cherry_pick_items.get_mut(index) {
+                item.status = status;
+            }
+            state_file.current_index = self.current_cherry_pick_index;
+            let path = state_file.save_for_repo()?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Syncs the current cherry-pick index to the state file.
+    pub fn sync_state_current_index(&mut self) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            state_file.current_index = self.current_cherry_pick_index;
+            let path = state_file.save_for_repo()?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sets conflicted files in the state file.
+    pub fn set_state_conflicted_files(&mut self, files: Vec<String>) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            state_file.conflicted_files = Some(files);
+            let path = state_file.save_for_repo()?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Clears conflicted files in the state file.
+    pub fn clear_state_conflicted_files(&mut self) -> Result<Option<PathBuf>> {
+        if let Some(ref mut state_file) = self.state_file {
+            state_file.conflicted_files = None;
+            let path = state_file.save_for_repo()?;
+            Ok(Some(path))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Saves the current state file to disk.
+    fn save_state_file(&mut self) -> Result<PathBuf> {
+        self.state_file
+            .as_mut()
+            .expect("state_file must be set before saving")
+            .save_for_repo()
+    }
+
+    /// Removes the state file from disk and clears it from memory.
+    pub fn cleanup_state_file(&mut self) -> Result<()> {
+        if let Some(ref state_file) = self.state_file {
+            let path = crate::core::state::path_for_repo(&state_file.repo_path)?;
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
+        }
+        self.state_file = None;
+        self.lock_guard = None;
+        Ok(())
+    }
+
+    /// Returns the repo path from the state file, if any.
+    pub fn state_repo_path(&self) -> Option<&Path> {
+        self.state_file.as_ref().map(|s| s.repo_path.as_path())
+    }
+}
+
+// ==========================================================================
+// Conversion Functions
+// ==========================================================================
+
+/// Converts a TUI CherryPickStatus to a state file StateItemStatus.
+fn cherry_pick_status_to_state(status: &CherryPickStatus) -> StateItemStatus {
+    match status {
+        CherryPickStatus::Pending => StateItemStatus::Pending,
+        CherryPickStatus::InProgress => StateItemStatus::Pending, // In-progress maps to pending in state
+        CherryPickStatus::Success => StateItemStatus::Success,
+        CherryPickStatus::Conflict => StateItemStatus::Conflict,
+        CherryPickStatus::Skipped => StateItemStatus::Skipped,
+        CherryPickStatus::Failed(msg) => StateItemStatus::Failed {
+            message: msg.clone(),
+        },
+    }
+}
+
+/// Converts a state file StateItemStatus to a TUI CherryPickStatus.
+#[allow(dead_code)]
+fn state_status_to_cherry_pick(status: &StateItemStatus) -> CherryPickStatus {
+    match status {
+        StateItemStatus::Pending => CherryPickStatus::Pending,
+        StateItemStatus::Success => CherryPickStatus::Success,
+        StateItemStatus::Conflict => CherryPickStatus::Conflict,
+        StateItemStatus::Skipped => CherryPickStatus::Skipped,
+        StateItemStatus::Failed { message } => CherryPickStatus::Failed(message.clone()),
     }
 }
 
