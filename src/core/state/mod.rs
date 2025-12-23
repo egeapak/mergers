@@ -20,6 +20,7 @@
 mod file;
 
 pub use file::{
-    LockGuard, MergePhase, MergeStateFile, MergeStatus, STATE_DIR_ENV, StateCherryPickItem,
-    StateItemStatus, compute_repo_hash, lock_path_for_repo, path_for_repo, state_dir,
+    LockGuard, MergePhase, MergeStateFile, MergeStateFileBuilder, MergeStatus, STATE_DIR_ENV,
+    StateCherryPickItem, StateItemStatus, compute_repo_hash, lock_path_for_repo, path_for_repo,
+    state_dir,
 };

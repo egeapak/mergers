@@ -207,8 +207,223 @@ pub struct MergeStateFile {
     pub final_status: Option<MergeStatus>,
 }
 
+/// Builder for creating `MergeStateFile` instances.
+///
+/// This provides a fluent API for constructing state files with
+/// better ergonomics than the 12-argument constructor.
+///
+/// # Example
+///
+/// ```ignore
+/// let state = MergeStateFileBuilder::new()
+///     .repo_path("/work/repo")
+///     .organization("my-org")
+///     .project("my-project")
+///     .repository("my-repo")
+///     .dev_branch("dev")
+///     .target_branch("main")
+///     .merge_version("v1.0.0")
+///     .work_item_state("Done")
+///     .tag_prefix("merged-")
+///     .build();
+/// ```
+#[derive(Debug, Default)]
+pub struct MergeStateFileBuilder {
+    repo_path: Option<PathBuf>,
+    base_repo_path: Option<PathBuf>,
+    is_worktree: bool,
+    organization: Option<String>,
+    project: Option<String>,
+    repository: Option<String>,
+    dev_branch: Option<String>,
+    target_branch: Option<String>,
+    merge_version: Option<String>,
+    work_item_state: Option<String>,
+    tag_prefix: Option<String>,
+    run_hooks: bool,
+}
+
+impl MergeStateFileBuilder {
+    /// Creates a new builder with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the path to the worktree or cloned repository.
+    pub fn repo_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.repo_path = Some(path.into());
+        self
+    }
+
+    /// Sets the path to the base repository (for worktrees).
+    pub fn base_repo_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+        self.base_repo_path = Some(path.into());
+        self
+    }
+
+    /// Sets whether this is a worktree or a clone.
+    pub fn is_worktree(mut self, is_worktree: bool) -> Self {
+        self.is_worktree = is_worktree;
+        self
+    }
+
+    /// Sets the Azure DevOps organization name.
+    pub fn organization<S: Into<String>>(mut self, org: S) -> Self {
+        self.organization = Some(org.into());
+        self
+    }
+
+    /// Sets the Azure DevOps project name.
+    pub fn project<S: Into<String>>(mut self, project: S) -> Self {
+        self.project = Some(project.into());
+        self
+    }
+
+    /// Sets the Azure DevOps repository name.
+    pub fn repository<S: Into<String>>(mut self, repo: S) -> Self {
+        self.repository = Some(repo.into());
+        self
+    }
+
+    /// Sets the source branch for PRs.
+    pub fn dev_branch<S: Into<String>>(mut self, branch: S) -> Self {
+        self.dev_branch = Some(branch.into());
+        self
+    }
+
+    /// Sets the target branch for cherry-picks.
+    pub fn target_branch<S: Into<String>>(mut self, branch: S) -> Self {
+        self.target_branch = Some(branch.into());
+        self
+    }
+
+    /// Sets the merge version string (e.g., "v1.2.3").
+    pub fn merge_version<S: Into<String>>(mut self, version: S) -> Self {
+        self.merge_version = Some(version.into());
+        self
+    }
+
+    /// Sets the state to set work items to after completion.
+    pub fn work_item_state<S: Into<String>>(mut self, state: S) -> Self {
+        self.work_item_state = Some(state.into());
+        self
+    }
+
+    /// Sets the prefix for PR tags.
+    pub fn tag_prefix<S: Into<String>>(mut self, prefix: S) -> Self {
+        self.tag_prefix = Some(prefix.into());
+        self
+    }
+
+    /// Sets whether git hooks are enabled for this merge.
+    pub fn run_hooks(mut self, run_hooks: bool) -> Self {
+        self.run_hooks = run_hooks;
+        self
+    }
+
+    /// Builds the `MergeStateFile`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if required fields are not set:
+    /// - `repo_path`
+    /// - `organization`
+    /// - `project`
+    /// - `repository`
+    /// - `dev_branch`
+    /// - `target_branch`
+    /// - `merge_version`
+    /// - `work_item_state`
+    /// - `tag_prefix`
+    pub fn build(self) -> MergeStateFile {
+        let now = Utc::now();
+        MergeStateFile {
+            schema_version: SCHEMA_VERSION,
+            created_at: now,
+            updated_at: now,
+            repo_path: self.repo_path.expect("repo_path is required"),
+            base_repo_path: self.base_repo_path,
+            is_worktree: self.is_worktree,
+            organization: self.organization.expect("organization is required"),
+            project: self.project.expect("project is required"),
+            repository: self.repository.expect("repository is required"),
+            dev_branch: self.dev_branch.expect("dev_branch is required"),
+            target_branch: self.target_branch.expect("target_branch is required"),
+            merge_version: self.merge_version.expect("merge_version is required"),
+            cherry_pick_items: Vec::new(),
+            current_index: 0,
+            phase: MergePhase::Loading,
+            conflicted_files: None,
+            work_item_state: self.work_item_state.expect("work_item_state is required"),
+            tag_prefix: self.tag_prefix.expect("tag_prefix is required"),
+            run_hooks: self.run_hooks,
+            completed_at: None,
+            final_status: None,
+        }
+    }
+
+    /// Attempts to build the `MergeStateFile`, returning an error if required fields are missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required field is not set.
+    pub fn try_build(self) -> Result<MergeStateFile> {
+        let now = Utc::now();
+        Ok(MergeStateFile {
+            schema_version: SCHEMA_VERSION,
+            created_at: now,
+            updated_at: now,
+            repo_path: self
+                .repo_path
+                .ok_or_else(|| anyhow::anyhow!("repo_path is required"))?,
+            base_repo_path: self.base_repo_path,
+            is_worktree: self.is_worktree,
+            organization: self
+                .organization
+                .ok_or_else(|| anyhow::anyhow!("organization is required"))?,
+            project: self
+                .project
+                .ok_or_else(|| anyhow::anyhow!("project is required"))?,
+            repository: self
+                .repository
+                .ok_or_else(|| anyhow::anyhow!("repository is required"))?,
+            dev_branch: self
+                .dev_branch
+                .ok_or_else(|| anyhow::anyhow!("dev_branch is required"))?,
+            target_branch: self
+                .target_branch
+                .ok_or_else(|| anyhow::anyhow!("target_branch is required"))?,
+            merge_version: self
+                .merge_version
+                .ok_or_else(|| anyhow::anyhow!("merge_version is required"))?,
+            cherry_pick_items: Vec::new(),
+            current_index: 0,
+            phase: MergePhase::Loading,
+            conflicted_files: None,
+            work_item_state: self
+                .work_item_state
+                .ok_or_else(|| anyhow::anyhow!("work_item_state is required"))?,
+            tag_prefix: self
+                .tag_prefix
+                .ok_or_else(|| anyhow::anyhow!("tag_prefix is required"))?,
+            run_hooks: self.run_hooks,
+            completed_at: None,
+            final_status: None,
+        })
+    }
+}
+
 impl MergeStateFile {
+    /// Creates a builder for constructing a `MergeStateFile`.
+    ///
+    /// This is the preferred way to create new state files.
+    pub fn builder() -> MergeStateFileBuilder {
+        MergeStateFileBuilder::new()
+    }
+
     /// Creates a new state file with initial values.
+    ///
+    /// Consider using `MergeStateFile::builder()` for a more ergonomic API.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         repo_path: PathBuf,
@@ -1389,5 +1604,176 @@ mod tests {
 
         // SAFETY: Tests are run single-threaded
         unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Builder Pattern Basic Usage
+    ///
+    /// Verifies the builder pattern creates a valid state file.
+    ///
+    /// ## Test Scenario
+    /// - Uses builder to create a state file
+    /// - Verifies all fields are set correctly
+    ///
+    /// ## Expected Outcome
+    /// - State file has correct values
+    #[test]
+    fn test_builder_basic_usage() {
+        let state = MergeStateFile::builder()
+            .repo_path("/test/repo")
+            .organization("my-org")
+            .project("my-project")
+            .repository("my-repo")
+            .dev_branch("dev")
+            .target_branch("main")
+            .merge_version("v1.0.0")
+            .work_item_state("Done")
+            .tag_prefix("merged-")
+            .build();
+
+        assert_eq!(state.repo_path, PathBuf::from("/test/repo"));
+        assert_eq!(state.organization, "my-org");
+        assert_eq!(state.project, "my-project");
+        assert_eq!(state.repository, "my-repo");
+        assert_eq!(state.dev_branch, "dev");
+        assert_eq!(state.target_branch, "main");
+        assert_eq!(state.merge_version, "v1.0.0");
+        assert_eq!(state.work_item_state, "Done");
+        assert_eq!(state.tag_prefix, "merged-");
+        assert!(!state.run_hooks);
+        assert!(!state.is_worktree);
+        assert!(state.base_repo_path.is_none());
+    }
+
+    /// # Builder With Optional Fields
+    ///
+    /// Verifies the builder correctly sets optional fields.
+    ///
+    /// ## Test Scenario
+    /// - Uses builder with optional fields set
+    ///
+    /// ## Expected Outcome
+    /// - Optional fields are correctly set
+    #[test]
+    fn test_builder_with_optional_fields() {
+        let state = MergeStateFile::builder()
+            .repo_path("/work/repo")
+            .base_repo_path("/base/repo")
+            .is_worktree(true)
+            .organization("org")
+            .project("proj")
+            .repository("repo")
+            .dev_branch("develop")
+            .target_branch("release")
+            .merge_version("v2.0.0")
+            .work_item_state("Released")
+            .tag_prefix("release-")
+            .run_hooks(true)
+            .build();
+
+        assert_eq!(state.base_repo_path, Some(PathBuf::from("/base/repo")));
+        assert!(state.is_worktree);
+        assert!(state.run_hooks);
+    }
+
+    /// # Builder Try Build Success
+    ///
+    /// Verifies try_build returns Ok when all required fields are set.
+    ///
+    /// ## Test Scenario
+    /// - Uses try_build with all required fields
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok with valid state file
+    #[test]
+    fn test_builder_try_build_success() {
+        let result = MergeStateFile::builder()
+            .repo_path("/test/repo")
+            .organization("org")
+            .project("proj")
+            .repository("repo")
+            .dev_branch("dev")
+            .target_branch("main")
+            .merge_version("v1.0.0")
+            .work_item_state("Done")
+            .tag_prefix("merged-")
+            .try_build();
+
+        assert!(result.is_ok());
+        let state = result.unwrap();
+        assert_eq!(state.organization, "org");
+    }
+
+    /// # Builder Try Build Missing Fields
+    ///
+    /// Verifies try_build returns Err when required fields are missing.
+    ///
+    /// ## Test Scenario
+    /// - Uses try_build with missing required fields
+    ///
+    /// ## Expected Outcome
+    /// - Returns Err with descriptive message
+    #[test]
+    fn test_builder_try_build_missing_fields() {
+        // Missing repo_path
+        let result = MergeStateFile::builder()
+            .organization("org")
+            .project("proj")
+            .repository("repo")
+            .dev_branch("dev")
+            .target_branch("main")
+            .merge_version("v1.0.0")
+            .work_item_state("Done")
+            .tag_prefix("merged-")
+            .try_build();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("repo_path"));
+    }
+
+    /// # Builder Default Values
+    ///
+    /// Verifies the builder uses correct defaults.
+    ///
+    /// ## Test Scenario
+    /// - Creates builder and checks defaults
+    ///
+    /// ## Expected Outcome
+    /// - Defaults are false for booleans, None for Options
+    #[test]
+    fn test_builder_default_values() {
+        let builder = MergeStateFileBuilder::new();
+
+        // Check that optional fields start as None/false
+        assert!(builder.repo_path.is_none());
+        assert!(builder.base_repo_path.is_none());
+        assert!(!builder.is_worktree);
+        assert!(!builder.run_hooks);
+    }
+
+    /// # Builder Fluent API Chain
+    ///
+    /// Verifies the builder methods can be chained.
+    ///
+    /// ## Test Scenario
+    /// - Chains multiple builder methods
+    ///
+    /// ## Expected Outcome
+    /// - Chain compiles and produces correct result
+    #[test]
+    fn test_builder_fluent_chain() {
+        // This test verifies the fluent API compiles correctly
+        let _state = MergeStateFileBuilder::new()
+            .repo_path(PathBuf::from("/test"))
+            .organization(String::from("org"))
+            .project("proj".to_string())
+            .repository("repo")
+            .dev_branch("dev")
+            .target_branch("main")
+            .merge_version("v1.0.0")
+            .work_item_state("Done")
+            .tag_prefix("merged-")
+            .is_worktree(false)
+            .run_hooks(false)
+            .build();
     }
 }
