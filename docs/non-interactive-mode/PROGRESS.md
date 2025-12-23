@@ -6,7 +6,7 @@ This document tracks the implementation progress of the non-interactive merge mo
 
 **Branch:** `claude/add-noninteractive-merge-mode-nGPeX`
 **Started:** 2024-12-22
-**Last Updated:** 2024-12-22
+**Last Updated:** 2024-12-23
 
 ---
 
@@ -52,10 +52,11 @@ This document tracks the implementation progress of the non-interactive merge mo
 | Implement stale lock detection | ⬜ Not Started | Check if PID still running |
 | Implement `save()` for state file | ⬜ Not Started | Atomic write |
 | Implement `load()` for state file | ⬜ Not Started | |
+| Add `run_hooks` field to MergeStateFile | ⬜ Not Started | Captures setting at start |
 | Add `sha2` dependency to Cargo.toml | ⬜ Not Started | |
 | Add `dirs` dependency to Cargo.toml | ⬜ Not Started | |
 | Add `MergeSubcommand` enum to models.rs | ⬜ Not Started | |
-| Add `MergeRunArgs` struct | ⬜ Not Started | |
+| Add `MergeRunArgs` struct | ⬜ Not Started | Include --run-hooks flag |
 | Add `MergeContinueArgs` struct | ⬜ Not Started | |
 | Add `MergeAbortArgs` struct | ⬜ Not Started | |
 | Add `MergeStatusArgs` struct | ⬜ Not Started | |
@@ -64,6 +65,7 @@ This document tracks the implementation progress of the non-interactive merge mo
 | Write unit tests for state file | ⬜ Not Started | |
 | Write unit tests for path hashing | ⬜ Not Started | |
 | Write unit tests for locking | ⬜ Not Started | |
+| Write unit tests for run_hooks serialization | ⬜ Not Started | |
 
 ### Files Created/Modified
 
@@ -82,6 +84,7 @@ None
 - Use `libc::kill(pid, 0)` on Unix for process existence check
 - Use Windows API on Windows for process existence check
 - State file should use atomic write (write to temp, then rename)
+- `run_hooks` must be captured at start and used consistently on resume
 
 ---
 
@@ -103,6 +106,7 @@ None
 | Implement `select_prs_by_work_item_states()` | ⬜ Not Started | |
 | Create `src/core/operations/repository_setup.rs` | ⬜ Not Started | |
 | Extract repository setup logic | ⬜ Not Started | From SetupRepoState |
+| Pass `run_hooks` to setup_repository | ⬜ Not Started | Use value from MergeConfig |
 | Create `src/core/operations/cherry_pick.rs` | ⬜ Not Started | |
 | Extract `process_next_commit()` logic | ⬜ Not Started | From CherryPickState |
 | Extract `continue_cherry_pick()` logic | ⬜ Not Started | From CherryPickContinueState |
@@ -135,6 +139,8 @@ None
 - PR selection must check: ALL work items match AND at least 1 work item exists
 - Case-insensitive state matching
 - Preserve original PR order after filtering
+- Use `MergeConfig` type directly for type-safe config access
+- Repository setup uses `run_hooks` from config (not `AppConfig` enum)
 
 ---
 
@@ -360,6 +366,34 @@ None
 - Start Phase 1: Foundation
 - Create core module structure
 - Implement state file handling
+
+---
+
+### Session 2: 2024-12-23 - Architecture Sync
+
+**Duration:** ~30 minutes
+**Activities:**
+- Merged latest master with 3 new commits
+- Reviewed new typed configuration architecture (PR #49)
+- Reviewed git hooks flag feature (PR #46)
+- Updated PLAN.md to document new architecture
+- Updated PROGRESS.md with new tasks
+- Updated VERIFICATION.md with new test cases
+
+**Changes from Master:**
+1. **AppMode trait with associated Config type** - `AppBase` is now generic `AppBase<C: AppModeConfig>`
+2. **MergeConfig struct** - Contains `shared`, `work_item_state`, and `run_hooks`
+3. **Git hooks flag** - `--run-hooks` CLI flag, disabled by default via `core.hooksPath=/dev/null`
+
+**Impact on Plan:**
+- Core operations should use `MergeConfig` directly (not `AppConfig` enum)
+- State file must include `run_hooks` field for resume consistency
+- Repository setup must pass `run_hooks` from config to git functions
+
+**Next Steps:**
+- Begin Phase 1: Foundation implementation
+- Create core module structure
+- Implement state file with run_hooks field
 
 ---
 

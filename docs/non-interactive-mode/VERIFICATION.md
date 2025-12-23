@@ -5,7 +5,7 @@
 This document provides comprehensive verification checklists for testing the non-interactive merge mode implementation.
 
 **Branch:** `claude/add-noninteractive-merge-mode-nGPeX`
-**Last Updated:** 2024-12-22
+**Last Updated:** 2024-12-23
 
 ---
 
@@ -41,6 +41,8 @@ This document provides comprehensive verification checklists for testing the non
 | `test_phase_serialization` | All MergePhase variants serialize | ⬜ |
 | `test_status_serialization` | All MergeStatus variants serialize | ⬜ |
 | `test_item_status_serialization` | All StateItemStatus variants serialize | ⬜ |
+| `test_run_hooks_serialization` | run_hooks field serializes correctly | ⬜ |
+| `test_run_hooks_defaults_false` | run_hooks defaults to false when missing | ⬜ |
 
 ### Lock Guard (`src/core/state/file.rs`)
 
@@ -130,6 +132,17 @@ This document provides comprehensive verification checklists for testing the non
 | `test_state_file_contains_all_items` | All cherry-pick items in state | ⬜ |
 | `test_state_file_survives_restart` | Can load state after process restart | ⬜ |
 | `test_state_file_phase_correct` | Phase reflects current operation | ⬜ |
+| `test_state_file_run_hooks_persisted` | run_hooks value is saved in state file | ⬜ |
+| `test_continue_uses_saved_run_hooks` | Continue respects saved run_hooks setting | ⬜ |
+
+### Git Hooks Tests
+
+| Test | Description | Status |
+|------|-------------|--------|
+| `test_hooks_disabled_by_default` | Worktree has core.hooksPath=/dev/null by default | ⬜ |
+| `test_hooks_enabled_with_flag` | Worktree has hooks enabled when --run-hooks used | ⬜ |
+| `test_run_hooks_passed_to_setup` | run_hooks from config reaches git functions | ⬜ |
+| `test_continue_preserves_hooks_setting` | Continue uses saved run_hooks, not default | ⬜ |
 
 ### Lock Tests
 
@@ -177,12 +190,28 @@ This document provides comprehensive verification checklists for testing the non
 1. Run `mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next"`
 2. Observe progress output
 3. Check exit code
+4. Verify worktree has hooks disabled (core.hooksPath=/dev/null)
 
 **Expected Results:**
 - [ ] Progress events shown (or JSON if specified)
 - [ ] State file created
+- [ ] State file contains `run_hooks: false`
 - [ ] Exit code 0 (or 2 if conflict)
 - [ ] Worktree created with cherry-picked commits
+- [ ] Worktree has hooks disabled by default
+
+### Scenario 1b: Non-Interactive Merge with Hooks Enabled
+
+**Preconditions:**
+- Same as Scenario 1
+
+**Steps:**
+1. Run `mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next" --run-hooks`
+2. Check state file and worktree
+
+**Expected Results:**
+- [ ] State file contains `run_hooks: true`
+- [ ] Worktree does NOT have core.hooksPath set to /dev/null
 
 ### Scenario 2: Conflict Resolution Flow
 
@@ -329,6 +358,16 @@ This document provides comprehensive verification checklists for testing the non
 | Repository not found | Clear error message | ⬜ |
 | Not in a git repository | Clear error message | ⬜ |
 
+### Hooks Edge Cases
+
+| Case | Expected Behavior | Status |
+|------|-------------------|--------|
+| Start with --run-hooks, continue without flag | Uses saved setting (hooks enabled) | ⬜ |
+| Start without --run-hooks, continue with flag | Uses saved setting (hooks disabled) | ⬜ |
+| State file missing run_hooks field | Defaults to false (hooks disabled) | ⬜ |
+| Clone repo with --run-hooks | Hooks remain enabled | ⬜ |
+| Worktree with --run-hooks | Hooks remain enabled | ⬜ |
+
 ### API Edge Cases
 
 | Case | Expected Behavior | Status |
@@ -357,6 +396,8 @@ This document provides comprehensive verification checklists for testing the non
 | Existing tests pass | `cargo nextest run` | ⬜ |
 | Clippy clean | No new warnings | ⬜ |
 | Format correct | `cargo fmt --check` | ⬜ |
+| Hooks flag works in TUI | --run-hooks respected in interactive mode | ⬜ |
+| Typed config works | MergeConfig access is type-safe | ⬜ |
 
 ### Snapshot Tests
 

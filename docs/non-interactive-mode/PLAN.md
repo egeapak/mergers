@@ -38,10 +38,44 @@ This document describes the implementation plan for adding non-interactive mode 
 | **Locking** | Simple lockfile with PID | Prevents concurrent operations |
 | **CLI Structure** | Subcommands for each operation | Clean argument separation |
 | **State in Both Modes** | Yes - both interactive and non-interactive generate state files | Enables cross-mode resume |
+| **Git Hooks** | Disabled by default via `core.hooksPath=/dev/null`, enable with `--run-hooks` | Prevents commit hook failures during cherry-pick |
+| **Config Type Safety** | Use `MergeConfig` type directly (not `AppConfig` enum) | Leverages new associated type system |
 
 ---
 
 ## Architecture Overview
+
+### Typed Configuration
+
+The codebase uses a typed configuration system with associated types:
+
+```rust
+// AppMode trait with associated Config type
+pub trait AppMode: Send + Sync {
+    type Config: AppModeConfig + Send + Sync;
+    fn base(&self) -> &AppBase<Self::Config>;
+    fn base_mut(&mut self) -> &mut AppBase<Self::Config>;
+}
+
+// MergeConfig contains merge-specific settings
+pub struct MergeConfig {
+    pub shared: SharedConfig,
+    pub work_item_state: ParsedProperty<String>,
+    pub run_hooks: ParsedProperty<bool>,  // Controls git hook execution
+}
+
+// AppBase is generic over config type
+pub struct AppBase<C: AppModeConfig> {
+    pub config: Arc<C>,
+    pub pull_requests: Vec<PullRequestWithWorkItems>,
+    pub client: AzureDevOpsClient,
+    // ...
+}
+```
+
+Core operations should work with `MergeConfig` directly for type safety.
+
+### Module Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -52,6 +86,7 @@ This document describes the implementation plan for adding non-interactive mode 
 │  --non-interactive   │                  │               │  --next-state     │
 │  --version           │                  │               │                   │
 │  --select-by-state   │                  │               │                   │
+│  --run-hooks         │                  │               │                   │
 └──────────┬───────────┴────────┬─────────┴───────┬───────┴─────────┬─────────┘
            │                    │                 │                 │
            ▼                    ▼                 ▼                 ▼
@@ -122,11 +157,16 @@ OPTIONS:
     --version <VERSION>         Merge branch version (required with -n)
     --select-by-state <STATES>  Comma-separated work item states for PR filtering
     --work-item-state <STATE>   State for work items after completion
+    --run-hooks                 Enable git hooks during cherry-pick (disabled by default)
     --output <FORMAT>           Output format: text, json, ndjson [default: text]
     --quiet, -q                 Suppress progress output
 
     [Standard shared options: --organization, --project, etc.]
 ```
+
+**Note on `--run-hooks`:** By default, git hooks are disabled during cherry-pick operations
+by setting `core.hooksPath=/dev/null` in the worktree. This prevents commit hooks from
+failing during automated cherry-picks. Use `--run-hooks` to enable hooks if needed.
 
 #### `merge continue` (Resume After Conflict)
 
@@ -263,12 +303,16 @@ pub struct MergeStateFile {
     // Settings
     pub work_item_state: String,
     pub tag_prefix: String,
+    pub run_hooks: bool,  // Whether git hooks are enabled for this merge
 
     // Completion Info
     pub completed_at: Option<DateTime<Utc>>,
     pub final_status: Option<MergeStatus>,
 }
 ```
+
+**Note on `run_hooks`:** This field captures the `--run-hooks` setting at merge start time.
+When resuming with `merge continue`, the saved setting is used to ensure consistent behavior.
 
 ### 2. Merge Phases
 
@@ -716,9 +760,19 @@ mergers merge abort
    - Already handles branch deletion
    - Already handles cherry-pick abort
 
-3. **PostCompletionState** (`src/ui/state/default/post_completion.rs`)
+3. **git::setup_repository** (`src/git.rs`)
+   - Accepts `run_hooks: bool` parameter
+   - When `false`, sets `core.hooksPath=/dev/null` in the worktree
+   - Both `shallow_clone_repo` and `create_worktree` support this
+
+4. **PostCompletionState** (`src/ui/state/default/post_completion.rs`)
    - Task tracking pattern already exists
    - Tag PR and update WI logic already implemented
+
+5. **Typed Configuration** (`src/models.rs`, `src/ui/app_mode.rs`)
+   - `MergeConfig` struct with direct access to merge settings
+   - `AppBase<C>` generic over config type
+   - `AppModeConfig` trait for shared config access
 
 ### Cross-Mode Resume
 
