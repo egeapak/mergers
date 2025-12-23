@@ -1080,4 +1080,188 @@ mod tests {
         assert!(MergePhase::Completed.is_terminal());
         assert!(MergePhase::Aborted.is_terminal());
     }
+
+    /// # Schema Version Constant
+    ///
+    /// Verifies schema version is set correctly in new state files.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new state file
+    /// - Checks schema_version field
+    ///
+    /// ## Expected Outcome
+    /// - Schema version matches SCHEMA_VERSION constant
+    #[test]
+    fn test_schema_version() {
+        let state = MergeStateFile::new(
+            PathBuf::from("/test/repo"),
+            None,
+            false,
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "next".to_string(),
+            "v1.0.0".to_string(),
+            "Done".to_string(),
+            "merged-".to_string(),
+            false,
+        );
+        assert_eq!(state.schema_version, SCHEMA_VERSION);
+        assert_eq!(state.schema_version, 1);
+    }
+
+    /// # Path For Repo Generation
+    ///
+    /// Verifies state file path is generated correctly for a repo.
+    ///
+    /// ## Test Scenario
+    /// - Creates temp dir and sets as state dir
+    /// - Gets path for a repo
+    ///
+    /// ## Expected Outcome
+    /// - Path is in state dir with merge- prefix and .json suffix
+    #[test]
+    fn test_path_for_repo() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("my-repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let state_path = path_for_repo(&repo_path).unwrap();
+
+        assert!(state_path.starts_with(temp_dir.path()));
+        assert!(
+            state_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("merge-")
+        );
+        assert!(
+            state_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .ends_with(".json")
+        );
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Lock Path For Repo Generation
+    ///
+    /// Verifies lock file path is generated correctly for a repo.
+    ///
+    /// ## Test Scenario
+    /// - Creates temp dir and sets as state dir
+    /// - Gets lock path for a repo
+    ///
+    /// ## Expected Outcome
+    /// - Lock path is in state dir with merge- prefix and .lock suffix
+    #[test]
+    fn test_lock_path_for_repo() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("my-repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let lock_path = lock_path_for_repo(&repo_path).unwrap();
+
+        assert!(lock_path.starts_with(temp_dir.path()));
+        assert!(
+            lock_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("merge-")
+        );
+        assert!(
+            lock_path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .ends_with(".lock")
+        );
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Run Hooks Serialization
+    ///
+    /// Verifies that run_hooks field serializes correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with run_hooks=true
+    /// - Serializes to JSON
+    ///
+    /// ## Expected Outcome
+    /// - JSON contains "run_hooks": true
+    #[test]
+    fn test_run_hooks_serialization() {
+        let state = MergeStateFile::new(
+            PathBuf::from("/test/repo"),
+            None,
+            false,
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "next".to_string(),
+            "v1.0.0".to_string(),
+            "Done".to_string(),
+            "merged-".to_string(),
+            true, // run_hooks = true
+        );
+
+        let json = serde_json::to_string(&state).unwrap();
+        assert!(json.contains("\"run_hooks\":true"));
+
+        // Verify it deserializes correctly
+        let deserialized: MergeStateFile = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.run_hooks);
+    }
+
+    /// # Lock Content Is PID
+    ///
+    /// Verifies that lock file contains the current process PID.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock
+    /// - Reads lock file content
+    ///
+    /// ## Expected Outcome
+    /// - Lock file contains current PID as text
+    #[test]
+    fn test_lock_content_is_pid() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let lock_path = lock_path_for_repo(&repo_path).unwrap();
+        let expected_pid = std::process::id().to_string();
+
+        // Acquire lock
+        let _guard = LockGuard::acquire(&repo_path).unwrap();
+
+        // Read lock file content
+        let content = fs::read_to_string(&lock_path).unwrap();
+        assert_eq!(content.trim(), expected_pid);
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
 }

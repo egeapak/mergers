@@ -372,4 +372,52 @@ mod tests {
         assert!(ids.contains(&1));
         assert!(ids.contains(&3));
     }
+
+    /// # Filter Empty PR List
+    ///
+    /// Verifies that filtering an empty PR list returns empty result.
+    ///
+    /// ## Test Scenario
+    /// - Empty PR list
+    /// - Any state filter
+    ///
+    /// ## Expected Outcome
+    /// - Returns empty result
+    #[test]
+    fn test_filter_empty_prs() {
+        let prs: Vec<PullRequestWithWorkItems> = vec![];
+        let states = vec!["Ready".to_string()];
+
+        let result = filter_prs_by_work_item_states(&prs, &states);
+        assert!(result.is_empty());
+    }
+
+    /// # Filter Preserves Order
+    ///
+    /// Verifies that filtering preserves the original PR order.
+    ///
+    /// ## Test Scenario
+    /// - Multiple PRs in specific order
+    /// - Some match, some don't
+    ///
+    /// ## Expected Outcome
+    /// - Matching PRs returned in original order
+    #[test]
+    fn test_filter_preserves_order() {
+        let prs = vec![
+            create_pr_with_work_items(100, vec![("WI", Some("Ready"))]),
+            create_pr_with_work_items(50, vec![("WI", Some("Active"))]),
+            create_pr_with_work_items(75, vec![("WI", Some("Ready"))]),
+            create_pr_with_work_items(25, vec![("WI", Some("Ready"))]),
+        ];
+        let states = vec!["Ready".to_string()];
+
+        let result = filter_prs_by_work_item_states(&prs, &states);
+
+        assert_eq!(result.len(), 3);
+        // Verify order is preserved (100, 75, 25)
+        assert_eq!(result[0].pr.id, 100);
+        assert_eq!(result[1].pr.id, 75);
+        assert_eq!(result[2].pr.id, 25);
+    }
 }

@@ -126,8 +126,7 @@ impl<W: Write> OutputFormatter for OutputWriter<W> {
             }
             OutputFormat::Ndjson => {
                 // Write each event as a JSON line
-                let json =
-                    serde_json::to_string(event).map_err(io::Error::other)?;
+                let json = serde_json::to_string(event).map_err(io::Error::other)?;
                 self.writeln(&json)?;
             }
         }
@@ -165,8 +164,7 @@ impl<W: Write> OutputFormatter for OutputWriter<W> {
                     conflicted_files: conflict.conflicted_files.clone(),
                     repo_path: conflict.repo_path.clone(),
                 };
-                let json = serde_json::to_string(&event)
-                    .map_err(io::Error::other)?;
+                let json = serde_json::to_string(&event).map_err(io::Error::other)?;
                 self.writeln(&json)?;
             }
         }
@@ -222,8 +220,7 @@ impl<W: Write> OutputFormatter for OutputWriter<W> {
                 self.writeln("")?;
             }
             OutputFormat::Json | OutputFormat::Ndjson => {
-                let json = serde_json::to_string_pretty(status)
-                    .map_err(io::Error::other)?;
+                let json = serde_json::to_string_pretty(status).map_err(io::Error::other)?;
                 self.writeln(&json)?;
             }
         }
@@ -273,14 +270,12 @@ impl<W: Write> OutputFormatter for OutputWriter<W> {
                     "summary": summary,
                     "events": self.events
                 });
-                let json = serde_json::to_string_pretty(&output)
-                    .map_err(io::Error::other)?;
+                let json = serde_json::to_string_pretty(&output).map_err(io::Error::other)?;
                 self.writeln(&json)?;
             }
             OutputFormat::Ndjson => {
                 // Write summary as final line
-                let json = serde_json::to_string(summary)
-                    .map_err(io::Error::other)?;
+                let json = serde_json::to_string(summary).map_err(io::Error::other)?;
                 self.writeln(&json)?;
             }
         }

@@ -627,4 +627,76 @@ mod tests {
         let json = serde_json::to_string(&with_reason).unwrap();
         assert!(json.contains("\"reason\":\"user requested\""));
     }
+
+    /// # All Events Have Event Field
+    ///
+    /// Verifies all ProgressEvent variants serialize with an "event" tag field.
+    ///
+    /// ## Test Scenario
+    /// - Creates one of each event variant
+    /// - Serializes each to JSON
+    ///
+    /// ## Expected Outcome
+    /// - All serialized events contain "event" field
+    #[test]
+    fn test_event_has_event_field() {
+        let events: Vec<ProgressEvent> = vec![
+            ProgressEvent::Start {
+                total_prs: 1,
+                version: "v1".to_string(),
+                target_branch: "main".to_string(),
+            },
+            ProgressEvent::CherryPickStart {
+                pr_id: 1,
+                commit_id: "abc".to_string(),
+                index: 0,
+                total: 1,
+            },
+            ProgressEvent::CherryPickSuccess {
+                pr_id: 1,
+                commit_id: "abc".to_string(),
+            },
+            ProgressEvent::CherryPickConflict {
+                pr_id: 1,
+                conflicted_files: vec![],
+                repo_path: PathBuf::from("/tmp"),
+            },
+            ProgressEvent::CherryPickFailed {
+                pr_id: 1,
+                error: "error".to_string(),
+            },
+            ProgressEvent::CherryPickSkipped {
+                pr_id: 1,
+                reason: None,
+            },
+            ProgressEvent::PostMergeStart { task_count: 1 },
+            ProgressEvent::PostMergeProgress {
+                task_type: "tag".to_string(),
+                target_id: 1,
+                status: PostMergeStatus::Success,
+            },
+            ProgressEvent::Complete {
+                successful: 1,
+                failed: 0,
+                skipped: 0,
+            },
+            ProgressEvent::Aborted {
+                success: true,
+                message: None,
+            },
+            ProgressEvent::Error {
+                message: "err".to_string(),
+                code: None,
+            },
+        ];
+
+        for event in events {
+            let json = serde_json::to_string(&event).unwrap();
+            assert!(
+                json.contains("\"event\":"),
+                "Event should have 'event' field: {}",
+                json
+            );
+        }
+    }
 }
