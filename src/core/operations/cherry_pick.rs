@@ -10,7 +10,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::git::CherryPickResult;
+use crate::git::{self, CherryPickResult};
 use crate::models::CherryPickStatus;
 
 /// Outcome of a cherry-pick operation on a single commit.
@@ -216,26 +216,24 @@ impl CherryPickOperation {
     ///
     /// Ok(true) if ready to continue, Ok(false) if conflicts remain.
     pub fn continue_after_conflict(&self, repo_path: &Path) -> Result<bool> {
-        // Check if there are still unresolved conflicts by checking git status
-        let output = std::process::Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(repo_path)
-            .output()
-            .context("Failed to run git status")?;
-
-        let status = String::from_utf8_lossy(&output.stdout);
-
-        // Look for conflict markers in status (UU, AA, DD, etc.)
-        let has_conflicts = status.lines().any(|line| {
-            let chars: Vec<char> = line.chars().collect();
-            chars.len() >= 2
-                && ((chars[0] == 'U' || chars[1] == 'U')
-                    || (chars[0] == 'A' && chars[1] == 'A')
-                    || (chars[0] == 'D' && chars[1] == 'D'))
-        });
-
-        Ok(!has_conflicts)
+        // Delegate to the git module's implementation which uses `git ls-files -u`
+        git::check_conflicts_resolved(repo_path)
     }
+}
+
+/// Checks if a git status porcelain line indicates a conflict.
+///
+/// Conflict markers in git status --porcelain output:
+/// - `UU` - both modified (unmerged)
+/// - `AA` - both added
+/// - `DD` - both deleted
+/// - `AU`, `UA`, `DU`, `UD` - various add/delete conflicts
+fn is_conflict_status_line(line: &str) -> bool {
+    let chars: Vec<char> = line.chars().collect();
+    chars.len() >= 2
+        && ((chars[0] == 'U' || chars[1] == 'U')
+            || (chars[0] == 'A' && chars[1] == 'A')
+            || (chars[0] == 'D' && chars[1] == 'D'))
 }
 
 /// Gets the list of conflicted files in a repository.
@@ -250,13 +248,7 @@ pub fn get_conflicted_files(repo_path: &Path) -> Result<Vec<String>> {
 
     let conflicted: Vec<String> = status
         .lines()
-        .filter(|line| {
-            let chars: Vec<char> = line.chars().collect();
-            chars.len() >= 3
-                && ((chars[0] == 'U' || chars[1] == 'U')
-                    || (chars[0] == 'A' && chars[1] == 'A')
-                    || (chars[0] == 'D' && chars[1] == 'D'))
-        })
+        .filter(|line| line.len() >= 3 && is_conflict_status_line(line))
         .map(|line| line[3..].to_string())
         .collect();
 
@@ -473,5 +465,43 @@ mod tests {
     fn test_cherry_pick_operation_creation() {
         let operation = CherryPickOperation::new(CherryPickConfig::default());
         assert!(!operation.run_hooks());
+    }
+
+    /// # Conflict Status Line Detection
+    ///
+    /// Verifies that conflict status lines are correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Tests various git status porcelain output lines
+    /// - Includes conflict markers (UU, AA, DD, AU, UA, DU, UD)
+    /// - Includes non-conflict markers (M, A, D, ??)
+    ///
+    /// ## Expected Outcome
+    /// - Conflict lines return true
+    /// - Non-conflict lines return false
+    #[test]
+    fn test_is_conflict_status_line() {
+        // Conflict markers
+        assert!(is_conflict_status_line("UU src/main.rs"));
+        assert!(is_conflict_status_line("AA new_file.rs"));
+        assert!(is_conflict_status_line("DD deleted.rs"));
+        assert!(is_conflict_status_line("AU added_by_us.rs"));
+        assert!(is_conflict_status_line("UA added_by_them.rs"));
+        assert!(is_conflict_status_line("DU deleted_by_us.rs"));
+        assert!(is_conflict_status_line("UD deleted_by_them.rs"));
+
+        // Non-conflict markers
+        assert!(!is_conflict_status_line("M  modified.rs"));
+        assert!(!is_conflict_status_line(" M modified_unstaged.rs"));
+        assert!(!is_conflict_status_line("A  added.rs"));
+        assert!(!is_conflict_status_line("D  deleted.rs"));
+        assert!(!is_conflict_status_line("?? untracked.rs"));
+        assert!(!is_conflict_status_line("!! ignored.rs"));
+        assert!(!is_conflict_status_line("R  renamed.rs"));
+
+        // Edge cases
+        assert!(!is_conflict_status_line(""));
+        assert!(!is_conflict_status_line("X"));
+        assert!(!is_conflict_status_line("  "));
     }
 }

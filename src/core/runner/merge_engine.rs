@@ -433,6 +433,69 @@ pub fn acquire_lock(repo_path: &Path) -> Result<Option<LockGuard>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::state::StateCherryPickItem;
+    use std::sync::Arc;
+
+    /// Creates a mock API client for testing (will error on actual API calls).
+    fn create_mock_client() -> Arc<AzureDevOpsClient> {
+        Arc::new(
+            AzureDevOpsClient::new(
+                "test-org".to_string(),
+                "test-project".to_string(),
+                "test-repo".to_string(),
+                "test-pat".to_string(),
+            )
+            .unwrap(),
+        )
+    }
+
+    /// Creates a test engine with mock client.
+    fn create_test_engine() -> MergeEngine {
+        MergeEngine::new(
+            create_mock_client(),
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+        )
+    }
+
+    /// Creates a test state file with items in various statuses.
+    fn create_test_state(items: Vec<(i32, StateItemStatus)>) -> MergeStateFile {
+        let mut state = MergeStateFile::new(
+            std::path::PathBuf::from("/test/repo"),
+            None,
+            false,
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "Done".to_string(),
+            "merged-".to_string(),
+            false,
+        );
+
+        state.cherry_pick_items = items
+            .into_iter()
+            .map(|(pr_id, status)| StateCherryPickItem {
+                commit_id: format!("commit_{}", pr_id),
+                pr_id,
+                pr_title: format!("PR #{}", pr_id),
+                status,
+                work_item_ids: vec![],
+            })
+            .collect();
+
+        state
+    }
 
     /// # Summary Counts Creation
     ///
@@ -451,5 +514,363 @@ mod tests {
         assert_eq!(counts.failed, 2);
         assert_eq!(counts.skipped, 1);
         assert_eq!(counts.pending, 0);
+    }
+
+    /// # Summary Counts From State File
+    ///
+    /// Verifies summary counts are correctly extracted from a state file.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with mixed item statuses
+    /// - Calls create_summary_counts
+    ///
+    /// ## Expected Outcome
+    /// - Counts match the items in the state file
+    #[test]
+    fn test_create_summary_counts_from_state() {
+        let engine = create_test_engine();
+        let state = create_test_state(vec![
+            (1, StateItemStatus::Success),
+            (2, StateItemStatus::Success),
+            (
+                3,
+                StateItemStatus::Failed {
+                    message: "error".to_string(),
+                },
+            ),
+            (4, StateItemStatus::Skipped),
+            (5, StateItemStatus::Pending),
+        ]);
+
+        let counts = engine.create_summary_counts(&state);
+
+        assert_eq!(counts.successful, 2);
+        assert_eq!(counts.failed, 1);
+        assert_eq!(counts.skipped, 1);
+        assert_eq!(counts.pending, 1);
+        assert_eq!(counts.total, 5);
+    }
+
+    /// # Determine Final Status - All Success
+    ///
+    /// Verifies final status is Success when all items succeed.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with all successful items
+    ///
+    /// ## Expected Outcome
+    /// - Returns MergeStatus::Success
+    #[test]
+    fn test_determine_final_status_all_success() {
+        let engine = create_test_engine();
+        let state = create_test_state(vec![
+            (1, StateItemStatus::Success),
+            (2, StateItemStatus::Success),
+            (3, StateItemStatus::Success),
+        ]);
+
+        assert_eq!(engine.determine_final_status(&state), MergeStatus::Success);
+    }
+
+    /// # Determine Final Status - Partial Success
+    ///
+    /// Verifies final status is PartialSuccess when some items fail.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with mixed success and failure
+    ///
+    /// ## Expected Outcome
+    /// - Returns MergeStatus::PartialSuccess
+    #[test]
+    fn test_determine_final_status_partial_success() {
+        let engine = create_test_engine();
+
+        // Some failed
+        let state1 = create_test_state(vec![
+            (1, StateItemStatus::Success),
+            (
+                2,
+                StateItemStatus::Failed {
+                    message: "error".to_string(),
+                },
+            ),
+        ]);
+        assert_eq!(
+            engine.determine_final_status(&state1),
+            MergeStatus::PartialSuccess
+        );
+
+        // Some skipped
+        let state2 = create_test_state(vec![
+            (1, StateItemStatus::Success),
+            (2, StateItemStatus::Skipped),
+        ]);
+        assert_eq!(
+            engine.determine_final_status(&state2),
+            MergeStatus::PartialSuccess
+        );
+    }
+
+    /// # Determine Final Status - All Failed
+    ///
+    /// Verifies final status is Failed when no items succeed.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with all failed/skipped items
+    ///
+    /// ## Expected Outcome
+    /// - Returns MergeStatus::Failed
+    #[test]
+    fn test_determine_final_status_all_failed() {
+        let engine = create_test_engine();
+        let state = create_test_state(vec![
+            (
+                1,
+                StateItemStatus::Failed {
+                    message: "error1".to_string(),
+                },
+            ),
+            (2, StateItemStatus::Skipped),
+        ]);
+
+        assert_eq!(engine.determine_final_status(&state), MergeStatus::Failed);
+    }
+
+    /// # Create Summary Items
+    ///
+    /// Verifies summary items are correctly created from state.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with various item statuses
+    /// - Calls create_summary_items
+    ///
+    /// ## Expected Outcome
+    /// - Items are correctly mapped with proper status and error info
+    #[test]
+    fn test_create_summary_items() {
+        let engine = create_test_engine();
+        let state = create_test_state(vec![
+            (1, StateItemStatus::Success),
+            (2, StateItemStatus::Conflict),
+            (3, StateItemStatus::Skipped),
+            (
+                4,
+                StateItemStatus::Failed {
+                    message: "test error".to_string(),
+                },
+            ),
+            (5, StateItemStatus::Pending),
+        ]);
+
+        let items = engine.create_summary_items(&state);
+
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].pr_id, 1);
+        assert_eq!(items[0].status, ItemStatus::Success);
+        assert!(items[0].error.is_none());
+
+        assert_eq!(items[1].pr_id, 2);
+        assert_eq!(items[1].status, ItemStatus::Conflict);
+
+        assert_eq!(items[2].pr_id, 3);
+        assert_eq!(items[2].status, ItemStatus::Skipped);
+
+        assert_eq!(items[3].pr_id, 4);
+        assert_eq!(items[3].status, ItemStatus::Failed);
+        assert_eq!(items[3].error, Some("test error".to_string()));
+
+        assert_eq!(items[4].pr_id, 5);
+        assert_eq!(items[4].status, ItemStatus::Pending);
+    }
+
+    /// # Engine Creation With Options
+    ///
+    /// Verifies engine can be created with various options.
+    ///
+    /// ## Test Scenario
+    /// - Creates engines with different configurations
+    ///
+    /// ## Expected Outcome
+    /// - Engines are created without errors
+    #[test]
+    fn test_engine_creation_with_options() {
+        // With local repo
+        let _engine1 = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            Some(std::path::PathBuf::from("/path/to/repo")),
+        );
+
+        // With hooks enabled
+        let _engine2 = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            true,
+            None,
+        );
+    }
+
+    /// # Create State File From PRs
+    ///
+    /// Verifies state file is correctly created from PRs.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with test parameters
+    ///
+    /// ## Expected Outcome
+    /// - State file has correct metadata
+    #[test]
+    fn test_create_state_file() {
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "develop".to_string(),
+            "release".to_string(),
+            "v2.0.0".to_string(),
+            "release-".to_string(),
+            "Released".to_string(),
+            true,
+            Some(std::path::PathBuf::from("/base/repo")),
+        );
+
+        let state = engine.create_state_file(
+            std::path::PathBuf::from("/work/repo"),
+            Some(std::path::PathBuf::from("/base/repo")),
+            true,
+            &[], // Empty PRs
+        );
+
+        assert_eq!(state.organization, "test-org");
+        assert_eq!(state.project, "test-project");
+        assert_eq!(state.repository, "test-repo");
+        assert_eq!(state.dev_branch, "develop");
+        assert_eq!(state.target_branch, "release");
+        assert_eq!(state.merge_version, "v2.0.0");
+        assert_eq!(state.tag_prefix, "release-");
+        assert_eq!(state.work_item_state, "Released");
+        assert!(state.run_hooks);
+        assert!(state.is_worktree);
+        assert_eq!(state.phase, MergePhase::CherryPicking);
+        assert!(state.cherry_pick_items.is_empty());
+    }
+
+    /// # Acquire Lock Function
+    ///
+    /// Verifies the acquire_lock convenience function works.
+    ///
+    /// ## Test Scenario
+    /// - Calls acquire_lock on a temp directory
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok with Some lock guard
+    #[test]
+    fn test_acquire_lock_convenience_function() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        // Set state dir env var
+        unsafe {
+            std::env::set_var(
+                crate::core::state::STATE_DIR_ENV,
+                temp_dir.path().join("state"),
+            )
+        };
+
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        let result = acquire_lock(&repo_dir);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Cleanup
+        unsafe { std::env::remove_var(crate::core::state::STATE_DIR_ENV) };
+    }
+
+    /// # Select PRs By States
+    ///
+    /// Verifies PR selection by work item states.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with different work item states
+    /// - Selects by specific states
+    ///
+    /// ## Expected Outcome
+    /// - Only PRs matching the states are selected
+    #[test]
+    fn test_select_prs_by_states() {
+        use crate::models::{
+            CreatedBy, PullRequest, PullRequestWithWorkItems, WorkItem, WorkItemFields,
+        };
+
+        let engine = create_test_engine();
+
+        fn create_work_item(id: i32, state: &str) -> WorkItem {
+            WorkItem {
+                id,
+                fields: WorkItemFields {
+                    title: Some(format!("WI {}", id)),
+                    state: Some(state.to_string()),
+                    work_item_type: Some("Bug".to_string()),
+                    assigned_to: None,
+                    iteration_path: None,
+                    description: None,
+                    repro_steps: None,
+                    state_color: None,
+                },
+                history: Vec::new(),
+            }
+        }
+
+        fn create_pr(id: i32, commit_id: &str) -> PullRequest {
+            PullRequest {
+                id,
+                title: format!("PR {}", id),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test User".to_string(),
+                },
+                last_merge_commit: Some(crate::models::MergeCommit {
+                    commit_id: commit_id.to_string(),
+                }),
+                labels: None,
+            }
+        }
+
+        let mut prs = vec![
+            PullRequestWithWorkItems {
+                pr: create_pr(1, "abc"),
+                work_items: vec![create_work_item(100, "Ready")],
+                selected: false,
+            },
+            PullRequestWithWorkItems {
+                pr: create_pr(2, "def"),
+                work_items: vec![create_work_item(101, "Done")],
+                selected: false,
+            },
+        ];
+
+        let count = engine.select_prs_by_states(&mut prs, "Ready");
+
+        assert_eq!(count, 1);
+        assert!(prs[0].selected);
+        assert!(!prs[1].selected);
     }
 }
