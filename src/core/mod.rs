@@ -8,6 +8,7 @@
 //! - Core operations extracted from UI logic
 //! - Output formatting for different display modes
 
+pub mod operations;
 pub mod state;
 
 /// Exit codes for non-interactive merge operations.
