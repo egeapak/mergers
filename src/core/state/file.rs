@@ -529,6 +529,7 @@ mod hex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     /// # State File Serialization
@@ -705,6 +706,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Returns a valid path
     #[test]
+    #[serial]
     fn test_state_dir_default() {
         // Temporarily unset the env var to test default behavior
         let old_val = std::env::var(STATE_DIR_ENV).ok();
@@ -734,6 +736,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Returns the custom path
     #[test]
+    #[serial]
     fn test_state_dir_env_override() {
         let temp_dir = TempDir::new().unwrap();
         let custom_path = temp_dir.path().to_str().unwrap();
@@ -894,6 +897,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Lock file created on acquire, removed on drop
     #[test]
+    #[serial]
     fn test_lock_acquisition_and_release() {
         let temp_dir = TempDir::new().unwrap();
         // SAFETY: Tests are run single-threaded
@@ -929,6 +933,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Second acquisition returns None
     #[test]
+    #[serial]
     fn test_second_lock_acquisition_blocked() {
         let temp_dir = TempDir::new().unwrap();
         // SAFETY: Tests are run single-threaded
@@ -1122,6 +1127,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Path is in state dir with merge- prefix and .json suffix
     #[test]
+    #[serial]
     fn test_path_for_repo() {
         let temp_dir = TempDir::new().unwrap();
         // SAFETY: Tests are run single-threaded
@@ -1165,6 +1171,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Lock path is in state dir with merge- prefix and .lock suffix
     #[test]
+    #[serial]
     fn test_lock_path_for_repo() {
         let temp_dir = TempDir::new().unwrap();
         // SAFETY: Tests are run single-threaded
@@ -1243,6 +1250,7 @@ mod tests {
     /// ## Expected Outcome
     /// - Lock file contains current PID as text
     #[test]
+    #[serial]
     fn test_lock_content_is_pid() {
         let temp_dir = TempDir::new().unwrap();
         // SAFETY: Tests are run single-threaded

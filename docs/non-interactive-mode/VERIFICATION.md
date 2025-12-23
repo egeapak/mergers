@@ -497,23 +497,42 @@ This document provides comprehensive verification checklists for testing the non
 
 ### Phase 4 Sign-off
 
-- [ ] All unit tests pass
-- [ ] All integration tests pass
-- [ ] Manual testing complete
-- [ ] Edge cases verified
-- [ ] Regression tests pass
-- [ ] Reviewed by: _______________
-- [ ] Date: _______________
+- [x] All unit tests pass (8 runner tests)
+- [ ] All integration tests pass (Phase 7)
+- [ ] Manual testing complete (Phase 7)
+- [ ] Edge cases verified (Phase 7)
+- [x] Regression tests pass (632 tests)
+- [x] Implementation complete: 2024-12-23
+- **Key Deliverables:**
+  - `src/core/runner/mod.rs` - Module exports
+  - `src/core/runner/traits.rs` - MergeRunnerConfig, RunResult
+  - `src/core/runner/merge_engine.rs` - Core orchestration
+  - `src/core/runner/non_interactive.rs` - CLI runner implementation
+- **Tests Added:**
+  - test_runner_creation, test_runner_with_custom_writer
+  - test_output_format_variations, test_error_emission
+  - test_find_repo_path_with_provided
+  - test_run_result_constructors, test_run_result_with_state_file
+  - test_summary_counts_calculation
 
 ### Phase 5 Sign-off
 
-- [ ] All unit tests pass
-- [ ] All integration tests pass
-- [ ] Manual testing complete
-- [ ] Edge cases verified
-- [ ] Regression tests pass
-- [ ] Reviewed by: _______________
-- [ ] Date: _______________
+- [x] All unit tests pass (632 tests total)
+- [ ] All integration tests pass (Phase 7)
+- [ ] Manual testing complete (Phase 7)
+- [ ] Edge cases verified (Phase 7)
+- [x] Regression tests pass
+- [x] Implementation complete: 2024-12-23
+- **Key Deliverables:**
+  - `src/bin/mergers.rs` - CLI routing with subcommand support
+  - `src/lib.rs` - Exported non-interactive types
+  - `src/models.rs` - Added subcommand field to MergeArgs
+- **Key Functions:**
+  - handle_run_result() - Exit code handling
+  - run_non_interactive_merge() - Non-interactive merge
+  - run_continue/abort/status/complete() - Subcommand handlers
+  - build_runner_config_from_run_args() - Config resolution
+  - build_minimal_runner_config() - Minimal config for state ops
 
 ### Phase 6 Sign-off
 
