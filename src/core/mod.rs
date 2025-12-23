@@ -7,9 +7,11 @@
 //! - Exit codes for CLI operations
 //! - Core operations extracted from UI logic
 //! - Output formatting for different display modes
+//! - Merge runner for non-interactive mode
 
 pub mod operations;
 pub mod output;
+pub mod runner;
 pub mod state;
 
 /// Exit codes for non-interactive merge operations.

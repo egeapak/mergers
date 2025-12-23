@@ -8,6 +8,7 @@ mod events;
 mod format;
 
 pub use events::{
-    ConflictInfo, PostMergeStatus, ProgressEvent, StatusInfo, SummaryInfo, SummaryItem,
+    ConflictInfo, ItemStatus, PostMergeStatus, ProgressEvent, ProgressSummary, StatusInfo,
+    SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
 };
 pub use format::{OutputFormatter, OutputWriter};
