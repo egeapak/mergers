@@ -16,13 +16,13 @@ This document tracks the implementation progress of the non-interactive merge mo
 |-------|--------|----------|
 | Phase 1: Foundation | Complete | 100% |
 | Phase 2: Core Operations | Complete | 100% |
-| Phase 3: Output System | Not Started | 0% |
+| Phase 3: Output System | Complete | 100% |
 | Phase 4: Non-Interactive Runner | Not Started | 0% |
 | Phase 5: Entry Point Integration | Not Started | 0% |
 | Phase 6: Interactive Mode Integration | Not Started | 0% |
 | Phase 7: Testing & Documentation | Not Started | 0% |
 
-**Overall Progress:** ~28%
+**Overall Progress:** ~42%
 
 ---
 
@@ -150,32 +150,33 @@ None
 
 ## Phase 3: Output System
 
-**Status:** Not Started
+**Status:** Complete ✅
 **Estimated Effort:** Small
 
 ### Tasks
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Create `src/core/output/mod.rs` | ⬜ Not Started | |
-| Create `src/core/output/events.rs` | ⬜ Not Started | |
-| Define `ProgressEvent` enum | ⬜ Not Started | All event types |
-| Implement serde serialization for events | ⬜ Not Started | |
-| Create `src/core/output/format.rs` | ⬜ Not Started | |
-| Implement `TextFormatter` | ⬜ Not Started | Human-readable |
-| Implement `JsonFormatter` | ⬜ Not Started | Summary at end |
-| Implement `NdjsonFormatter` | ⬜ Not Started | Streaming |
-| Define `ConflictOutput` struct | ⬜ Not Started | |
-| Define `StatusOutput` struct | ⬜ Not Started | |
-| Define `SummaryOutput` struct | ⬜ Not Started | |
-| Write unit tests for event serialization | ⬜ Not Started | |
-| Write unit tests for formatters | ⬜ Not Started | |
+| Create `src/core/output/mod.rs` | ✅ Complete | Module exports |
+| Create `src/core/output/events.rs` | ✅ Complete | |
+| Define `ProgressEvent` enum | ✅ Complete | All event types including Status(Box<StatusInfo>) |
+| Implement serde serialization for events | ✅ Complete | Tagged enum with snake_case |
+| Create `src/core/output/format.rs` | ✅ Complete | |
+| Implement `TextFormatter` | ✅ Complete | Human-readable with progress bars and symbols |
+| Implement `JsonFormatter` | ✅ Complete | Summary at end with buffered events |
+| Implement `NdjsonFormatter` | ✅ Complete | Streaming one JSON per line |
+| Define `ConflictOutput` struct | ✅ Complete | ConflictInfo with resolution instructions |
+| Define `StatusOutput` struct | ✅ Complete | StatusInfo with progress and conflict info |
+| Define `SummaryOutput` struct | ✅ Complete | SummaryInfo with counts and post-merge results |
+| Write unit tests for event serialization | ✅ Complete | 10 tests for events.rs |
+| Write unit tests for formatters | ✅ Complete | 9 tests for format.rs |
 
 ### Files Created/Modified
 
-- [ ] `src/core/output/mod.rs`
-- [ ] `src/core/output/events.rs`
-- [ ] `src/core/output/format.rs`
+- [x] `src/core/output/mod.rs`
+- [x] `src/core/output/events.rs`
+- [x] `src/core/output/format.rs`
+- [x] `src/core/mod.rs` (added output module export)
 
 ### Blockers
 
@@ -184,8 +185,9 @@ None
 ### Notes
 
 - NDJSON = one JSON object per line
-- Text format should use colors where appropriate (check if terminal)
-- Quiet mode suppresses progress, shows only errors and final result
+- Text format uses Unicode symbols (✓, ✗, ⊘, ⚠, ○, ◐)
+- Quiet mode suppresses progress, shows only errors and conflicts
+- OutputWriter trait abstracts the format-specific logic
 
 ---
 
@@ -439,6 +441,40 @@ None
 
 **Next Steps:**
 - Phase 3: Output System
+- Phase 4: Non-Interactive Runner
+
+---
+
+### Session 4: 2024-12-23 - Phase 3 Implementation
+
+**Duration:** ~1 hour
+**Activities:**
+- Implemented Phase 3: Output System
+- Created events module with ProgressEvent enum
+- Created format module with OutputFormatter trait
+- Added 19 unit tests for output system
+
+**Phase 3 Deliverables:**
+- `src/core/output/mod.rs` - Module exports
+- `src/core/output/events.rs` - ProgressEvent enum, ConflictInfo, StatusInfo, SummaryInfo
+- `src/core/output/format.rs` - OutputFormatter trait, OutputWriter implementation
+
+**Key Types:**
+- `ProgressEvent` - 10 event variants (Start, CherryPickStart/Success/Conflict/Failed/Skipped, PostMergeStart/Progress, Complete, Status, Aborted, Error)
+- `ConflictInfo` - Detailed conflict info with resolution instructions
+- `StatusInfo` - Current merge state with progress summary
+- `SummaryInfo` - Final output with counts and results
+- `OutputFormatter` - Trait for write_event, write_conflict, write_status, write_summary
+- `OutputWriter<W>` - Generic implementation supporting Text/JSON/NDJSON formats
+
+**Tests Added:**
+- Event serialization round-trips
+- Text/NDJSON/JSON output formatting
+- Quiet mode suppression
+- Progress bar formatting
+- String truncation
+
+**Next Steps:**
 - Phase 4: Non-Interactive Runner
 
 ---

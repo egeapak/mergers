@@ -9,6 +9,7 @@
 //! - Output formatting for different display modes
 
 pub mod operations;
+pub mod output;
 pub mod state;
 
 /// Exit codes for non-interactive merge operations.
