@@ -70,6 +70,38 @@ pub enum ProgressEvent {
         reason: Option<String>,
     },
 
+    /// Dependency analysis is starting.
+    DependencyAnalysisStart {
+        /// Number of PRs to analyze.
+        pr_count: usize,
+    },
+
+    /// Dependency analysis completed.
+    DependencyAnalysisComplete {
+        /// Number of PRs with independent relationships.
+        independent: usize,
+        /// Number of PRs with partial dependencies.
+        partial: usize,
+        /// Number of PRs with full dependencies.
+        dependent: usize,
+    },
+
+    /// A dependency warning was detected.
+    DependencyWarning {
+        /// The selected PR that has the dependency.
+        selected_pr_id: i32,
+        /// Title of the selected PR.
+        selected_pr_title: String,
+        /// The unselected PR that is depended upon.
+        unselected_pr_id: i32,
+        /// Title of the unselected PR.
+        unselected_pr_title: String,
+        /// Whether this is a critical (line-level overlap) dependency.
+        is_critical: bool,
+        /// List of shared files.
+        shared_files: Vec<String>,
+    },
+
     /// Post-merge operations are starting.
     PostMergeStart {
         /// Total number of tasks to execute.

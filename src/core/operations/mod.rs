@@ -8,11 +8,13 @@
 //!
 //! - [`data_loading`] - Fetching PRs and work items from Azure DevOps
 //! - [`pr_selection`] - Filtering and selecting PRs by work item state
+//! - [`dependency_analysis`] - Analyzing file-level dependencies between PRs
 //! - [`cherry_pick`] - Cherry-picking commits with conflict handling
 //! - [`post_merge`] - Tagging PRs and updating work items
 
 pub mod cherry_pick;
 pub mod data_loading;
+pub mod dependency_analysis;
 pub mod post_merge;
 pub mod pr_selection;
 
@@ -22,6 +24,11 @@ pub use cherry_pick::{
 };
 pub use data_loading::{
     DataLoadingConfig, DataLoadingOperation, DataLoadingProgress, DataLoadingResult,
+};
+pub use dependency_analysis::{
+    ChangeType, DependencyAnalysisConfig, DependencyAnalysisResult, DependencyAnalyzer,
+    DependencyCategory, DependencyWarning, FileChange, LineRange, OverlappingFile, PRDependency,
+    PRDependencyGraph, PRDependencyNode, PRInfo,
 };
 pub use post_merge::{
     PostMergeConfig, PostMergeOperation, PostMergeProgress, PostMergeTask, PostMergeTaskResult,

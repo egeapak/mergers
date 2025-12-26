@@ -344,6 +344,43 @@ impl<W: Write> OutputWriter<W> {
                     .unwrap_or_default();
                 self.writeln(&format!(" ⊘ PR #{} skipped{}", pr_id, reason_str))?;
             }
+            ProgressEvent::DependencyAnalysisStart { pr_count } => {
+                self.writeln(&format!("Analyzing dependencies for {} PRs...", pr_count))?;
+            }
+            ProgressEvent::DependencyAnalysisComplete {
+                independent,
+                partial,
+                dependent,
+            } => {
+                self.writeln(&format!(
+                    "  Dependencies: {} independent, {} partial, {} overlapping",
+                    independent, partial, dependent
+                ))?;
+            }
+            ProgressEvent::DependencyWarning {
+                selected_pr_id,
+                unselected_pr_id,
+                unselected_pr_title,
+                is_critical,
+                shared_files,
+                ..
+            } => {
+                let severity = if *is_critical {
+                    "⚠ CRITICAL"
+                } else {
+                    "⚡ Warning"
+                };
+                self.writeln(&format!(
+                    "  {} PR #{} depends on unselected PR #{} ({})",
+                    severity,
+                    selected_pr_id,
+                    unselected_pr_id,
+                    truncate_string(unselected_pr_title, 30)
+                ))?;
+                if !shared_files.is_empty() {
+                    self.writeln(&format!("    Shared files: {}", shared_files.join(", ")))?;
+                }
+            }
             ProgressEvent::PostMergeStart { task_count } => {
                 self.writeln("")?;
                 self.writeln(&format!("Running {} post-merge tasks...", task_count))?;
