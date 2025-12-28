@@ -1,5 +1,6 @@
 use super::{DataLoadingState, VersionInputState};
 use crate::{
+    core::operations::DependencyCategory,
     models::WorkItemHistory,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
@@ -1223,7 +1224,7 @@ impl ModeState for PullRequestSelectionState {
             chunk_idx += 1;
         }
         // Create table headers
-        let header_cells = ["", "PR #", "Date", "Title", "Author", "Work Items"]
+        let header_cells = ["", "PR #", "Date", "Title", "Author", "Deps", "Work Items"]
             .iter()
             .map(|h| {
                 Cell::from(*h).style(
@@ -1284,6 +1285,11 @@ impl ModeState for PullRequestSelectionState {
                     Style::default()
                 };
 
+                // Get dependency counts for this PR
+                let (partial_deps, full_deps) = get_dependency_counts(app, pr_with_wi.pr.id);
+                let deps_text = format_deps_count(partial_deps, full_deps);
+                let deps_style = get_deps_style(partial_deps, full_deps, pr_with_wi.selected);
+
                 let cells = vec![
                     Cell::from(selected).style(if pr_with_wi.selected {
                         Style::default()
@@ -1317,6 +1323,7 @@ impl ModeState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
+                    Cell::from(deps_text).style(deps_style),
                     Cell::from(work_items).style(if pr_with_wi.selected {
                         Style::default().fg(Color::White)
                     } else {
@@ -1334,8 +1341,9 @@ impl ModeState for PullRequestSelectionState {
                 Constraint::Length(3),      // Selection checkbox
                 Constraint::Length(8),      // PR # (fixed width)
                 Constraint::Length(12),     // Date
-                Constraint::Percentage(30), // Title
-                Constraint::Percentage(20), // Author
+                Constraint::Percentage(25), // Title (reduced from 30%)
+                Constraint::Percentage(15), // Author (reduced from 20%)
+                Constraint::Length(5),      // Deps (P/D format)
                 Constraint::Percentage(25), // Work Items
             ],
         )
@@ -1678,6 +1686,45 @@ fn get_state_color(state: &str) -> Color {
         "Hold" => Color::Cyan,
         _ => Color::White,
     }
+}
+
+/// Returns the dependency counts (partial, full) for a PR.
+///
+/// Returns (0, 0) if dependency graph is not available.
+fn get_dependency_counts(app: &MergeApp, pr_id: i32) -> (usize, usize) {
+    if let Some(graph) = app.dependency_graph()
+        && let Some(node) = graph.get_node(pr_id)
+    {
+        let mut partial = 0;
+        let mut full = 0;
+        for dep in &node.dependencies {
+            match &dep.category {
+                DependencyCategory::PartiallyDependent { .. } => partial += 1,
+                DependencyCategory::Dependent { .. } => full += 1,
+                DependencyCategory::Independent => {}
+            }
+        }
+        return (partial, full);
+    }
+    (0, 0)
+}
+
+/// Returns the style for the dependency column based on counts.
+fn get_deps_style(partial: usize, full: usize, is_selected: bool) -> Style {
+    if is_selected {
+        Style::default().fg(Color::White)
+    } else if full > 0 {
+        Style::default().fg(Color::Red)
+    } else if partial > 0 {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Green)
+    }
+}
+
+/// Formats the dependency count as "P/D".
+fn format_deps_count(partial: usize, full: usize) -> String {
+    format!("{}/{}", partial, full)
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 # PR Dependency UI Integration - Progress Tracker
 
-## Status: Phase 1 Complete, Starting Phase 2
+## Status: Phases 1-2 Complete, Starting Phase 3
 
 **Last Updated**: 2024-12-28
-**Current Phase**: Implementation Phase 2
+**Current Phase**: Implementation Phase 3
 **Blocked By**: None
 
 ---
@@ -13,7 +13,7 @@
 | Phase | Description | Status | Completion |
 |-------|-------------|--------|------------|
 | 1 | Move Analysis to Data Loading | ✅ Complete | 100% |
-| 2 | Add Dependency Column to PR List | ⏳ Pending | 0% |
+| 2 | Add Dependency Column to PR List | ✅ Complete | 100% |
 | 3 | Dependency Graph Dialog | ⏳ Pending | 0% |
 | 4 | Unselected Dependency Highlighting | ⏳ Pending | 0% |
 | 5 | Status Bar Summary | ⏳ Pending | 0% |
@@ -45,17 +45,17 @@
 
 ---
 
-## Phase 2: Add Dependency Column
+## Phase 2: Add Dependency Column ✅
 
 ### Tasks
 
-- [ ] Update column constraints (adjust widths for 7 columns)
-- [ ] Add "Deps" column header
-- [ ] Implement dependency count cell rendering with `P/D` format
-- [ ] Add color coding: Green (0/0), Yellow (P>0), Red (D>0)
-- [ ] Update header row alignment
-- [ ] Add tests for column formatting
-- [ ] Add snapshot tests for new column
+- [x] Update column constraints (adjust widths for 7 columns)
+- [x] Add "Deps" column header
+- [x] Implement dependency count cell rendering with `P/D` format
+- [x] Add color coding: Green (0/0), Yellow (P>0), Red (D>0)
+- [x] Update header row alignment
+- [x] Add helper functions: `get_dependency_counts()`, `get_deps_style()`, `format_deps_count()`
+- [x] Update snapshot tests for new column (14 snapshots updated)
 
 ### Design Decisions (Finalized)
 - Column format: `P/D` (partial/full counts)
