@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 1968
+assertion_line: 2404
 expression: harness.backend()
 ---
 "                                                                                "
@@ -29,7 +29,7 @@ expression: harness.backend()
 " │                                                                            │ "
 " │                                                                            │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
-" ┌Help────────────────────────────────────────────────────────────────────────┐ "
+" ┌Help | Selected: 6──────────────────────────────────────────────────────────┐ "
 " │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | E│ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

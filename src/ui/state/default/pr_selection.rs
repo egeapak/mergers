@@ -1729,11 +1729,26 @@ impl ModeState for PullRequestSelectionState {
         let help_text = if self.search_iteration_mode {
             "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | d: Deps | s: Multi-select by states | r: Refresh | q: Quit"
+        };
+
+        // Build status summary for Help title
+        let selected_count = app.pull_requests().iter().filter(|pr| pr.selected).count();
+        let help_title = if selected_count > 0 {
+            if missing_deps_count > 0 {
+                format!(
+                    "Help | Selected: {} | ⚠ Missing deps: {}",
+                    selected_count, missing_deps_count
+                )
+            } else {
+                format!("Help | Selected: {}", selected_count)
+            }
+        } else {
+            "Help".to_string()
         };
 
         let help = List::new(vec![ListItem::new(help_text)])
-            .block(Block::default().borders(Borders::ALL).title("Help"));
+            .block(Block::default().borders(Borders::ALL).title(help_title));
 
         f.render_widget(help, chunks[chunk_idx]);
 

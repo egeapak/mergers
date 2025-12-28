@@ -1,9 +1,9 @@
 # PR Dependency UI Integration - Progress Tracker
 
-## Status: Phases 1-4 Complete, Starting Phase 5
+## Status: All Phases Complete ✅
 
 **Last Updated**: 2025-12-28
-**Current Phase**: Implementation Phase 5
+**Current Phase**: Complete
 **Blocked By**: None
 
 ---
@@ -16,7 +16,7 @@
 | 2 | Add Dependency Column to PR List | ✅ Complete | 100% |
 | 3 | Dependency Graph Dialog | ✅ Complete | 100% |
 | 4 | Unselected Dependency Highlighting | ✅ Complete | 100% |
-| 5 | Status Bar Summary | ⏳ Pending | 0% |
+| 5 | Status Bar Summary | ✅ Complete | 100% |
 
 ---
 
@@ -112,14 +112,20 @@
 
 ---
 
-## Phase 5: Status Bar Summary
+## Phase 5: Status Bar Summary ✅
 
 ### Tasks
 
-- [ ] Add dependency summary to status bar
-- [ ] Show selected count with dependency breakdown
-- [ ] Update on selection changes
-- [ ] Add tests for summary generation
+- [x] Add dependency summary to Help block title
+- [x] Show selected count with dependency breakdown
+- [x] Update on selection changes
+- [x] Add 'd' shortcut to help text
+- [x] Update snapshot tests (3 snapshots updated)
+
+### Notes
+- Summary shown in Help block title: "Help | Selected: N | ⚠ Missing deps: M"
+- Only shows selection count when PRs are selected
+- Only shows missing deps warning when there are unselected dependencies
 
 ### Dependencies
 - Phase 4 complete
