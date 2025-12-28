@@ -42,6 +42,7 @@ sha2 = "=0.10.9"
 libc = "=0.2.172"
 time = "0.3"
 rayon = "1.10"
+roaring = "0.10"
 
 # Azure DevOps API client
 azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
