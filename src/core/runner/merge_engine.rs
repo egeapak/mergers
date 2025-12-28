@@ -402,6 +402,87 @@ impl MergeEngine {
         }
     }
 
+    /// Analyzes dependencies between PRs based on file changes.
+    ///
+    /// This method:
+    /// 1. Extracts commit IDs from the PRs
+    /// 2. Fetches commits if they don't exist locally
+    /// 3. Parses file changes from each commit
+    /// 4. Runs the dependency analyzer to categorize relationships
+    ///
+    /// # Arguments
+    ///
+    /// * `prs` - List of PRs to analyze (should be in chronological order)
+    /// * `repo_path` - Path to the repository for git operations
+    ///
+    /// # Returns
+    ///
+    /// A `DependencyAnalysisResult` containing the dependency graph and warnings.
+    pub fn analyze_dependencies(
+        &self,
+        prs: &[PullRequestWithWorkItems],
+        repo_path: &Path,
+    ) -> Result<crate::core::operations::DependencyAnalysisResult> {
+        use crate::core::operations::{DependencyAnalyzer, FileChange, PRInfo};
+        use std::collections::HashMap;
+
+        // Convert PRs to PRInfo format
+        let pr_infos: Vec<PRInfo> = prs
+            .iter()
+            .map(|pr| {
+                PRInfo::new(
+                    pr.pr.id,
+                    pr.pr.title.clone(),
+                    pr.selected,
+                    pr.pr
+                        .last_merge_commit
+                        .as_ref()
+                        .map(|c| c.commit_id.clone()),
+                )
+            })
+            .collect();
+
+        // Collect commit IDs for fetching
+        let commit_ids: Vec<String> = pr_infos
+            .iter()
+            .filter_map(|pr| pr.commit_id.clone())
+            .collect();
+
+        // Try to fetch commits (best effort - some may already exist locally)
+        if !commit_ids.is_empty() {
+            let _ = git::fetch_commits_for_analysis(repo_path, &commit_ids);
+        }
+
+        // Get file changes for each PR
+        let mut pr_changes: HashMap<i32, Vec<FileChange>> = HashMap::new();
+
+        for pr in &pr_infos {
+            if let Some(ref commit_id) = pr.commit_id {
+                // Check if commit exists before trying to analyze
+                if git::commit_exists(repo_path, commit_id) {
+                    match git::get_commit_changes_with_ranges(repo_path, commit_id) {
+                        Ok(changes) => {
+                            pr_changes.insert(pr.id, changes);
+                        }
+                        Err(e) => {
+                            // Log warning but continue - commit might not be fetchable
+                            eprintln!(
+                                "Warning: Could not analyze changes for PR #{}: {}",
+                                pr.id, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Run the dependency analyzer
+        let analyzer = DependencyAnalyzer::new();
+        let result = analyzer.analyze(&pr_infos, &pr_changes);
+
+        Ok(result)
+    }
+
     /// Cleans up a merge operation (removes worktree, aborts cherry-pick).
     pub fn cleanup(&self, state: &MergeStateFile) -> Result<()> {
         // Abort any in-progress cherry-pick

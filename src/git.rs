@@ -1171,6 +1171,248 @@ pub fn check_patch_merged(
     Ok(found_count >= threshold)
 }
 
+// ==================== Commit Change Analysis ====================
+
+use crate::core::operations::dependency_analysis::{ChangeType, FileChange, LineRange};
+
+/// Gets the files changed in a commit with their change types.
+///
+/// Returns a list of file changes without line range information.
+/// Use `get_commit_changes_with_ranges` if line-level detail is needed.
+pub fn get_commit_file_changes(repo_path: &Path, commit_id: &str) -> Result<Vec<FileChange>> {
+    validate_git_ref(commit_id)?;
+
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["show", "--format=", "--name-status", commit_id])
+        .output()
+        .context("Failed to execute git show --name-status")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to get commit file changes: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut changes = Vec::new();
+
+    for line in output_str.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Format: STATUS<tab>PATH or STATUS<tab>OLD_PATH<tab>NEW_PATH (for renames)
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        let status = parts[0];
+        let change_type = match ChangeType::from_git_status(status) {
+            Some(ct) => ct,
+            None => continue,
+        };
+
+        let mut change = if change_type == ChangeType::Rename && parts.len() >= 3 {
+            // Rename: STATUS OLD_PATH NEW_PATH
+            let mut c = FileChange::new(parts[2].to_string(), change_type);
+            c.original_path = Some(parts[1].to_string());
+            c
+        } else {
+            FileChange::new(parts[1].to_string(), change_type)
+        };
+
+        // For renames with percentage (R100), extract just the type
+        if status.starts_with('R') || status.starts_with('C') {
+            change = FileChange::new(
+                if parts.len() >= 3 {
+                    parts[2].to_string()
+                } else {
+                    parts[1].to_string()
+                },
+                change_type,
+            );
+            if parts.len() >= 3 {
+                change.original_path = Some(parts[1].to_string());
+            }
+        }
+
+        changes.push(change);
+    }
+
+    Ok(changes)
+}
+
+/// Gets the files changed in a commit with line range information.
+///
+/// This parses the unified diff output to extract which lines were modified.
+/// For added files, returns a single range covering all new lines.
+/// For deleted files, returns empty line ranges (the file no longer exists).
+pub fn get_commit_changes_with_ranges(
+    repo_path: &Path,
+    commit_id: &str,
+) -> Result<Vec<FileChange>> {
+    validate_git_ref(commit_id)?;
+
+    // First get the basic file changes
+    let mut changes = get_commit_file_changes(repo_path, commit_id)?;
+
+    // Now get the detailed diff to extract line ranges
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "show",
+            "--format=",
+            "-U0", // Zero context lines for precise ranges
+            "--no-color",
+            commit_id,
+        ])
+        .output()
+        .context("Failed to execute git show for diff")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "Failed to get commit diff: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let diff_output = String::from_utf8_lossy(&output.stdout);
+    let line_ranges_map = parse_unified_diff(&diff_output);
+
+    // Merge line ranges into the file changes
+    for change in &mut changes {
+        if let Some(ranges) = line_ranges_map.get(&change.path) {
+            change.line_ranges = ranges.clone();
+        }
+        // Also check original path for renames
+        if let Some(ref orig_path) = change.original_path
+            && let Some(ranges) = line_ranges_map.get(orig_path)
+        {
+            // For renames, include ranges from the original file
+            change.line_ranges.extend(ranges.clone());
+        }
+    }
+
+    Ok(changes)
+}
+
+/// Parses a unified diff output to extract line ranges per file.
+///
+/// Returns a map from file path to the line ranges that were modified.
+fn parse_unified_diff(diff: &str) -> std::collections::HashMap<String, Vec<LineRange>> {
+    let mut result: std::collections::HashMap<String, Vec<LineRange>> =
+        std::collections::HashMap::new();
+    let mut current_file: Option<String> = None;
+
+    for line in diff.lines() {
+        // Detect file header: +++ b/path/to/file
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            current_file = Some(path.to_string());
+            continue;
+        }
+        // Also handle +++ /dev/null for deleted files
+        if line == "+++ /dev/null" {
+            current_file = None;
+            continue;
+        }
+
+        // Parse hunk headers: @@ -old_start,old_count +new_start,new_count @@
+        if line.starts_with("@@")
+            && let Some(ref file) = current_file
+            && let Some(range) = parse_hunk_header(line)
+        {
+            result.entry(file.clone()).or_default().push(range);
+        }
+    }
+
+    result
+}
+
+/// Parses a hunk header to extract the new file line range.
+///
+/// Format: @@ -old_start,old_count +new_start,new_count @@ optional context
+/// Examples:
+///   @@ -10,5 +10,7 @@ -> lines 10-16 modified
+///   @@ -10 +10,7 @@ -> lines 10-16 modified (old count defaults to 1)
+///   @@ -10,5 +10 @@ -> line 10 modified (new count defaults to 1)
+fn parse_hunk_header(header: &str) -> Option<LineRange> {
+    // Find the +start,count portion
+    let plus_idx = header.find('+')?;
+    let at_idx = header[plus_idx..].find(" @@")?;
+    let range_str = &header[plus_idx + 1..plus_idx + at_idx];
+
+    // Parse start,count or just start
+    let parts: Vec<&str> = range_str.split(',').collect();
+    let start: u32 = parts.first()?.parse().ok()?;
+
+    // If count is 0, this is a deletion at this position - no new lines
+    let count: u32 = if parts.len() > 1 {
+        parts[1].parse().ok()?
+    } else {
+        1 // Default count is 1
+    };
+
+    if count == 0 {
+        // This is a pure deletion, no lines added at this position
+        return None;
+    }
+
+    let end = start + count - 1;
+    Some(LineRange::new(start, end))
+}
+
+/// Fetches commits from origin for the given commit IDs.
+///
+/// This is useful for fetching PR merge commits before analyzing their changes.
+pub fn fetch_commits_for_analysis(repo_path: &Path, commit_ids: &[String]) -> Result<()> {
+    for commit_id in commit_ids {
+        // Try to fetch the commit - if it already exists locally, this is a no-op
+        let output = Command::new("git")
+            .current_dir(repo_path)
+            .args(["cat-file", "-t", commit_id])
+            .output()?;
+
+        if output.status.success() {
+            // Commit already exists locally
+            continue;
+        }
+
+        // Try to fetch it from origin
+        let fetch_output = Command::new("git")
+            .current_dir(repo_path)
+            .args(["fetch", "origin", commit_id])
+            .output();
+
+        // Ignore fetch errors - the commit might not be fetchable directly
+        // (e.g., if it's not a ref). The caller should handle missing commits.
+        if let Ok(out) = fetch_output
+            && !out.status.success()
+        {
+            // Try with --depth=1 for shallow repos
+            let _ = Command::new("git")
+                .current_dir(repo_path)
+                .args(["fetch", "--depth=1", "origin", commit_id])
+                .output();
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks if a commit exists in the local repository.
+pub fn commit_exists(repo_path: &Path, commit_id: &str) -> bool {
+    Command::new("git")
+        .current_dir(repo_path)
+        .args(["cat-file", "-t", commit_id])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -128,6 +128,48 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
+        // Run dependency analysis
+        self.emit_event(ProgressEvent::DependencyAnalysisStart {
+            pr_count: selected_count,
+        });
+
+        match engine.analyze_dependencies(&prs, &repo_path) {
+            Ok(analysis_result) => {
+                // Emit summary
+                let summary = analysis_result.graph.summary();
+                self.emit_event(ProgressEvent::DependencyAnalysisComplete {
+                    independent: summary.independent_relationships,
+                    partial: summary.partial_relationships,
+                    dependent: summary.dependent_relationships,
+                });
+
+                // Emit warnings
+                for warning in &analysis_result.warnings {
+                    if let crate::core::operations::DependencyWarning::UnselectedDependency {
+                        selected_pr_id,
+                        selected_pr_title,
+                        unselected_pr_id,
+                        unselected_pr_title,
+                        category,
+                    } = warning
+                    {
+                        self.emit_event(ProgressEvent::DependencyWarning {
+                            selected_pr_id: *selected_pr_id,
+                            selected_pr_title: selected_pr_title.clone(),
+                            unselected_pr_id: *unselected_pr_id,
+                            unselected_pr_title: unselected_pr_title.clone(),
+                            is_critical: warning.is_critical(),
+                            shared_files: category.shared_files().to_vec(),
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                // Dependency analysis failure is non-fatal, just log a warning
+                eprintln!("Warning: Dependency analysis failed: {}", e);
+            }
+        }
+
         // Create state file
         let base_repo_path = if is_worktree {
             self.config.local_repo.clone()
