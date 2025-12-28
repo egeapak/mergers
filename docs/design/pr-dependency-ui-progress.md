@@ -1,9 +1,9 @@
 # PR Dependency UI Integration - Progress Tracker
 
-## Status: Phases 1-2 Complete, Starting Phase 3
+## Status: Phases 1-3 Complete, Starting Phase 4
 
-**Last Updated**: 2024-12-28
-**Current Phase**: Implementation Phase 3
+**Last Updated**: 2025-12-28
+**Current Phase**: Implementation Phase 4
 **Blocked By**: None
 
 ---
@@ -14,7 +14,7 @@
 |-------|-------------|--------|------------|
 | 1 | Move Analysis to Data Loading | ✅ Complete | 100% |
 | 2 | Add Dependency Column to PR List | ✅ Complete | 100% |
-| 3 | Dependency Graph Dialog | ⏳ Pending | 0% |
+| 3 | Dependency Graph Dialog | ✅ Complete | 100% |
 | 4 | Unselected Dependency Highlighting | ⏳ Pending | 0% |
 | 5 | Status Bar Summary | ⏳ Pending | 0% |
 
@@ -62,21 +62,26 @@
 
 ---
 
-## Phase 3: Dependency Dialog
+## Phase 3: Dependency Dialog ✅
 
 ### Tasks
 
-- [ ] Create `DependencyDialogState` struct
-- [ ] Add dialog rendering function (centered overlay)
-- [ ] Implement full transitive dependency tree computation (BFS)
-- [ ] Render tree-view for dependencies/dependents
-- [ ] Color direct dependencies in Cyan
-- [ ] Color transitive dependencies in Gray
-- [ ] Add file overlap details display
-- [ ] Handle keyboard navigation (scroll with ↑/↓, close with Esc)
-- [ ] Add 'd' keybinding
-- [ ] Update help text with new shortcut
-- [ ] Add snapshot tests for dialog
+- [x] Add dialog state fields to `PullRequestSelectionState`
+- [x] Add dialog rendering function (centered overlay)
+- [x] Implement full transitive dependency tree computation (BFS)
+- [x] Render tree-view for dependencies/dependents
+- [x] Color direct dependencies in Cyan
+- [x] Color transitive dependencies in Gray
+- [x] Handle keyboard navigation (scroll with ↑/↓, close with Esc/d/q)
+- [x] Add 'd' keybinding
+- [x] Update help text with new shortcut
+
+### Notes
+- Added `DependencyEntry` type alias for cleaner function signatures
+- Dialog shows dependencies (PRs this PR depends on) and dependents (PRs that depend on this PR)
+- BFS traversal for transitive dependency computation
+- Direct deps shown in Cyan, transitive deps in DarkGray
+- Graceful handling when dependency graph is not available
 
 ### Design Decisions (Finalized)
 - Show full transitive tree with color differentiation

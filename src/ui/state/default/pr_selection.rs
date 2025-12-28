@@ -23,6 +23,9 @@ use ratatui::{
 use std::collections::HashSet;
 use std::time::Instant;
 
+/// A dependency entry with PR ID, title, category, and whether it's transitive.
+type DependencyEntry = (i32, String, DependencyCategory, bool);
+
 #[derive(Debug, Clone)]
 enum SearchQuery {
     PullRequestTitle(String),
@@ -51,6 +54,10 @@ pub struct PullRequestSelectionState {
     last_click_time: Option<Instant>,
     last_click_row: Option<usize>,
     table_area: Option<Rect>,
+    // Dependency dialog
+    show_dependency_dialog: bool,
+    dependency_dialog_pr_index: Option<usize>,
+    dependency_dialog_scroll: usize,
 }
 
 impl Default for PullRequestSelectionState {
@@ -80,6 +87,10 @@ impl PullRequestSelectionState {
             // Mouse support
             last_click_time: None,
             last_click_row: None,
+            // Dependency dialog
+            show_dependency_dialog: false,
+            dependency_dialog_pr_index: None,
+            dependency_dialog_scroll: 0,
             table_area: None,
         }
     }
@@ -1160,6 +1171,323 @@ impl PullRequestSelectionState {
             .alignment(Alignment::Center);
         f.render_widget(help_widget, chunks[2]);
     }
+
+    /// Renders the dependency dialog overlay.
+    fn render_dependency_dialog(&self, f: &mut Frame, area: Rect, app: &MergeApp) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::{Clear, Wrap};
+
+        // Get the PR for this dialog
+        let pr_index = match self.dependency_dialog_pr_index {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        let pr_with_wi = match app.pull_requests().get(pr_index) {
+            Some(pr) => pr,
+            None => return,
+        };
+
+        let pr_id = pr_with_wi.pr.id;
+        let pr_title = &pr_with_wi.pr.title;
+
+        // Calculate popup dimensions
+        let popup_width = (area.width as f32 * 0.7).min(80.0) as u16;
+        let popup_height = (area.height as f32 * 0.7).min(25.0) as u16;
+        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+        // Clear the area
+        f.render_widget(Clear, popup_area);
+
+        // Collect dependency information
+        let mut lines: Vec<Line> = Vec::new();
+
+        // Get dependency graph
+        if let Some(graph) = app.dependency_graph() {
+            // Compute transitive dependencies
+            let (deps, dependents) = compute_transitive_dependencies(graph, pr_id, app);
+
+            // Dependencies section
+            lines.push(Line::from(Span::styled(
+                "◀ Dependencies (PRs this PR depends on):",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            if deps.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  No dependencies",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            } else {
+                for (dep_pr_id, dep_title, category, is_transitive) in &deps {
+                    let cat_label = match category {
+                        DependencyCategory::Dependent { .. } => "[FULL]",
+                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
+                        DependencyCategory::Independent => "",
+                    };
+                    let cat_color = match category {
+                        DependencyCategory::Dependent { .. } => Color::Red,
+                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
+                        DependencyCategory::Independent => Color::Green,
+                    };
+                    let label_color = if *is_transitive {
+                        Color::DarkGray
+                    } else {
+                        Color::Cyan
+                    };
+                    let label = if *is_transitive {
+                        "(transitive)"
+                    } else {
+                        "(direct)"
+                    };
+                    let prefix = if *is_transitive {
+                        "    └─ "
+                    } else {
+                        "  ├─ "
+                    };
+
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(label_color)),
+                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
+                        Span::styled(
+                            truncate_title(dep_title, 30),
+                            Style::default().fg(label_color),
+                        ),
+                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
+                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            }
+
+            lines.push(Line::from("")); // Spacer
+
+            // Dependents section
+            lines.push(Line::from(Span::styled(
+                "▶ Dependents (PRs that depend on this PR):",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            if dependents.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  No dependents",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            } else {
+                for (dep_pr_id, dep_title, category, is_transitive) in &dependents {
+                    let cat_label = match category {
+                        DependencyCategory::Dependent { .. } => "[FULL]",
+                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
+                        DependencyCategory::Independent => "",
+                    };
+                    let cat_color = match category {
+                        DependencyCategory::Dependent { .. } => Color::Red,
+                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
+                        DependencyCategory::Independent => Color::Green,
+                    };
+                    let label_color = if *is_transitive {
+                        Color::DarkGray
+                    } else {
+                        Color::Cyan
+                    };
+                    let label = if *is_transitive {
+                        "(transitive)"
+                    } else {
+                        "(direct)"
+                    };
+                    let prefix = if *is_transitive {
+                        "    └─ "
+                    } else {
+                        "  ├─ "
+                    };
+
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, Style::default().fg(label_color)),
+                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
+                        Span::styled(
+                            truncate_title(dep_title, 30),
+                            Style::default().fg(label_color),
+                        ),
+                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
+                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
+                    ]));
+                }
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "Dependency graph not available",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.push(Line::from(Span::styled(
+                "(Requires local_repo to be configured)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        // Add legend
+        lines.push(Line::from("")); // Spacer
+        lines.push(Line::from(vec![
+            Span::styled("Colors: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Direct", Style::default().fg(Color::Cyan)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Transitive", Style::default().fg(Color::DarkGray)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled("[FULL]", Style::default().fg(Color::Red)),
+            Span::styled(" = overlapping lines", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Apply scroll offset
+        let visible_height = popup_height.saturating_sub(4) as usize; // Account for borders and title
+        let max_scroll = lines.len().saturating_sub(visible_height);
+        let scroll = self.dependency_dialog_scroll.min(max_scroll);
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(scroll)
+            .take(visible_height)
+            .collect();
+
+        // Render the dialog
+        let title = format!(
+            "Dependencies for PR #{} - {}",
+            pr_id,
+            truncate_title(pr_title, 40)
+        );
+        let dialog = Paragraph::new(visible_lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .title_style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: false });
+
+        f.render_widget(dialog, popup_area);
+
+        // Add help line at bottom
+        let help_area = Rect::new(
+            popup_x,
+            popup_y + popup_height.saturating_sub(1),
+            popup_width,
+            1,
+        );
+        let help = Paragraph::new("Press Esc/d/q to close, ↑/↓ to scroll")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+        f.render_widget(help, help_area);
+    }
+}
+
+/// Computes transitive dependencies and dependents for a PR.
+///
+/// Returns (dependencies, dependents) where each is a Vec of (pr_id, title, category, is_transitive).
+fn compute_transitive_dependencies(
+    graph: &crate::core::operations::PRDependencyGraph,
+    pr_id: i32,
+    app: &MergeApp,
+) -> (Vec<DependencyEntry>, Vec<DependencyEntry>) {
+    use std::collections::VecDeque;
+
+    // Get PR titles from app
+    let get_pr_title = |id: i32| -> String {
+        app.pull_requests()
+            .iter()
+            .find(|pr| pr.pr.id == id)
+            .map(|pr| pr.pr.title.clone())
+            .unwrap_or_else(|| format!("PR #{}", id))
+    };
+
+    // Compute dependencies (PRs this PR depends on)
+    let mut dependencies = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Some(node) = graph.get_node(pr_id) {
+        // Add direct dependencies
+        for dep in &node.dependencies {
+            let title = get_pr_title(dep.to_pr_id);
+            dependencies.push((dep.to_pr_id, title, dep.category.clone(), false));
+            queue.push_back(dep.to_pr_id);
+            visited.insert(dep.to_pr_id);
+        }
+    }
+
+    // BFS for transitive dependencies
+    while let Some(current_id) = queue.pop_front() {
+        if let Some(node) = graph.get_node(current_id) {
+            for dep in &node.dependencies {
+                if !visited.contains(&dep.to_pr_id) {
+                    let title = get_pr_title(dep.to_pr_id);
+                    dependencies.push((dep.to_pr_id, title, dep.category.clone(), true));
+                    queue.push_back(dep.to_pr_id);
+                    visited.insert(dep.to_pr_id);
+                }
+            }
+        }
+    }
+
+    // Compute dependents (PRs that depend on this PR)
+    let mut dependents = Vec::new();
+    visited.clear();
+
+    if let Some(node) = graph.get_node(pr_id) {
+        // Add direct dependents
+        for &dependent_id in &node.dependents {
+            if let Some(dependent_node) = graph.get_node(dependent_id) {
+                // Find the dependency entry to get the category
+                if let Some(dep) = dependent_node
+                    .dependencies
+                    .iter()
+                    .find(|d| d.to_pr_id == pr_id)
+                {
+                    let title = get_pr_title(dependent_id);
+                    dependents.push((dependent_id, title, dep.category.clone(), false));
+                    queue.push_back(dependent_id);
+                    visited.insert(dependent_id);
+                }
+            }
+        }
+    }
+
+    // BFS for transitive dependents
+    while let Some(current_id) = queue.pop_front() {
+        if let Some(node) = graph.get_node(current_id) {
+            for &dependent_id in &node.dependents {
+                if !visited.contains(&dependent_id)
+                    && let Some(dependent_node) = graph.get_node(dependent_id)
+                    && let Some(dep) = dependent_node
+                        .dependencies
+                        .iter()
+                        .find(|d| d.to_pr_id == current_id)
+                {
+                    let title = get_pr_title(dependent_id);
+                    dependents.push((dependent_id, title, dep.category.clone(), true));
+                    queue.push_back(dependent_id);
+                    visited.insert(dependent_id);
+                }
+            }
+        }
+    }
+
+    (dependencies, dependents)
+}
+
+/// Truncates a title to fit within a given width.
+fn truncate_title(title: &str, max_len: usize) -> String {
+    if title.len() <= max_len {
+        title.to_string()
+    } else {
+        format!("{}...", &title[..max_len.saturating_sub(3)])
+    }
 }
 
 // ============================================================================
@@ -1401,9 +1729,33 @@ impl ModeState for PullRequestSelectionState {
         if self.search_mode {
             self.render_search_overlay(f, f.area());
         }
+
+        // Render dependency dialog if open
+        if self.show_dependency_dialog {
+            self.render_dependency_dialog(f, f.area(), app);
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
+        // Handle dependency dialog mode first
+        if self.show_dependency_dialog {
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('d') => {
+                    self.show_dependency_dialog = false;
+                    self.dependency_dialog_pr_index = None;
+                    self.dependency_dialog_scroll = 0;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.dependency_dialog_scroll = self.dependency_dialog_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.dependency_dialog_scroll = self.dependency_dialog_scroll.saturating_add(1);
+                }
+                _ => {}
+            }
+            return StateChange::Keep;
+        }
+
         // Handle search iteration mode first (even when search_mode is false)
         if self.search_iteration_mode && !self.search_mode {
             match code {
@@ -1572,6 +1924,15 @@ impl ModeState for PullRequestSelectionState {
                             // Open only the currently displayed work item
                             app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
+                    }
+                    StateChange::Keep
+                }
+                KeyCode::Char('d') => {
+                    // Open dependency dialog for highlighted PR
+                    if let Some(selected_idx) = self.table_state.selected() {
+                        self.show_dependency_dialog = true;
+                        self.dependency_dialog_pr_index = Some(selected_idx);
+                        self.dependency_dialog_scroll = 0;
                     }
                     StateChange::Keep
                 }
