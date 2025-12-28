@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
+use roaring::RoaringBitmap;
 use serde::{Deserialize, Serialize};
 
 /// A range of lines in a file.
@@ -535,6 +536,152 @@ impl Default for DependencyAnalysisConfig {
     }
 }
 
+// ==================== Bitmap Index for Optimized Analysis ====================
+
+/// Pre-computed bitmap index for fast dependency analysis.
+///
+/// Uses roaring bitmaps to enable O(1) file overlap detection and
+/// fast line range intersection checks. This significantly speeds up
+/// analysis for large PR sets (100+ PRs).
+#[derive(Debug)]
+pub struct PRBitmapIndex {
+    /// Map file path -> unique integer ID for bitmap indexing
+    file_dict: HashMap<String, u32>,
+    /// Reverse map: file ID -> file path
+    file_dict_reverse: HashMap<u32, String>,
+    /// Map PR ID -> bitmap of file IDs it touches
+    pr_file_bitmaps: HashMap<i32, RoaringBitmap>,
+    /// Map (PR ID, file ID) -> bitmap of line numbers touched
+    pr_line_bitmaps: HashMap<(i32, u32), RoaringBitmap>,
+}
+
+impl PRBitmapIndex {
+    /// Builds a bitmap index from PR file changes.
+    ///
+    /// This is a three-pass algorithm:
+    /// 1. Build file path -> integer dictionary
+    /// 2. Build file bitmaps per PR (parallelized)
+    /// 3. Build line bitmaps per (PR, file) (parallelized)
+    pub fn build(pr_changes: &HashMap<i32, Vec<FileChange>>) -> Self {
+        // Pass 1: Build file dictionary (sequential - needs unique IDs)
+        let mut file_dict = HashMap::new();
+        let mut file_dict_reverse = HashMap::new();
+        let mut next_id = 0u32;
+
+        for changes in pr_changes.values() {
+            for change in changes {
+                if !file_dict.contains_key(&change.path) {
+                    file_dict.insert(change.path.clone(), next_id);
+                    file_dict_reverse.insert(next_id, change.path.clone());
+                    next_id += 1;
+                }
+                // Also handle original_path for renames
+                if let Some(ref orig) = change.original_path
+                    && !file_dict.contains_key(orig)
+                {
+                    file_dict.insert(orig.clone(), next_id);
+                    file_dict_reverse.insert(next_id, orig.clone());
+                    next_id += 1;
+                }
+            }
+        }
+
+        // Pass 2: Build file bitmaps per PR (parallel)
+        let pr_file_bitmaps: HashMap<i32, RoaringBitmap> = pr_changes
+            .par_iter()
+            .map(|(pr_id, changes)| {
+                let mut bitmap = RoaringBitmap::new();
+                for change in changes {
+                    if let Some(&file_id) = file_dict.get(&change.path) {
+                        bitmap.insert(file_id);
+                    }
+                    if let Some(ref orig) = change.original_path
+                        && let Some(&file_id) = file_dict.get(orig)
+                    {
+                        bitmap.insert(file_id);
+                    }
+                }
+                (*pr_id, bitmap)
+            })
+            .collect();
+
+        // Pass 3: Build line bitmaps per (PR, file) (parallel)
+        // We need to collect into a Vec first to avoid borrow issues, then convert to HashMap
+        let file_dict_ref = &file_dict;
+        let pr_line_bitmaps: HashMap<(i32, u32), RoaringBitmap> = pr_changes
+            .par_iter()
+            .flat_map_iter(|(pr_id, changes)| {
+                let pr_id = *pr_id;
+                changes.iter().filter_map(move |change| {
+                    let file_id = file_dict_ref.get(&change.path)?;
+                    let mut bitmap = RoaringBitmap::new();
+                    for range in &change.line_ranges {
+                        // Insert all line numbers in the range
+                        for line in range.start..=range.end {
+                            bitmap.insert(line);
+                        }
+                    }
+                    // Only store if there are line ranges
+                    if bitmap.is_empty() {
+                        None
+                    } else {
+                        Some(((pr_id, *file_id), bitmap))
+                    }
+                })
+            })
+            .collect();
+
+        Self {
+            file_dict,
+            file_dict_reverse,
+            pr_file_bitmaps,
+            pr_line_bitmaps,
+        }
+    }
+
+    /// Returns the file bitmap for a PR, if it exists.
+    pub fn get_file_bitmap(&self, pr_id: i32) -> Option<&RoaringBitmap> {
+        self.pr_file_bitmaps.get(&pr_id)
+    }
+
+    /// Returns the line bitmap for a PR and file, if it exists.
+    pub fn get_line_bitmap(&self, pr_id: i32, file_id: u32) -> Option<&RoaringBitmap> {
+        self.pr_line_bitmaps.get(&(pr_id, file_id))
+    }
+
+    /// Returns the file path for a file ID.
+    pub fn get_file_path(&self, file_id: u32) -> Option<&String> {
+        self.file_dict_reverse.get(&file_id)
+    }
+
+    /// Returns the file ID for a file path.
+    pub fn get_file_id(&self, path: &str) -> Option<u32> {
+        self.file_dict.get(path).copied()
+    }
+}
+
+/// Converts a roaring bitmap of line numbers back to a vector of LineRange.
+///
+/// Consecutive line numbers are merged into ranges.
+fn bitmap_to_ranges(bitmap: &RoaringBitmap) -> Vec<LineRange> {
+    let mut ranges = Vec::new();
+    let mut iter = bitmap.iter().peekable();
+
+    while let Some(start) = iter.next() {
+        let mut end = start;
+        while let Some(&next) = iter.peek() {
+            if next == end + 1 {
+                end = next;
+                iter.next();
+            } else {
+                break;
+            }
+        }
+        ranges.push(LineRange::new(start, end));
+    }
+    ranges
+}
+
 // ==================== Dependency Analyzer ====================
 
 /// Analyzes dependencies between pull requests based on file changes.
@@ -658,6 +805,9 @@ impl DependencyAnalyzer {
         prs: &[PRInfo],
         pr_changes: &HashMap<i32, Vec<FileChange>>,
     ) -> DependencyAnalysisResult {
+        // Build bitmap index for fast comparison (parallelized internally)
+        let index = PRBitmapIndex::build(pr_changes);
+
         // Build nodes for all PRs (sequential - fast)
         let mut graph = PRDependencyGraph::new();
         for pr in prs {
@@ -670,23 +820,59 @@ impl DependencyAnalyzer {
             .flat_map(|i| (0..i).map(move |j| (i, j)))
             .collect();
 
-        // Parallel pairwise comparison
+        // Parallel pairwise comparison using bitmap optimization
         let dependencies: Vec<(i32, i32, DependencyCategory)> = pairs
             .par_iter()
             .filter_map(|&(i, j)| {
                 let current_pr = &prs[i];
                 let prev_pr = &prs[j];
 
-                let current_changes = pr_changes.get(&current_pr.id);
-                let prev_changes = pr_changes.get(&prev_pr.id);
+                // Fast file overlap check via bitmap AND
+                let bitmap1 = index.get_file_bitmap(current_pr.id)?;
+                let bitmap2 = index.get_file_bitmap(prev_pr.id)?;
+                let file_overlap = bitmap1 & bitmap2;
 
-                let category = Self::categorize_dependency(current_changes, prev_changes);
-
-                if category.is_independent() {
-                    None
-                } else {
-                    Some((current_pr.id, prev_pr.id, category))
+                if file_overlap.is_empty() {
+                    return None; // Independent - no shared files
                 }
+
+                // Get shared file paths from the overlap bitmap
+                let shared_files: Vec<String> = file_overlap
+                    .iter()
+                    .filter_map(|file_id| index.get_file_path(file_id).cloned())
+                    .collect();
+
+                // Check line overlaps for each shared file using line bitmaps
+                let mut overlapping_files = Vec::new();
+                for file_id in file_overlap.iter() {
+                    let lines1 = index.get_line_bitmap(current_pr.id, file_id);
+                    let lines2 = index.get_line_bitmap(prev_pr.id, file_id);
+
+                    if let (Some(l1), Some(l2)) = (lines1, lines2) {
+                        let line_overlap = l1 & l2;
+                        if !line_overlap.is_empty() {
+                            // Convert bitmap back to ranges for storage
+                            let ranges = bitmap_to_ranges(&line_overlap);
+                            if let Some(path) = index.get_file_path(file_id) {
+                                overlapping_files.push(OverlappingFile {
+                                    path: path.clone(),
+                                    overlapping_ranges: ranges,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                let category = if overlapping_files.is_empty() {
+                    DependencyCategory::PartiallyDependent { shared_files }
+                } else {
+                    DependencyCategory::Dependent {
+                        shared_files,
+                        overlapping_files,
+                    }
+                };
+
+                Some((current_pr.id, prev_pr.id, category))
             })
             .collect();
 
