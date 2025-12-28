@@ -176,20 +176,29 @@ KeyCode::Char('d') => {
 }
 ```
 
-#### 3.2 Dialog UI Structure
+#### 3.2 Dialog UI Structure (Full Tree with Color Differentiation)
+
+The dialog shows the complete transitive dependency tree with visual distinction:
+- **Direct dependencies**: Cyan/default color
+- **Transitive dependencies**: Gray/dimmed color
+
 ```
 ┌─────────────── Dependencies for PR #12345 ───────────────┐
 │                                                          │
 │ ◀ Dependencies (PRs this PR depends on):                 │
-│   ├─ #12340 "Initial API setup" [FULL]                   │
+│   ├─ #12340 "Initial API setup" [FULL]           (direct)│
 │   │   └─ Files: src/api/client.rs (lines 10-50)          │
-│   └─ #12342 "Add auth module" [PARTIAL]                  │
+│   │   └─ #12335 "Base types" [PARTIAL]       (transitive)│
+│   └─ #12342 "Add auth module" [PARTIAL]          (direct)│
 │       └─ Files: src/auth/mod.rs                          │
+│       └─ #12338 "Config module" [FULL]       (transitive)│
 │                                                          │
 │ ▶ Dependents (PRs that depend on this PR):               │
-│   ├─ #12348 "Extend API client" [FULL]                   │
-│   └─ #12350 "Add caching" [PARTIAL]                      │
+│   ├─ #12348 "Extend API client" [FULL]           (direct)│
+│   │   └─ #12355 "API v2" [PARTIAL]           (transitive)│
+│   └─ #12350 "Add caching" [PARTIAL]              (direct)│
 │                                                          │
+│ Colors: Direct=Cyan  Transitive=Gray                     │
 │ Legend: [FULL] = Overlapping lines  [PARTIAL] = Same file│
 │                                                          │
 │ Press 'Esc' to close, '↑/↓' to scroll                    │
@@ -201,9 +210,54 @@ KeyCode::Char('d') => {
 struct DependencyDialogState {
     pr_index: usize,
     scroll_offset: usize,
-    expanded_sections: HashSet<String>,  // Track expanded nodes
 }
 ```
+
+#### 3.4 Transitive Dependency Computation
+```rust
+fn compute_transitive_dependencies(
+    graph: &PRDependencyGraph,
+    pr_id: i32,
+) -> Vec<(PRDependency, bool)> {  // (dependency, is_transitive)
+    let mut result = Vec::new();
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    // Add direct dependencies
+    if let Some(node) = graph.get_node(pr_id) {
+        for dep in &node.dependencies {
+            result.push((dep.clone(), false));  // direct
+            queue.push_back(dep.to_pr_id);
+            visited.insert(dep.to_pr_id);
+        }
+    }
+
+    // BFS for transitive dependencies
+    while let Some(current_id) = queue.pop_front() {
+        if let Some(node) = graph.get_node(current_id) {
+            for dep in &node.dependencies {
+                if !visited.contains(&dep.to_pr_id) {
+                    result.push((dep.clone(), true));  // transitive
+                    queue.push_back(dep.to_pr_id);
+                    visited.insert(dep.to_pr_id);
+                }
+            }
+        }
+    }
+
+    result
+}
+```
+
+#### 3.5 Color Scheme for Dialog
+```rust
+const DIRECT_DEP_COLOR: Color = Color::Cyan;
+const TRANSITIVE_DEP_COLOR: Color = Color::DarkGray;
+const FULL_DEP_INDICATOR: Color = Color::Red;
+const PARTIAL_DEP_INDICATOR: Color = Color::Yellow;
+```
+
+**Note**: Dialog is view-only. Navigation to jump to dependency PRs is deferred for future implementation.
 
 ### Phase 4: Unselected Dependency Highlighting
 
@@ -307,6 +361,19 @@ Selected: 5 | Missing deps: 2 | Full deps: 3 | Partial deps: 7
 3. **Integration Tests**
    - Full flow: load → analyze → display → select → highlight
 
-## Open Questions
+## Design Decisions (Finalized)
 
-See `docs/design/pr-dependency-ui-questions.md` for design decisions requiring clarification.
+All design decisions have been made. See `docs/design/pr-dependency-ui-questions.md` for the complete record.
+
+**Key Decisions:**
+- Column format: `P/D` (partial/full counts)
+- Transitive deps: Full tree with color differentiation (direct=cyan, transitive=gray)
+- Highlight color: Orange/Amber `Rgb(80, 40, 0)`
+- Border warning: Yellow border + title indicator
+- Analysis timing: Blocking with progress
+- Dialog: View-only (navigation deferred)
+- Rayon: Always included (not feature-flagged)
+
+**Deferred Features:**
+- Auto-select missing dependencies
+- Dialog navigation to jump to dependency PR

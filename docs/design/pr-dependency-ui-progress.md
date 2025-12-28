@@ -1,10 +1,10 @@
 # PR Dependency UI Integration - Progress Tracker
 
-## Status: Planning Phase
+## Status: Ready for Implementation
 
 **Last Updated**: 2024-12-28
-**Current Phase**: Design Review
-**Blocked By**: Design decisions pending user input
+**Current Phase**: Implementation Phase 1
+**Blocked By**: None - all design decisions finalized
 
 ---
 
@@ -27,16 +27,16 @@
 - [ ] Add `rayon` to Cargo.toml
 - [ ] Add `dependency_graph` field to `MergeApp`
 - [ ] Add getter/setter methods for dependency graph
-- [ ] Add `AnalyzingDependencies` loading stage
+- [ ] Add `AnalyzingDependencies` loading stage enum variant
 - [ ] Implement `analyze_parallel()` in `DependencyAnalyzer`
-- [ ] Integrate analysis into data loading flow
-- [ ] Update loading message for analysis stage
+- [ ] Integrate analysis into data loading flow (blocking with progress)
+- [ ] Update loading message: "Analyzing dependencies (N/M)..."
 - [ ] Add tests for parallel analysis correctness
 - [ ] Add snapshot test for loading stage display
 
-### Dependencies
-- Design decision: Should analysis run in background thread or block?
-- Design decision: Should we show per-file progress?
+### Design Decisions (Finalized)
+- Analysis runs blocking with progress indicator
+- Rayon is always included (not feature-flagged)
 
 ---
 
@@ -44,17 +44,16 @@
 
 ### Tasks
 
-- [ ] Update column constraints (adjust widths)
+- [ ] Update column constraints (adjust widths for 7 columns)
 - [ ] Add "Deps" column header
-- [ ] Implement dependency count cell rendering
-- [ ] Add color coding (green/yellow/red)
+- [ ] Implement dependency count cell rendering with `P/D` format
+- [ ] Add color coding: Green (0/0), Yellow (P>0), Red (D>0)
 - [ ] Update header row alignment
 - [ ] Add tests for column formatting
 - [ ] Add snapshot tests for new column
 
-### Dependencies
-- Phase 1 complete (dependency graph available)
-- Design decision: Column format P/D vs (P,D) vs P+D
+### Design Decisions (Finalized)
+- Column format: `P/D` (partial/full counts)
 
 ---
 
@@ -63,18 +62,21 @@
 ### Tasks
 
 - [ ] Create `DependencyDialogState` struct
-- [ ] Add dialog rendering function
-- [ ] Implement tree-view for dependencies/dependents
+- [ ] Add dialog rendering function (centered overlay)
+- [ ] Implement full transitive dependency tree computation (BFS)
+- [ ] Render tree-view for dependencies/dependents
+- [ ] Color direct dependencies in Cyan
+- [ ] Color transitive dependencies in Gray
 - [ ] Add file overlap details display
-- [ ] Handle keyboard navigation (scroll, collapse/expand)
+- [ ] Handle keyboard navigation (scroll with ↑/↓, close with Esc)
 - [ ] Add 'd' keybinding
 - [ ] Update help text with new shortcut
 - [ ] Add snapshot tests for dialog
 
-### Dependencies
-- Phase 1 complete
-- Design decision: Show transitive dependencies?
-- Design decision: Allow navigating to dependent PR from dialog?
+### Design Decisions (Finalized)
+- Show full transitive tree with color differentiation
+- Direct deps: Cyan, Transitive deps: Gray
+- Dialog is view-only (navigation to PRs deferred)
 
 ---
 
@@ -83,18 +85,18 @@
 ### Tasks
 
 - [ ] Implement `compute_unselected_dependencies()`
-- [ ] Add highlight color for unselected deps
+- [ ] Add Orange/Amber highlight `Rgb(80, 40, 0)` for unselected deps
 - [ ] Update row style selection logic
-- [ ] Change border color when missing deps
-- [ ] Add warning indicator to title
+- [ ] Change border color to Yellow when missing deps
+- [ ] Add warning indicator to title: `"Pull Requests (⚠ N missing deps)"`
 - [ ] Cache computation (recompute on selection change)
 - [ ] Add tests for highlight logic
 - [ ] Add snapshot tests for highlighting
 
-### Dependencies
-- Phase 1 complete
-- Design decision: Highlight color choice
-- Design decision: Include transitive deps in warning?
+### Design Decisions (Finalized)
+- Highlight color: Orange/Amber `Rgb(80, 40, 0)`
+- Border: Yellow when missing dependencies
+- Title shows warning indicator with count
 
 ---
 
