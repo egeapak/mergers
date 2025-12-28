@@ -5,6 +5,7 @@
 
 use crate::{
     api::AzureDevOpsClient,
+    core::operations::PRDependencyGraph,
     core::state::{LockGuard, MergePhase, MergeStateFile, StateCherryPickItem, StateItemStatus},
     models::{CherryPickItem, CherryPickStatus, MergeConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
@@ -60,6 +61,10 @@ pub struct MergeApp {
     /// Held for the duration of the TUI session.
     #[allow(dead_code)]
     lock_guard: Option<LockGuard>,
+
+    /// Cached dependency analysis result.
+    /// Populated during data loading, before PR selection.
+    dependency_graph: Option<PRDependencyGraph>,
 }
 
 impl MergeApp {
@@ -75,6 +80,7 @@ impl MergeApp {
             current_cherry_pick_index: 0,
             state_file: None,
             lock_guard: None,
+            dependency_graph: None,
         }
     }
 
@@ -322,6 +328,26 @@ impl MergeApp {
     /// Returns the repo path from the state file, if any.
     pub fn state_repo_path(&self) -> Option<&Path> {
         self.state_file.as_ref().map(|s| s.repo_path.as_path())
+    }
+
+    // ==========================================================================
+    // Dependency Graph Management
+    // ==========================================================================
+
+    /// Returns a reference to the dependency graph, if computed.
+    pub fn dependency_graph(&self) -> Option<&PRDependencyGraph> {
+        self.dependency_graph.as_ref()
+    }
+
+    /// Sets the dependency graph after analysis.
+    pub fn set_dependency_graph(&mut self, graph: PRDependencyGraph) {
+        self.dependency_graph = Some(graph);
+    }
+
+    /// Clears the cached dependency graph.
+    #[allow(dead_code)]
+    pub fn clear_dependency_graph(&mut self) {
+        self.dependency_graph = None;
     }
 }
 

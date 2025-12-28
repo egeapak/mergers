@@ -13,6 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// A range of lines in a file.
@@ -628,6 +629,105 @@ impl DependencyAnalyzer {
                             });
                         }
                     }
+                }
+            }
+        }
+
+        // Compute topological order
+        graph.compute_topological_order();
+
+        DependencyAnalysisResult { graph, warnings }
+    }
+
+    /// Analyzes dependencies between PRs using parallel processing.
+    ///
+    /// Uses rayon for parallel pairwise comparison, which can significantly
+    /// speed up analysis for large PR sets. The O(n^2) comparisons are
+    /// distributed across available CPU cores.
+    ///
+    /// # Arguments
+    ///
+    /// * `prs` - List of PRs with their metadata, in chronological order
+    /// * `pr_changes` - Map from PR ID to its file changes
+    ///
+    /// # Returns
+    ///
+    /// A `DependencyAnalysisResult` containing the dependency graph and any warnings.
+    pub fn analyze_parallel(
+        &self,
+        prs: &[PRInfo],
+        pr_changes: &HashMap<i32, Vec<FileChange>>,
+    ) -> DependencyAnalysisResult {
+        // Build nodes for all PRs (sequential - fast)
+        let mut graph = PRDependencyGraph::new();
+        for pr in prs {
+            let node = PRDependencyNode::new(pr.id, pr.title.clone(), pr.is_selected);
+            graph.add_node(node);
+        }
+
+        // Generate all pairs (i, j) where j < i for parallel processing
+        let pairs: Vec<(usize, usize)> = (0..prs.len())
+            .flat_map(|i| (0..i).map(move |j| (i, j)))
+            .collect();
+
+        // Parallel pairwise comparison
+        let dependencies: Vec<(i32, i32, DependencyCategory)> = pairs
+            .par_iter()
+            .filter_map(|&(i, j)| {
+                let current_pr = &prs[i];
+                let prev_pr = &prs[j];
+
+                let current_changes = pr_changes.get(&current_pr.id);
+                let prev_changes = pr_changes.get(&prev_pr.id);
+
+                let category = Self::categorize_dependency(current_changes, prev_changes);
+
+                if category.is_independent() {
+                    None
+                } else {
+                    Some((current_pr.id, prev_pr.id, category))
+                }
+            })
+            .collect();
+
+        // Build graph from collected dependencies (sequential - needs mutable access)
+        let mut warnings = Vec::new();
+        for (from_id, to_id, category) in dependencies {
+            let from_pr = prs.iter().find(|p| p.id == from_id).unwrap();
+            let to_pr = prs.iter().find(|p| p.id == to_id).unwrap();
+
+            let dependency = PRDependency {
+                from_pr_id: from_id,
+                to_pr_id: to_id,
+                category: category.clone(),
+            };
+
+            // Add dependency to current node
+            if let Some(node) = graph.get_node_mut(from_id) {
+                node.dependencies.push(dependency);
+            }
+
+            // Add as dependent to previous node
+            if let Some(prev_node) = graph.get_node_mut(to_id) {
+                prev_node.dependents.push(from_id);
+            }
+
+            // Check for unselected dependency warning
+            if from_pr.is_selected && !to_pr.is_selected {
+                let should_warn = match &category {
+                    DependencyCategory::Dependent { .. } => true,
+                    DependencyCategory::PartiallyDependent { .. } => self.config.warn_on_partial,
+                    DependencyCategory::Independent => false,
+                };
+
+                if should_warn {
+                    warnings.push(DependencyWarning::UnselectedDependency {
+                        selected_pr_id: from_id,
+                        selected_pr_title: from_pr.title.clone(),
+                        unselected_pr_id: to_id,
+                        unselected_pr_title: to_pr.title.clone(),
+                        category,
+                    });
                 }
             }
         }
@@ -1304,5 +1404,183 @@ mod tests {
 
         assert!(pos1 < pos2, "PR 1 should come before PR 2");
         assert!(pos2 < pos3, "PR 2 should come before PR 3");
+    }
+
+    /// # Parallel Analysis Produces Same Results as Sequential
+    ///
+    /// Tests that the parallel analysis method produces identical results
+    /// to the sequential analysis method.
+    ///
+    /// ## Test Scenario
+    /// - Creates a set of PRs with various dependency relationships
+    /// - Runs both sequential and parallel analysis
+    /// - Compares the results
+    ///
+    /// ## Expected Outcome
+    /// - Both methods should produce identical dependency graphs
+    /// - Same warnings should be generated
+    #[test]
+    fn test_parallel_analysis_equivalence() {
+        let prs = vec![
+            PRInfo::new(1, "Base".to_string(), true, Some("abc".to_string())),
+            PRInfo::new(2, "Feature A".to_string(), true, Some("def".to_string())),
+            PRInfo::new(3, "Feature B".to_string(), false, Some("ghi".to_string())),
+            PRInfo::new(4, "Integration".to_string(), true, Some("jkl".to_string())),
+        ];
+
+        let mut pr_changes = HashMap::new();
+        pr_changes.insert(
+            1,
+            vec![FileChange::with_ranges(
+                "src/core.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(10, 30)],
+            )],
+        );
+        pr_changes.insert(
+            2,
+            vec![FileChange::with_ranges(
+                "src/core.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(25, 45)], // Overlaps with 1
+            )],
+        );
+        pr_changes.insert(
+            3,
+            vec![FileChange::with_ranges(
+                "src/util.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(5, 15)], // Different file
+            )],
+        );
+        pr_changes.insert(
+            4,
+            vec![
+                FileChange::with_ranges(
+                    "src/core.rs".to_string(),
+                    ChangeType::Modify,
+                    vec![LineRange::new(40, 55)], // Overlaps with 2
+                ),
+                FileChange::with_ranges(
+                    "src/util.rs".to_string(),
+                    ChangeType::Modify,
+                    vec![LineRange::new(10, 20)], // Overlaps with 3
+                ),
+            ],
+        );
+
+        let analyzer = DependencyAnalyzer::new();
+        let sequential_result = analyzer.analyze(&prs, &pr_changes);
+        let parallel_result = analyzer.analyze_parallel(&prs, &pr_changes);
+
+        // Compare graph node counts
+        assert_eq!(
+            sequential_result.graph.nodes.len(),
+            parallel_result.graph.nodes.len(),
+            "Node counts should match"
+        );
+
+        // Compare each node's dependencies
+        for pr in &prs {
+            let seq_node = sequential_result.graph.get_node(pr.id).unwrap();
+            let par_node = parallel_result.graph.get_node(pr.id).unwrap();
+
+            assert_eq!(
+                seq_node.dependencies.len(),
+                par_node.dependencies.len(),
+                "Dependency count should match for PR {}",
+                pr.id
+            );
+
+            // Check that same dependencies exist (order may differ)
+            for seq_dep in &seq_node.dependencies {
+                let found = par_node.dependencies.iter().any(|par_dep| {
+                    par_dep.to_pr_id == seq_dep.to_pr_id
+                        && std::mem::discriminant(&par_dep.category)
+                            == std::mem::discriminant(&seq_dep.category)
+                });
+                assert!(
+                    found,
+                    "Parallel result should have same dependency from {} to {}",
+                    pr.id, seq_dep.to_pr_id
+                );
+            }
+        }
+
+        // Compare warning counts
+        assert_eq!(
+            sequential_result.warnings.len(),
+            parallel_result.warnings.len(),
+            "Warning counts should match"
+        );
+    }
+
+    /// # Parallel Analysis with Many PRs
+    ///
+    /// Tests that parallel analysis handles larger datasets correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates 20 PRs with chained dependencies
+    /// - Runs parallel analysis
+    ///
+    /// ## Expected Outcome
+    /// - Analysis should complete without errors
+    /// - Topological order should respect dependencies
+    #[test]
+    fn test_parallel_analysis_many_prs() {
+        let prs: Vec<PRInfo> = (1..=20)
+            .map(|i| {
+                PRInfo::new(
+                    i,
+                    format!("PR {}", i),
+                    i % 2 == 0, // Alternate selection
+                    Some(format!("commit{}", i)),
+                )
+            })
+            .collect();
+
+        // Each PR modifies the same file with slightly overlapping ranges
+        let pr_changes: HashMap<i32, Vec<FileChange>> = (1..=20)
+            .map(|i| {
+                let start = (i as u32 - 1) * 5 + 1;
+                let end = start + 10; // 10 line range, overlaps with adjacent PRs
+                (
+                    i,
+                    vec![FileChange::with_ranges(
+                        "src/main.rs".to_string(),
+                        ChangeType::Modify,
+                        vec![LineRange::new(start, end)],
+                    )],
+                )
+            })
+            .collect();
+
+        let analyzer = DependencyAnalyzer::new();
+        let result = analyzer.analyze_parallel(&prs, &pr_changes);
+
+        // Should have nodes for all 20 PRs
+        assert_eq!(result.graph.nodes.len(), 20);
+
+        // Topological order should be valid (each PR should come after its dependencies)
+        for (idx, &pr_id) in result.graph.topological_order.iter().enumerate() {
+            if let Some(node) = result.graph.get_node(pr_id) {
+                for dep in &node.dependencies {
+                    let dep_idx = result
+                        .graph
+                        .topological_order
+                        .iter()
+                        .position(|&id| id == dep.to_pr_id);
+                    if let Some(dep_idx) = dep_idx {
+                        assert!(
+                            dep_idx < idx,
+                            "PR {} depends on {}, but {} comes later in topological order",
+                            pr_id,
+                            dep.to_pr_id,
+                            dep.to_pr_id
+                        );
+                    }
+                }
+            }
+        }
     }
 }

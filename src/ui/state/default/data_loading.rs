@@ -2,6 +2,8 @@ use super::PullRequestSelectionState;
 use crate::ui::state::shared::ErrorState;
 use crate::{
     api,
+    core::operations::{DependencyAnalyzer, FileChange, PRInfo},
+    git,
     models::PullRequestWithWorkItems,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
@@ -16,6 +18,9 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::path::Path;
 
 type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
 
@@ -35,6 +40,7 @@ pub struct DataLoadingState {
     commit_info_fetched: usize,
     commit_info_total: usize,
     work_items_tasks: Option<Vec<WorkItemsTaskHandle>>,
+    dependency_analysis_total: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +50,7 @@ enum LoadingStage {
     FetchingWorkItems,
     WaitingForWorkItems,
     FetchingCommitInfo,
+    AnalyzingDependencies,
     Complete,
 }
 
@@ -63,6 +70,7 @@ impl DataLoadingState {
             commit_info_fetched: 0,
             commit_info_total: 0,
             work_items_tasks: None,
+            dependency_analysis_total: 0,
         }
     }
 
@@ -220,6 +228,69 @@ impl DataLoadingState {
         Ok(())
     }
 
+    /// Performs dependency analysis using a local repository.
+    ///
+    /// Uses rayon for parallel file change retrieval and analysis.
+    fn analyze_dependencies(&mut self, app: &mut MergeApp) -> Result<()> {
+        let local_repo = match app.local_repo() {
+            Some(path) => path.to_string(),
+            None => {
+                // No local repo available, skip analysis
+                return Ok(());
+            }
+        };
+
+        let repo_path = Path::new(&local_repo);
+        if !repo_path.exists() {
+            // Repo doesn't exist, skip analysis
+            return Ok(());
+        }
+
+        let prs = app.pull_requests();
+        self.dependency_analysis_total = prs.len();
+
+        // Build PRInfo list
+        let pr_infos: Vec<PRInfo> = prs
+            .iter()
+            .map(|pr_with_wi| {
+                PRInfo::new(
+                    pr_with_wi.pr.id,
+                    pr_with_wi.pr.title.clone(),
+                    pr_with_wi.selected,
+                    pr_with_wi
+                        .pr
+                        .last_merge_commit
+                        .as_ref()
+                        .map(|c| c.commit_id.clone()),
+                )
+            })
+            .collect();
+
+        // Parallel fetch of file changes for each PR
+        let pr_changes: HashMap<i32, Vec<FileChange>> = pr_infos
+            .par_iter()
+            .filter_map(|pr_info| {
+                let commit_id = pr_info.commit_id.as_ref()?;
+                match git::get_commit_changes_with_ranges(repo_path, commit_id) {
+                    Ok(changes) => Some((pr_info.id, changes)),
+                    Err(_) => {
+                        // Commit might not exist locally, skip
+                        Some((pr_info.id, Vec::new()))
+                    }
+                }
+            })
+            .collect();
+
+        // Run parallel dependency analysis
+        let analyzer = DependencyAnalyzer::new();
+        let result = analyzer.analyze_parallel(&pr_infos, &pr_changes);
+
+        // Store the graph in MergeApp
+        app.set_dependency_graph(result.graph);
+
+        Ok(())
+    }
+
     fn get_loading_message(&self) -> String {
         match self.loading_stage {
             LoadingStage::NotStarted => "Initializing...".to_string(),
@@ -243,6 +314,16 @@ impl DataLoadingState {
                     )
                 } else {
                     "Fetching commit information...".to_string()
+                }
+            }
+            LoadingStage::AnalyzingDependencies => {
+                if self.dependency_analysis_total > 0 {
+                    format!(
+                        "Analyzing dependencies ({} PRs)...",
+                        self.dependency_analysis_total
+                    )
+                } else {
+                    "Analyzing dependencies...".to_string()
                 }
             }
             LoadingStage::Complete => "Loading complete".to_string(),
@@ -314,7 +395,20 @@ impl ModeState for DataLoadingState {
                     return StateChange::Keep;
                 }
                 LoadingStage::FetchingCommitInfo => {
-                    // Loading is complete, transition to PR selection
+                    // Commit info done, move to dependency analysis
+                    self.loading_stage = LoadingStage::AnalyzingDependencies;
+                    return StateChange::Keep;
+                }
+                LoadingStage::AnalyzingDependencies => {
+                    // Run dependency analysis (uses local_repo if available)
+                    if let Err(e) = self.analyze_dependencies(app) {
+                        // Log error but don't fail - dependency analysis is optional
+                        app.set_error_message(Some(format!(
+                            "Dependency analysis failed (non-fatal): {}",
+                            e
+                        )));
+                    }
+                    // Transition to PR selection
                     return StateChange::Change(MergeState::PullRequestSelection(
                         PullRequestSelectionState::new(),
                     ));
@@ -675,7 +769,8 @@ mod tests {
 
     /// # Data Loading State - FetchingCommitInfo Stage Key Processing
     ///
-    /// Tests that pressing Null key in FetchingCommitInfo stage transitions.
+    /// Tests that pressing Null key in FetchingCommitInfo stage transitions
+    /// to AnalyzingDependencies stage.
     ///
     /// ## Test Scenario
     /// - Creates a data loading state in FetchingCommitInfo stage
@@ -683,7 +778,7 @@ mod tests {
     /// - Processes Null key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Change to PullRequestSelectionState
+    /// - Should return StateChange::Keep and transition to AnalyzingDependencies
     #[tokio::test]
     async fn test_data_loading_fetching_commit_info_transitions() {
         let config = create_test_config_default();
@@ -695,6 +790,62 @@ mod tests {
 
         let result =
             ModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
+        assert!(matches!(
+            state.loading_stage,
+            LoadingStage::AnalyzingDependencies
+        ));
+    }
+
+    /// # Data Loading State - AnalyzingDependencies Stage Key Processing
+    ///
+    /// Tests that pressing Null key in AnalyzingDependencies stage transitions
+    /// to PullRequestSelectionState.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state in AnalyzingDependencies stage
+    /// - Sets loaded=true
+    /// - Processes Null key
+    ///
+    /// ## Expected Outcome
+    /// - Should return StateChange::Change to PullRequestSelectionState
+    #[tokio::test]
+    async fn test_data_loading_analyzing_dependencies_transitions() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = DataLoadingState::new();
+        state.loaded = true;
+        state.loading_stage = LoadingStage::AnalyzingDependencies;
+
+        let result =
+            ModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
         assert!(matches!(result, StateChange::Change(_)));
+    }
+
+    /// # Data Loading State - Analyzing Dependencies Message
+    ///
+    /// Tests the loading display when analyzing dependencies.
+    ///
+    /// ## Test Scenario
+    /// - Creates a data loading state
+    /// - Sets stage to AnalyzingDependencies with PR count
+    /// - Renders the loading display
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Analyzing dependencies (N PRs)..." message
+    #[test]
+    fn test_data_loading_analyzing_dependencies() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState::new();
+            state.loading_stage = LoadingStage::AnalyzingDependencies;
+            state.dependency_analysis_total = 15;
+            harness.render_state(&mut state);
+
+            assert_snapshot!("analyzing_dependencies", harness.backend());
+        });
     }
 }
