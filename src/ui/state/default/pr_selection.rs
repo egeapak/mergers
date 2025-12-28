@@ -1563,6 +1563,10 @@ impl ModeState for PullRequestSelectionState {
             });
         let header = Row::new(header_cells).height(1);
 
+        // Compute unselected dependencies (PRs that selected PRs depend on but aren't selected)
+        let unselected_deps = compute_unselected_dependencies(app);
+        let missing_deps_count = unselected_deps.len();
+
         // Create table rows
         let rows: Vec<Row> = app
             .pull_requests()
@@ -1601,10 +1605,15 @@ impl ModeState for PullRequestSelectionState {
                     && !self.search_results.is_empty()
                     && self.search_results.get(self.current_search_index) == Some(&pr_index);
 
-                // Apply background highlighting for selected items and search results
-                // Selected items use dark green for contrast with DarkGray cursor highlight
+                // Check if this PR is an unselected dependency (missing dependency warning)
+                let is_unselected_dep = unselected_deps.contains(&pr_with_wi.pr.id);
+
+                // Apply background highlighting for selected items, unselected deps, and search results
+                // Priority: Selected (green) > Unselected dep (orange/amber) > Search results (blue)
                 let row_style = if pr_with_wi.selected {
-                    Style::default().bg(Color::Rgb(0, 60, 0))
+                    Style::default().bg(Color::Rgb(0, 60, 0)) // Dark green
+                } else if is_unselected_dep {
+                    Style::default().bg(Color::Rgb(80, 40, 0)) // Orange/amber for missing deps
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
@@ -1676,11 +1685,19 @@ impl ModeState for PullRequestSelectionState {
             ],
         )
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Pull Requests"),
-        )
+        .block({
+            let title = if missing_deps_count > 0 {
+                format!("Pull Requests (⚠ {} missing deps)", missing_deps_count)
+            } else {
+                "Pull Requests".to_string()
+            };
+            let block = Block::default().borders(Borders::ALL).title(title);
+            if missing_deps_count > 0 {
+                block.border_style(Style::default().fg(Color::Yellow))
+            } else {
+                block
+            }
+        })
         .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("→ ");
 
@@ -2086,6 +2103,49 @@ fn get_deps_style(partial: usize, full: usize, is_selected: bool) -> Style {
 /// Formats the dependency count as "P/D".
 fn format_deps_count(partial: usize, full: usize) -> String {
     format!("{}/{}", partial, full)
+}
+
+/// Computes the set of PR IDs that are dependencies of selected PRs but are not selected.
+///
+/// This function finds all PRs that any currently selected PR depends on,
+/// but which are not themselves selected. These represent "missing" dependencies
+/// that should be highlighted to warn the user.
+fn compute_unselected_dependencies(app: &MergeApp) -> HashSet<i32> {
+    let mut unselected_deps = HashSet::new();
+
+    let Some(graph) = app.dependency_graph() else {
+        return unselected_deps;
+    };
+
+    // Collect IDs of selected PRs
+    let selected_ids: HashSet<i32> = app
+        .pull_requests()
+        .iter()
+        .filter(|pr| pr.selected)
+        .map(|pr| pr.pr.id)
+        .collect();
+
+    // For each selected PR, find its dependencies that are not selected
+    for selected_id in &selected_ids {
+        if let Some(node) = graph.get_node(*selected_id) {
+            for dep in &node.dependencies {
+                // Only include PRs that are in our list (not already merged)
+                // and are not currently selected
+                if !selected_ids.contains(&dep.to_pr_id) {
+                    // Verify this PR is in our list
+                    if app
+                        .pull_requests()
+                        .iter()
+                        .any(|pr| pr.pr.id == dep.to_pr_id)
+                    {
+                        unselected_deps.insert(dep.to_pr_id);
+                    }
+                }
+            }
+        }
+    }
+
+    unselected_deps
 }
 
 #[cfg(test)]

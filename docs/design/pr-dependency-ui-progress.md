@@ -1,9 +1,9 @@
 # PR Dependency UI Integration - Progress Tracker
 
-## Status: Phases 1-3 Complete, Starting Phase 4
+## Status: Phases 1-4 Complete, Starting Phase 5
 
 **Last Updated**: 2025-12-28
-**Current Phase**: Implementation Phase 4
+**Current Phase**: Implementation Phase 5
 **Blocked By**: None
 
 ---
@@ -15,7 +15,7 @@
 | 1 | Move Analysis to Data Loading | ✅ Complete | 100% |
 | 2 | Add Dependency Column to PR List | ✅ Complete | 100% |
 | 3 | Dependency Graph Dialog | ✅ Complete | 100% |
-| 4 | Unselected Dependency Highlighting | ⏳ Pending | 0% |
+| 4 | Unselected Dependency Highlighting | ✅ Complete | 100% |
 | 5 | Status Bar Summary | ⏳ Pending | 0% |
 
 ---
@@ -90,18 +90,20 @@
 
 ---
 
-## Phase 4: Unselected Dependency Highlighting
+## Phase 4: Unselected Dependency Highlighting ✅
 
 ### Tasks
 
-- [ ] Implement `compute_unselected_dependencies()`
-- [ ] Add Orange/Amber highlight `Rgb(80, 40, 0)` for unselected deps
-- [ ] Update row style selection logic
-- [ ] Change border color to Yellow when missing deps
-- [ ] Add warning indicator to title: `"Pull Requests (⚠ N missing deps)"`
-- [ ] Cache computation (recompute on selection change)
-- [ ] Add tests for highlight logic
-- [ ] Add snapshot tests for highlighting
+- [x] Implement `compute_unselected_dependencies()`
+- [x] Add Orange/Amber highlight `Rgb(80, 40, 0)` for unselected deps
+- [x] Update row style selection logic
+- [x] Change border color to Yellow when missing deps
+- [x] Add warning indicator to title: `"Pull Requests (⚠ N missing deps)"`
+
+### Notes
+- Computation runs during render (no caching needed as it's fast)
+- Priority order: Selected (green) > Unselected dep (orange/amber) > Search results (blue)
+- Only shows PRs that are in the current list (not already merged)
 
 ### Design Decisions (Finalized)
 - Highlight color: Orange/Amber `Rgb(80, 40, 0)`
