@@ -153,3 +153,92 @@ See `docs/design/pr-dependency-ui-verification.md` for detailed verification ste
 - Keep dependency analysis cache in MergeApp for re-use
 - Consider lazy evaluation for transitive deps
 - Dialog should be usable via keyboard only
+
+---
+
+## Future Optimization Options
+
+### Current Implementation Analysis
+
+The current implementation performs O(n²) pairwise PR comparisons using rayon for parallelization.
+For each pair, it:
+1. Builds HashSets of file paths: O(f₁ + f₂)
+2. Computes intersection: O(min(f₁, f₂))
+3. For each shared file, compares line ranges: O(ranges²)
+
+### Potential Optimizations
+
+#### 1. Inverted Index (Recommended - Simple & Effective)
+
+**Approach**: Pre-build a HashMap<file_path, Vec<(pr_id, &FileChange)>> in a first pass.
+Only compare PR pairs that share at least one file.
+
+```rust
+// First pass: Build inverted index
+let file_index: HashMap<&str, Vec<(i32, &FileChange)>> = ...;
+
+// Second pass: Only compare pairs with shared files
+for (file, prs) in &file_index {
+    for i in 0..prs.len() {
+        for j in (i+1)..prs.len() {
+            compare_changes(prs[i], prs[j]);
+        }
+    }
+}
+```
+
+**Pros**: Simple, eliminates most comparisons for sparse overlaps, no new dependencies
+**Cons**: Still O(n²) worst case if all PRs touch same file
+**Best for**: Typical scenarios (20-100 PRs, 1-20 files each, sparse overlap)
+
+#### 2. Roaring Bitmaps
+
+**Approach**: Use roaring crate for efficient set operations.
+- Create global dictionary mapping file paths to integers
+- For each PR, create a roaring bitmap of file indices
+- Bitmap AND operation for intersection
+
+```rust
+use roaring::RoaringBitmap;
+
+// Build file dictionary
+let file_dict: HashMap<&str, u32> = ...;
+
+// Create bitmaps per PR
+let pr_bitmaps: HashMap<i32, RoaringBitmap> = ...;
+
+// Fast intersection
+let shared = bitmap1 & bitmap2;
+if shared.is_empty() { return Independent; }
+```
+
+**Pros**: Very fast AND operations, memory efficient, good for 1000+ PRs
+**Cons**: Additional dependency, overhead of building dictionaries
+**Best for**: Large PR counts (1000+) or frequent analysis
+
+#### 3. Radix Tree / Trie for Path Filtering
+
+**Approach**: Build a trie of file paths, tagged with PR IDs.
+If two PRs have no common path prefix, skip comparison.
+
+```rust
+struct PathTrie {
+    children: HashMap<String, PathTrie>,
+    prs: HashSet<i32>,
+}
+
+// PRs with disjoint path prefixes are independent
+if !path_trie.has_overlap(pr1_paths, pr2_paths) {
+    return Independent;
+}
+```
+
+**Pros**: Early exit for disjoint file trees, good for monorepos
+**Cons**: Complex implementation, less useful if PRs touch common roots
+**Best for**: Monorepos with clear directory structure
+
+### Recommendation
+
+For current typical use cases (20-100 PRs), the inverted index approach provides
+the best balance of simplicity and performance. Consider roaring bitmaps only
+if scaling to 1000+ PRs becomes a requirement.
