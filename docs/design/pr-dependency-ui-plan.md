@@ -162,12 +162,12 @@ fn get_deps_style(partial: usize, dependent: usize) -> Style {
 
 ### Phase 3: Dependency Graph Dialog
 
-#### 3.1 New Shortcut: 'd' for Dependency Dialog
+#### 3.1 New Shortcut: 'g' for Dependency Graph Dialog
 **File**: `src/ui/state/default/pr_selection.rs`
 
 Add to key handler:
 ```rust
-KeyCode::Char('d') => {
+KeyCode::Char('g') => {
     if let Some(selected_idx) = self.table_state.selected() {
         self.show_dependency_dialog = true;
         self.dialog_pr_index = Some(selected_idx);

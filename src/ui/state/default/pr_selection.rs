@@ -1729,7 +1729,7 @@ impl ModeState for PullRequestSelectionState {
         let help_text = if self.search_iteration_mode {
             "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | d: Deps | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
         };
 
         // Build status summary for Help title
@@ -1772,7 +1772,7 @@ impl ModeState for PullRequestSelectionState {
         // Handle dependency dialog mode first
         if self.show_dependency_dialog {
             match code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('d') => {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('g') => {
                     self.show_dependency_dialog = false;
                     self.dependency_dialog_pr_index = None;
                     self.dependency_dialog_scroll = 0;
@@ -1959,8 +1959,8 @@ impl ModeState for PullRequestSelectionState {
                     }
                     StateChange::Keep
                 }
-                KeyCode::Char('d') => {
-                    // Open dependency dialog for highlighted PR
+                KeyCode::Char('g') => {
+                    // Open dependency graph dialog for highlighted PR
                     if let Some(selected_idx) = self.table_state.selected() {
                         self.show_dependency_dialog = true;
                         self.dependency_dialog_pr_index = Some(selected_idx);

@@ -72,8 +72,8 @@
 - [x] Render tree-view for dependencies/dependents
 - [x] Color direct dependencies in Cyan
 - [x] Color transitive dependencies in Gray
-- [x] Handle keyboard navigation (scroll with ↑/↓, close with Esc/d/q)
-- [x] Add 'd' keybinding
+- [x] Handle keyboard navigation (scroll with ↑/↓, close with Esc/g/q)
+- [x] Add 'g' keybinding (for "graph")
 - [x] Update help text with new shortcut
 
 ### Notes
@@ -119,7 +119,7 @@
 - [x] Add dependency summary to Help block title
 - [x] Show selected count with dependency breakdown
 - [x] Update on selection changes
-- [x] Add 'd' shortcut to help text
+- [x] Add 'g' (graph) shortcut to help text
 - [x] Update snapshot tests (3 snapshots updated)
 
 ### Notes
