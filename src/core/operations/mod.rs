@@ -27,8 +27,8 @@ pub use data_loading::{
 };
 pub use dependency_analysis::{
     ChangeType, DependencyAnalysisConfig, DependencyAnalysisResult, DependencyAnalyzer,
-    DependencyCategory, DependencyWarning, FileChange, LineRange, OverlappingFile, PRDependency,
-    PRDependencyGraph, PRDependencyNode, PRInfo,
+    DependencyCategory, DependencyWarning, FileChange, LineRange, OverlappingFile, PRBitmapIndex,
+    PRDependency, PRDependencyGraph, PRDependencyNode, PRInfo,
 };
 pub use post_merge::{
     PostMergeConfig, PostMergeOperation, PostMergeProgress, PostMergeTask, PostMergeTaskResult,
