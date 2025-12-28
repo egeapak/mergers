@@ -41,6 +41,8 @@ regex = "=1.12.2"
 sha2 = "=0.10.9"
 libc = "=0.2.172"
 time = "0.3"
+rayon = "1.10"
+roaring = "0.10"
 
 # Azure DevOps API client
 azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
@@ -52,6 +54,11 @@ tokio-test = "=0.4.4"
 tempfile = "=3.23.0"
 insta = { version = "=1.44.3", features = ["yaml"] }
 serial_test = { version = "=3.2.0", features = ["file_locks"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "dependency_analysis"
+harness = false
 
 [profile.dev.package]
 insta.opt-level = 3

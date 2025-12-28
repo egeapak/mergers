@@ -13,6 +13,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
+use roaring::RoaringBitmap;
 use serde::{Deserialize, Serialize};
 
 /// A range of lines in a file.
@@ -534,6 +536,152 @@ impl Default for DependencyAnalysisConfig {
     }
 }
 
+// ==================== Bitmap Index for Optimized Analysis ====================
+
+/// Pre-computed bitmap index for fast dependency analysis.
+///
+/// Uses roaring bitmaps to enable O(1) file overlap detection and
+/// fast line range intersection checks. This significantly speeds up
+/// analysis for large PR sets (100+ PRs).
+#[derive(Debug)]
+pub struct PRBitmapIndex {
+    /// Map file path -> unique integer ID for bitmap indexing
+    file_dict: HashMap<String, u32>,
+    /// Reverse map: file ID -> file path
+    file_dict_reverse: HashMap<u32, String>,
+    /// Map PR ID -> bitmap of file IDs it touches
+    pr_file_bitmaps: HashMap<i32, RoaringBitmap>,
+    /// Map (PR ID, file ID) -> bitmap of line numbers touched
+    pr_line_bitmaps: HashMap<(i32, u32), RoaringBitmap>,
+}
+
+impl PRBitmapIndex {
+    /// Builds a bitmap index from PR file changes.
+    ///
+    /// This is a three-pass algorithm:
+    /// 1. Build file path -> integer dictionary
+    /// 2. Build file bitmaps per PR (parallelized)
+    /// 3. Build line bitmaps per (PR, file) (parallelized)
+    pub fn build(pr_changes: &HashMap<i32, Vec<FileChange>>) -> Self {
+        // Pass 1: Build file dictionary (sequential - needs unique IDs)
+        let mut file_dict = HashMap::new();
+        let mut file_dict_reverse = HashMap::new();
+        let mut next_id = 0u32;
+
+        for changes in pr_changes.values() {
+            for change in changes {
+                if !file_dict.contains_key(&change.path) {
+                    file_dict.insert(change.path.clone(), next_id);
+                    file_dict_reverse.insert(next_id, change.path.clone());
+                    next_id += 1;
+                }
+                // Also handle original_path for renames
+                if let Some(ref orig) = change.original_path
+                    && !file_dict.contains_key(orig)
+                {
+                    file_dict.insert(orig.clone(), next_id);
+                    file_dict_reverse.insert(next_id, orig.clone());
+                    next_id += 1;
+                }
+            }
+        }
+
+        // Pass 2: Build file bitmaps per PR (parallel)
+        let pr_file_bitmaps: HashMap<i32, RoaringBitmap> = pr_changes
+            .par_iter()
+            .map(|(pr_id, changes)| {
+                let mut bitmap = RoaringBitmap::new();
+                for change in changes {
+                    if let Some(&file_id) = file_dict.get(&change.path) {
+                        bitmap.insert(file_id);
+                    }
+                    if let Some(ref orig) = change.original_path
+                        && let Some(&file_id) = file_dict.get(orig)
+                    {
+                        bitmap.insert(file_id);
+                    }
+                }
+                (*pr_id, bitmap)
+            })
+            .collect();
+
+        // Pass 3: Build line bitmaps per (PR, file) (parallel)
+        // We need to collect into a Vec first to avoid borrow issues, then convert to HashMap
+        let file_dict_ref = &file_dict;
+        let pr_line_bitmaps: HashMap<(i32, u32), RoaringBitmap> = pr_changes
+            .par_iter()
+            .flat_map_iter(|(pr_id, changes)| {
+                let pr_id = *pr_id;
+                changes.iter().filter_map(move |change| {
+                    let file_id = file_dict_ref.get(&change.path)?;
+                    let mut bitmap = RoaringBitmap::new();
+                    for range in &change.line_ranges {
+                        // Insert all line numbers in the range
+                        for line in range.start..=range.end {
+                            bitmap.insert(line);
+                        }
+                    }
+                    // Only store if there are line ranges
+                    if bitmap.is_empty() {
+                        None
+                    } else {
+                        Some(((pr_id, *file_id), bitmap))
+                    }
+                })
+            })
+            .collect();
+
+        Self {
+            file_dict,
+            file_dict_reverse,
+            pr_file_bitmaps,
+            pr_line_bitmaps,
+        }
+    }
+
+    /// Returns the file bitmap for a PR, if it exists.
+    pub fn get_file_bitmap(&self, pr_id: i32) -> Option<&RoaringBitmap> {
+        self.pr_file_bitmaps.get(&pr_id)
+    }
+
+    /// Returns the line bitmap for a PR and file, if it exists.
+    pub fn get_line_bitmap(&self, pr_id: i32, file_id: u32) -> Option<&RoaringBitmap> {
+        self.pr_line_bitmaps.get(&(pr_id, file_id))
+    }
+
+    /// Returns the file path for a file ID.
+    pub fn get_file_path(&self, file_id: u32) -> Option<&String> {
+        self.file_dict_reverse.get(&file_id)
+    }
+
+    /// Returns the file ID for a file path.
+    pub fn get_file_id(&self, path: &str) -> Option<u32> {
+        self.file_dict.get(path).copied()
+    }
+}
+
+/// Converts a roaring bitmap of line numbers back to a vector of LineRange.
+///
+/// Consecutive line numbers are merged into ranges.
+fn bitmap_to_ranges(bitmap: &RoaringBitmap) -> Vec<LineRange> {
+    let mut ranges = Vec::new();
+    let mut iter = bitmap.iter().peekable();
+
+    while let Some(start) = iter.next() {
+        let mut end = start;
+        while let Some(&next) = iter.peek() {
+            if next == end + 1 {
+                end = next;
+                iter.next();
+            } else {
+                break;
+            }
+        }
+        ranges.push(LineRange::new(start, end));
+    }
+    ranges
+}
+
 // ==================== Dependency Analyzer ====================
 
 /// Analyzes dependencies between pull requests based on file changes.
@@ -628,6 +776,144 @@ impl DependencyAnalyzer {
                             });
                         }
                     }
+                }
+            }
+        }
+
+        // Compute topological order
+        graph.compute_topological_order();
+
+        DependencyAnalysisResult { graph, warnings }
+    }
+
+    /// Analyzes dependencies between PRs using parallel processing.
+    ///
+    /// Uses rayon for parallel pairwise comparison, which can significantly
+    /// speed up analysis for large PR sets. The O(n^2) comparisons are
+    /// distributed across available CPU cores.
+    ///
+    /// # Arguments
+    ///
+    /// * `prs` - List of PRs with their metadata, in chronological order
+    /// * `pr_changes` - Map from PR ID to its file changes
+    ///
+    /// # Returns
+    ///
+    /// A `DependencyAnalysisResult` containing the dependency graph and any warnings.
+    pub fn analyze_parallel(
+        &self,
+        prs: &[PRInfo],
+        pr_changes: &HashMap<i32, Vec<FileChange>>,
+    ) -> DependencyAnalysisResult {
+        // Build bitmap index for fast comparison (parallelized internally)
+        let index = PRBitmapIndex::build(pr_changes);
+
+        // Build nodes for all PRs (sequential - fast)
+        let mut graph = PRDependencyGraph::new();
+        for pr in prs {
+            let node = PRDependencyNode::new(pr.id, pr.title.clone(), pr.is_selected);
+            graph.add_node(node);
+        }
+
+        // Generate all pairs (i, j) where j < i for parallel processing
+        let pairs: Vec<(usize, usize)> = (0..prs.len())
+            .flat_map(|i| (0..i).map(move |j| (i, j)))
+            .collect();
+
+        // Parallel pairwise comparison using bitmap optimization
+        let dependencies: Vec<(i32, i32, DependencyCategory)> = pairs
+            .par_iter()
+            .filter_map(|&(i, j)| {
+                let current_pr = &prs[i];
+                let prev_pr = &prs[j];
+
+                // Fast file overlap check via bitmap AND
+                let bitmap1 = index.get_file_bitmap(current_pr.id)?;
+                let bitmap2 = index.get_file_bitmap(prev_pr.id)?;
+                let file_overlap = bitmap1 & bitmap2;
+
+                if file_overlap.is_empty() {
+                    return None; // Independent - no shared files
+                }
+
+                // Get shared file paths from the overlap bitmap
+                let shared_files: Vec<String> = file_overlap
+                    .iter()
+                    .filter_map(|file_id| index.get_file_path(file_id).cloned())
+                    .collect();
+
+                // Check line overlaps for each shared file using line bitmaps
+                let mut overlapping_files = Vec::new();
+                for file_id in file_overlap.iter() {
+                    let lines1 = index.get_line_bitmap(current_pr.id, file_id);
+                    let lines2 = index.get_line_bitmap(prev_pr.id, file_id);
+
+                    if let (Some(l1), Some(l2)) = (lines1, lines2) {
+                        let line_overlap = l1 & l2;
+                        if !line_overlap.is_empty() {
+                            // Convert bitmap back to ranges for storage
+                            let ranges = bitmap_to_ranges(&line_overlap);
+                            if let Some(path) = index.get_file_path(file_id) {
+                                overlapping_files.push(OverlappingFile {
+                                    path: path.clone(),
+                                    overlapping_ranges: ranges,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                let category = if overlapping_files.is_empty() {
+                    DependencyCategory::PartiallyDependent { shared_files }
+                } else {
+                    DependencyCategory::Dependent {
+                        shared_files,
+                        overlapping_files,
+                    }
+                };
+
+                Some((current_pr.id, prev_pr.id, category))
+            })
+            .collect();
+
+        // Build graph from collected dependencies (sequential - needs mutable access)
+        let mut warnings = Vec::new();
+        for (from_id, to_id, category) in dependencies {
+            let from_pr = prs.iter().find(|p| p.id == from_id).unwrap();
+            let to_pr = prs.iter().find(|p| p.id == to_id).unwrap();
+
+            let dependency = PRDependency {
+                from_pr_id: from_id,
+                to_pr_id: to_id,
+                category: category.clone(),
+            };
+
+            // Add dependency to current node
+            if let Some(node) = graph.get_node_mut(from_id) {
+                node.dependencies.push(dependency);
+            }
+
+            // Add as dependent to previous node
+            if let Some(prev_node) = graph.get_node_mut(to_id) {
+                prev_node.dependents.push(from_id);
+            }
+
+            // Check for unselected dependency warning
+            if from_pr.is_selected && !to_pr.is_selected {
+                let should_warn = match &category {
+                    DependencyCategory::Dependent { .. } => true,
+                    DependencyCategory::PartiallyDependent { .. } => self.config.warn_on_partial,
+                    DependencyCategory::Independent => false,
+                };
+
+                if should_warn {
+                    warnings.push(DependencyWarning::UnselectedDependency {
+                        selected_pr_id: from_id,
+                        selected_pr_title: from_pr.title.clone(),
+                        unselected_pr_id: to_id,
+                        unselected_pr_title: to_pr.title.clone(),
+                        category,
+                    });
                 }
             }
         }
@@ -1304,5 +1590,183 @@ mod tests {
 
         assert!(pos1 < pos2, "PR 1 should come before PR 2");
         assert!(pos2 < pos3, "PR 2 should come before PR 3");
+    }
+
+    /// # Parallel Analysis Produces Same Results as Sequential
+    ///
+    /// Tests that the parallel analysis method produces identical results
+    /// to the sequential analysis method.
+    ///
+    /// ## Test Scenario
+    /// - Creates a set of PRs with various dependency relationships
+    /// - Runs both sequential and parallel analysis
+    /// - Compares the results
+    ///
+    /// ## Expected Outcome
+    /// - Both methods should produce identical dependency graphs
+    /// - Same warnings should be generated
+    #[test]
+    fn test_parallel_analysis_equivalence() {
+        let prs = vec![
+            PRInfo::new(1, "Base".to_string(), true, Some("abc".to_string())),
+            PRInfo::new(2, "Feature A".to_string(), true, Some("def".to_string())),
+            PRInfo::new(3, "Feature B".to_string(), false, Some("ghi".to_string())),
+            PRInfo::new(4, "Integration".to_string(), true, Some("jkl".to_string())),
+        ];
+
+        let mut pr_changes = HashMap::new();
+        pr_changes.insert(
+            1,
+            vec![FileChange::with_ranges(
+                "src/core.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(10, 30)],
+            )],
+        );
+        pr_changes.insert(
+            2,
+            vec![FileChange::with_ranges(
+                "src/core.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(25, 45)], // Overlaps with 1
+            )],
+        );
+        pr_changes.insert(
+            3,
+            vec![FileChange::with_ranges(
+                "src/util.rs".to_string(),
+                ChangeType::Modify,
+                vec![LineRange::new(5, 15)], // Different file
+            )],
+        );
+        pr_changes.insert(
+            4,
+            vec![
+                FileChange::with_ranges(
+                    "src/core.rs".to_string(),
+                    ChangeType::Modify,
+                    vec![LineRange::new(40, 55)], // Overlaps with 2
+                ),
+                FileChange::with_ranges(
+                    "src/util.rs".to_string(),
+                    ChangeType::Modify,
+                    vec![LineRange::new(10, 20)], // Overlaps with 3
+                ),
+            ],
+        );
+
+        let analyzer = DependencyAnalyzer::new();
+        let sequential_result = analyzer.analyze(&prs, &pr_changes);
+        let parallel_result = analyzer.analyze_parallel(&prs, &pr_changes);
+
+        // Compare graph node counts
+        assert_eq!(
+            sequential_result.graph.nodes.len(),
+            parallel_result.graph.nodes.len(),
+            "Node counts should match"
+        );
+
+        // Compare each node's dependencies
+        for pr in &prs {
+            let seq_node = sequential_result.graph.get_node(pr.id).unwrap();
+            let par_node = parallel_result.graph.get_node(pr.id).unwrap();
+
+            assert_eq!(
+                seq_node.dependencies.len(),
+                par_node.dependencies.len(),
+                "Dependency count should match for PR {}",
+                pr.id
+            );
+
+            // Check that same dependencies exist (order may differ)
+            for seq_dep in &seq_node.dependencies {
+                let found = par_node.dependencies.iter().any(|par_dep| {
+                    par_dep.to_pr_id == seq_dep.to_pr_id
+                        && std::mem::discriminant(&par_dep.category)
+                            == std::mem::discriminant(&seq_dep.category)
+                });
+                assert!(
+                    found,
+                    "Parallel result should have same dependency from {} to {}",
+                    pr.id, seq_dep.to_pr_id
+                );
+            }
+        }
+
+        // Compare warning counts
+        assert_eq!(
+            sequential_result.warnings.len(),
+            parallel_result.warnings.len(),
+            "Warning counts should match"
+        );
+    }
+
+    /// # Parallel Analysis with Many PRs
+    ///
+    /// Tests that parallel analysis handles larger datasets correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates 20 PRs with chained dependencies
+    /// - Runs parallel analysis
+    ///
+    /// ## Expected Outcome
+    /// - Analysis should complete without errors
+    /// - Topological order should respect dependencies
+    #[test]
+    fn test_parallel_analysis_many_prs() {
+        let prs: Vec<PRInfo> = (1..=20)
+            .map(|i| {
+                PRInfo::new(
+                    i,
+                    format!("PR {}", i),
+                    i % 2 == 0, // Alternate selection
+                    Some(format!("commit{}", i)),
+                )
+            })
+            .collect();
+
+        // Each PR modifies the same file with slightly overlapping ranges
+        let pr_changes: HashMap<i32, Vec<FileChange>> = (1..=20)
+            .map(|i| {
+                let start = (i as u32 - 1) * 5 + 1;
+                let end = start + 10; // 10 line range, overlaps with adjacent PRs
+                (
+                    i,
+                    vec![FileChange::with_ranges(
+                        "src/main.rs".to_string(),
+                        ChangeType::Modify,
+                        vec![LineRange::new(start, end)],
+                    )],
+                )
+            })
+            .collect();
+
+        let analyzer = DependencyAnalyzer::new();
+        let result = analyzer.analyze_parallel(&prs, &pr_changes);
+
+        // Should have nodes for all 20 PRs
+        assert_eq!(result.graph.nodes.len(), 20);
+
+        // Topological order should be valid (each PR should come after its dependencies)
+        for (idx, &pr_id) in result.graph.topological_order.iter().enumerate() {
+            if let Some(node) = result.graph.get_node(pr_id) {
+                for dep in &node.dependencies {
+                    let dep_idx = result
+                        .graph
+                        .topological_order
+                        .iter()
+                        .position(|&id| id == dep.to_pr_id);
+                    if let Some(dep_idx) = dep_idx {
+                        assert!(
+                            dep_idx < idx,
+                            "PR {} depends on {}, but {} comes later in topological order",
+                            pr_id,
+                            dep.to_pr_id,
+                            dep.to_pr_id
+                        );
+                    }
+                }
+            }
+        }
     }
 }

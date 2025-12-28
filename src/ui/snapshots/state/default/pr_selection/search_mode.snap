@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/default/pr_selection.rs
+assertion_line: 1857
 expression: harness.backend()
 ---
 "                                                                                "
@@ -7,10 +8,10 @@ expression: harness.backend()
 " │Search: PR Title: "login" | Result 1 of 1                                   │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
-" │      PR #     Date         Title           Author          Work Items      ↑ "
-" │→     100      2024-01-10   Fix login bug   Alice Johnson   #1001 (Closed)  █ "
-" │      101      2024-01-12   Update user pro Bob Wilson      #1002 (Active)  █ "
-" │      102      2024-01-14   Add analytics t Carol Martinez  #1003 (Resolved)█ "
+" │      PR #     Date         Title        Author      Deps  Work Items       ↑ "
+" │→     100      2024-01-10   Fix login bu Alice Johns 0/0   #1001 (Closed)   █ "
+" │      101      2024-01-12   Update user  Bob Wilson  0/0   #1002 (Active)   █ "
+" │      102      2024-01-14   Add analytic Carol Marti 0/0   #1003 (Resolved),█ "
 " │                                                                            █ "
 " │                                                                            █ "
 " │                                                                            █ "
