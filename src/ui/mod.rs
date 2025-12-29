@@ -55,7 +55,10 @@ pub async fn run_app_with_events<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     event_source: &dyn EventSource,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     match app {
         App::Merge(merge_app) => {
             let typed_config = merge_app.config.as_ref();
@@ -113,7 +116,10 @@ pub async fn run_app_with_events<B: ratatui::backend::Backend>(
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     run_app_with_events(terminal, app, &CrosstermEventSource::new()).await
 }
 
@@ -125,7 +131,10 @@ pub async fn run_merge_app_with_state<B: ratatui::backend::Backend>(
     app: &mut MergeApp,
     event_source: &dyn EventSource,
     initial_state: MergeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     typed_run::run_merge_mode(terminal, app, event_source, initial_state).await
 }
 
@@ -137,7 +146,10 @@ pub async fn run_migration_app_with_state<B: ratatui::backend::Backend>(
     app: &mut MigrationApp,
     event_source: &dyn EventSource,
     initial_state: MigrationModeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     typed_run::run_migration_mode(terminal, app, event_source, initial_state).await
 }
 
@@ -149,7 +161,10 @@ pub async fn run_cleanup_app_with_state<B: ratatui::backend::Backend>(
     app: &mut CleanupApp,
     event_source: &dyn EventSource,
     initial_state: CleanupModeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     typed_run::run_cleanup_mode(terminal, app, event_source, initial_state).await
 }
 
