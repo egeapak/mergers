@@ -1665,7 +1665,6 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "azure_core",
  "azure_devops_rust_api",
  "chrono",
  "clap",

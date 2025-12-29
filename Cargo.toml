@@ -46,7 +46,6 @@ roaring = "0.10"
 
 # Azure DevOps API client
 azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
-azure_core = "0.28"
 
 [dev-dependencies]
 mockito = "=1.7.1"
