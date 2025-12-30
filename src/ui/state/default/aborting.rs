@@ -35,10 +35,16 @@ impl AbortingState {
     /// Create a new aborting state and immediately start the cleanup in a background thread.
     ///
     /// # Arguments
+    /// * `base_repo_path` - Path to the base repository (for worktree cleanup)
     /// * `repo_path` - Path to the repository (worktree or cloned repo)
     /// * `version` - Version string used for the patch branch
     /// * `target_branch` - Target branch name
-    pub fn new(repo_path: PathBuf, version: String, target_branch: String) -> Self {
+    pub fn new(
+        base_repo_path: Option<PathBuf>,
+        repo_path: PathBuf,
+        version: String,
+        target_branch: String,
+    ) -> Self {
         let is_complete = Arc::new(Mutex::new(false));
         let cleanup_result = Arc::new(Mutex::new(None));
 
@@ -51,7 +57,7 @@ impl AbortingState {
         // Spawn a thread to run the cleanup in the background
         thread::spawn(move || {
             let result = git::cleanup_cherry_pick(
-                None, // base_repo_path is no longer stored in App
+                base_repo_path.as_deref(),
                 &repo_path_clone,
                 &version_clone,
                 &target_branch_clone,
