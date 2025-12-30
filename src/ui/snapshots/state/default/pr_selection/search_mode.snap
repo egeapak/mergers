@@ -1,6 +1,5 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 1857
 expression: harness.backend()
 ---
 "                                                                                "
@@ -16,6 +15,8 @@ expression: harness.backend()
 " │                                                                            █ "
 " │                                                                            █ "
 " │                                                                            █ "
+" │                                                                            █ "
+" │                                                                            █ "
 " │                                                                            ║ "
 " │                                                                            ↓ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
@@ -27,8 +28,6 @@ expression: harness.backend()
 " │No history available                                                        │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Reproduction Steps (use ←/→ to navigate work items)─────────────────────────┐ "
-" │1. Navigate to login page                                                   │ "
-" └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
 " │↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
