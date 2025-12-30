@@ -1638,15 +1638,23 @@ impl ModeState for PullRequestSelectionState {
             chunk_idx += 1;
         }
         // Create table headers
-        let header_cells = ["", "PR #", "Date", "Title", "Author", "Deps", "Work Items"]
-            .iter()
-            .map(|h| {
-                Cell::from(*h).style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )
-            });
+        let header_cells = [
+            "",
+            "PR #",
+            "Date",
+            "Title",
+            "Author",
+            "Work Items",
+            "PR Dependencies",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
         let header = Row::new(header_cells).height(1);
 
         // Compute unselected dependencies (PRs that selected PRs depend on but aren't selected)
@@ -1710,8 +1718,7 @@ impl ModeState for PullRequestSelectionState {
 
                 // Get dependency counts for this PR
                 let (partial_deps, full_deps) = get_dependency_counts(app, pr_with_wi.pr.id);
-                let deps_text = format_deps_count(partial_deps, full_deps);
-                let deps_style = get_deps_style(partial_deps, full_deps, pr_with_wi.selected);
+                let deps_cell = create_deps_cell(partial_deps, full_deps, pr_with_wi.selected);
 
                 let cells = vec![
                     Cell::from(selected).style(if pr_with_wi.selected {
@@ -1746,12 +1753,12 @@ impl ModeState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Cell::from(deps_text).style(deps_style),
                     Cell::from(work_items).style(if pr_with_wi.selected {
                         Style::default().fg(Color::White)
                     } else {
                         Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
                     }),
+                    deps_cell,
                 ];
 
                 Row::new(cells).height(1).style(row_style)
@@ -1764,10 +1771,10 @@ impl ModeState for PullRequestSelectionState {
                 Constraint::Length(3),      // Selection checkbox
                 Constraint::Length(8),      // PR # (fixed width)
                 Constraint::Length(12),     // Date
-                Constraint::Percentage(25), // Title (reduced from 30%)
-                Constraint::Percentage(15), // Author (reduced from 20%)
-                Constraint::Length(5),      // Deps (P/D format)
-                Constraint::Percentage(25), // Work Items
+                Constraint::Percentage(25), // Title
+                Constraint::Percentage(15), // Author
+                Constraint::Percentage(20), // Work Items
+                Constraint::Length(12),     // PR Dependencies (e.g., "2 P / 3 F")
             ],
         )
         .header(header)
@@ -2244,22 +2251,58 @@ fn get_dependency_counts(app: &MergeApp, pr_id: i32) -> (usize, usize) {
     (0, 0)
 }
 
-/// Returns the style for the dependency column based on counts.
-fn get_deps_style(partial: usize, full: usize, is_selected: bool) -> Style {
-    if is_selected {
-        Style::default().fg(Color::White)
-    } else if full > 0 {
-        Style::default().fg(Color::Red)
-    } else if partial > 0 {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Green)
+/// Formats the dependency counts as a display string.
+///
+/// Returns `None` if there are no dependencies, otherwise returns the formatted string.
+/// Format: "X P" for partial only, "Y F" for full only, or "X P / Y F" for both.
+fn format_deps_text(partial: usize, full: usize) -> Option<String> {
+    match (partial > 0, full > 0) {
+        (false, false) => None,
+        (true, false) => Some(format!("{} P", partial)),
+        (false, true) => Some(format!("{} F", full)),
+        (true, true) => Some(format!("{} P / {} F", partial, full)),
     }
 }
 
-/// Formats the dependency count as "P/D".
-fn format_deps_count(partial: usize, full: usize) -> String {
-    format!("{}/{}", partial, full)
+/// Creates a styled cell for the PR Dependencies column.
+///
+/// Returns an empty cell if there are no dependencies, otherwise returns
+/// a multi-colored cell with format "X P / Y F" where partial deps are
+/// shown in yellow and full deps are shown in red.
+fn create_deps_cell(partial: usize, full: usize, is_selected: bool) -> Cell<'static> {
+    // Return empty cell if no dependencies
+    let Some(_) = format_deps_text(partial, full) else {
+        return Cell::from("");
+    };
+
+    // If selected, use white color for everything
+    if is_selected {
+        let text = format_deps_text(partial, full).unwrap_or_default();
+        return Cell::from(text).style(Style::default().fg(Color::White));
+    }
+
+    // Build multi-colored spans
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    if partial > 0 {
+        spans.push(Span::styled(
+            format!("{} P", partial),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    if partial > 0 && full > 0 {
+        spans.push(Span::raw(" / "));
+    }
+
+    if full > 0 {
+        spans.push(Span::styled(
+            format!("{} F", full),
+            Style::default().fg(Color::Red),
+        ));
+    }
+
+    Cell::from(Line::from(spans))
 }
 
 /// Computes the set of PR IDs that are dependencies of selected PRs but are not selected.
@@ -2308,12 +2351,96 @@ fn compute_unselected_dependencies(app: &MergeApp) -> HashSet<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::operations::{
+        DependencyCategory, PRDependency, PRDependencyGraph, PRDependencyNode,
+    };
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
         state::typed::AppState,
         testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
     };
     use insta::assert_snapshot;
+
+    /// Creates a test dependency graph with various dependency types.
+    ///
+    /// - PR 100: 2 partial deps, 1 full dep
+    /// - PR 101: 1 partial dep
+    /// - PR 102: 3 full deps
+    fn create_test_dependency_graph() -> PRDependencyGraph {
+        let mut graph = PRDependencyGraph::new();
+
+        // PR 100: 2 partial + 1 full dependency
+        let mut node100 = PRDependencyNode::new(100, "Fix login bug".to_string(), false);
+        node100.dependencies = vec![
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 200,
+                category: DependencyCategory::PartiallyDependent {
+                    shared_files: vec!["src/auth.rs".to_string()],
+                },
+            },
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 201,
+                category: DependencyCategory::PartiallyDependent {
+                    shared_files: vec!["src/login.rs".to_string()],
+                },
+            },
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 202,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/user.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+        ];
+        graph.add_node(node100);
+
+        // PR 101: 1 partial dependency
+        let mut node101 =
+            PRDependencyNode::new(101, "Update user profile page design".to_string(), false);
+        node101.dependencies = vec![PRDependency {
+            from_pr_id: 101,
+            to_pr_id: 300,
+            category: DependencyCategory::PartiallyDependent {
+                shared_files: vec!["src/profile.rs".to_string()],
+            },
+        }];
+        graph.add_node(node101);
+
+        // PR 102: 3 full dependencies
+        let mut node102 = PRDependencyNode::new(102, "Add analytics tracking".to_string(), false);
+        node102.dependencies = vec![
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 400,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/analytics.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 401,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/tracking.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 402,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/events.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+        ];
+        graph.add_node(node102);
+
+        graph
+    }
 
     /// # PR Selection State - Normal Display
     ///
@@ -2399,6 +2526,40 @@ mod tests {
             harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_selections", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - With Dependencies
+    ///
+    /// Tests the PR selection screen with dependency information displayed.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests with a dependency graph
+    /// - PR 100: 2 partial deps, 1 full dep (displays "2 P / 1 F")
+    /// - PR 101: 1 partial dep (displays "1 P")
+    /// - PR 102: 3 full deps (displays "3 F")
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR Dependencies column with correct format
+    /// - Partial deps shown with "P" suffix
+    /// - Full deps shown with "F" suffix
+    /// - Combined format: "X P / Y F"
+    #[test]
+    fn test_pr_selection_with_dependencies() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(create_test_dependency_graph());
+
+            let mut state = MergeState::PullRequestSelection(PullRequestSelectionState::new());
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("with_dependencies", harness.backend());
         });
     }
 
@@ -3728,5 +3889,86 @@ mod tests {
         ModeState::process_key(&mut state, KeyCode::Char('g'), harness.merge_app_mut()).await;
         assert!(!state.show_dependency_dialog);
         assert_eq!(state.dependency_dialog_pr_index, None);
+    }
+
+    /// # Format Deps Text - No Dependencies
+    ///
+    /// Tests that None is returned when there are no dependencies.
+    ///
+    /// ## Test Scenario
+    /// - Calls format_deps_text with 0 partial and 0 full dependencies
+    ///
+    /// ## Expected Outcome
+    /// - Should return None
+    #[test]
+    fn test_format_deps_text_no_dependencies() {
+        assert_eq!(format_deps_text(0, 0), None);
+    }
+
+    /// # Format Deps Text - Only Partial Dependencies
+    ///
+    /// Tests that only partial deps are shown with "P" suffix.
+    ///
+    /// ## Test Scenario
+    /// - Calls format_deps_text with 2 partial and 0 full dependencies
+    ///
+    /// ## Expected Outcome
+    /// - Should return "2 P"
+    #[test]
+    fn test_format_deps_text_only_partial() {
+        assert_eq!(format_deps_text(2, 0), Some("2 P".to_string()));
+        assert_eq!(format_deps_text(1, 0), Some("1 P".to_string()));
+        assert_eq!(format_deps_text(99, 0), Some("99 P".to_string()));
+    }
+
+    /// # Format Deps Text - Only Full Dependencies
+    ///
+    /// Tests that only full deps are shown with "F" suffix.
+    ///
+    /// ## Test Scenario
+    /// - Calls format_deps_text with 0 partial and 3 full dependencies
+    ///
+    /// ## Expected Outcome
+    /// - Should return "3 F"
+    #[test]
+    fn test_format_deps_text_only_full() {
+        assert_eq!(format_deps_text(0, 3), Some("3 F".to_string()));
+        assert_eq!(format_deps_text(0, 1), Some("1 F".to_string()));
+        assert_eq!(format_deps_text(0, 50), Some("50 F".to_string()));
+    }
+
+    /// # Format Deps Text - Both Dependencies
+    ///
+    /// Tests that both partial and full deps are shown with separator.
+    ///
+    /// ## Test Scenario
+    /// - Calls format_deps_text with 2 partial and 3 full dependencies
+    ///
+    /// ## Expected Outcome
+    /// - Should return "2 P / 3 F"
+    #[test]
+    fn test_format_deps_text_both_dependencies() {
+        assert_eq!(format_deps_text(2, 3), Some("2 P / 3 F".to_string()));
+        assert_eq!(format_deps_text(1, 1), Some("1 P / 1 F".to_string()));
+        assert_eq!(format_deps_text(10, 20), Some("10 P / 20 F".to_string()));
+    }
+
+    /// # Format Deps Text - Large Numbers
+    ///
+    /// Tests that large dependency counts are formatted correctly.
+    ///
+    /// ## Test Scenario
+    /// - Calls format_deps_text with large partial and full dependency counts
+    ///
+    /// ## Expected Outcome
+    /// - Should format large numbers correctly
+    #[test]
+    fn test_format_deps_text_large_numbers() {
+        assert_eq!(
+            format_deps_text(100, 200),
+            Some("100 P / 200 F".to_string())
+        );
+        assert_eq!(format_deps_text(999, 0), Some("999 P".to_string()));
+        assert_eq!(format_deps_text(0, 1000), Some("1000 F".to_string()));
     }
 }

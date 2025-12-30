@@ -1,17 +1,14 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 2329
+assertion_line: 2562
 expression: harness.backend()
 ---
 "                                                                                "
-" ┌Search Status───────────────────────────────────────────────────────────────┐ "
-" │Search: PR Title: "login" | Result 1 of 1                                   │ "
-" └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
 " │      PR #     Date         Title       Author      Work Items  PR Dependenc↑ "
-" │→     100      2024-01-10   Fix login b Alice Johns #1001 (Clos             █ "
-" │      101      2024-01-12   Update user Bob Wilson  #1002 (Acti             █ "
-" │      102      2024-01-14   Add analyti Carol Marti #1003 (Reso             █ "
+" │→     100      2024-01-10   Fix login b Alice Johns #1001 (Clos 2 P / 1 F   █ "
+" │      101      2024-01-12   Update user Bob Wilson  #1002 (Acti 1 P         █ "
+" │      102      2024-01-14   Add analyti Carol Marti #1003 (Reso 3 F         █ "
 " │                                                                            █ "
 " │                                                                            █ "
 " │                                                                            █ "
@@ -29,7 +26,10 @@ expression: harness.backend()
 " │No history available                                                        │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Reproduction Steps (use ←/→ to navigate work items)─────────────────────────┐ "
+" │1. Navigate to login page                                                   │ "
+" │2. Click login button                                                       │ "
+" └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Help────────────────────────────────────────────────────────────────────────┐ "
-" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous │ "
+" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle |  │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "

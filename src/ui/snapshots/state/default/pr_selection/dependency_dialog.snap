@@ -1,13 +1,14 @@
 ---
 source: src/ui/state/default/pr_selection.rs
+assertion_line: 3726
 expression: harness.backend()
 ---
 "                                                                                "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
-" │    ┌Dependencies for PR #100 - Fix login bug──────────────────────────┐    ↑ "
-" │→   │Dependency graph not available                                    │)   █ "
-" │    │(Requires local_repo to be configured)                            │)   █ "
-" │    │                                                                  │ed),█ "
+" │    ┌Dependencies for PR #100 - Fix login bug──────────────────────────┐denc↑ "
+" │→   │Dependency graph not available                                    │    █ "
+" │    │(Requires local_repo to be configured)                            │    █ "
+" │    │                                                                  │    █ "
 " │    │                                                                  │    █ "
 " │    │                                                                  │    █ "
 " │    │                                                                  │    █ "
