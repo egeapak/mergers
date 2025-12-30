@@ -806,8 +806,8 @@ impl Args {
         // Access shared args through the command using the trait
         let shared = mode_command.shared_args();
 
-        // Determine local_repo path (positional arg takes precedence over --local-repo flag)
-        let local_repo_path = shared.path.as_ref().or(shared.local_repo.as_ref());
+        // Determine local_repo path from CLI (positional arg takes precedence over --local-repo flag)
+        let cli_local_repo = shared.path.as_ref().or(shared.local_repo.as_ref());
 
         // Load from config file (lowest priority)
         let file_config = Config::load_from_file()?;
@@ -815,8 +815,15 @@ impl Args {
         // Load from environment variables
         let env_config = Config::load_from_env();
 
-        // Try to detect from git remote if we have a local repo path
-        let git_config = if let Some(repo_path) = local_repo_path {
+        // Determine effective local_repo path for git detection
+        // CLI takes precedence, then env var, then config file
+        let effective_local_repo = cli_local_repo
+            .cloned()
+            .or_else(|| env_config.local_repo.as_ref().map(|p| p.value().clone()))
+            .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()));
+
+        // Try to detect from git remote if we have a local repo path from any source
+        let git_config = if let Some(ref repo_path) = effective_local_repo {
             Config::detect_from_git_remote(repo_path)
         } else {
             Config::default()
@@ -847,7 +854,7 @@ impl Args {
                 .target_branch
                 .as_ref()
                 .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            local_repo: cli_local_repo.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
             work_item_state: None, // Will be set based on command
             parallel_limit: shared
                 .parallel_limit
@@ -906,7 +913,7 @@ impl Args {
             target_branch: merged_config
                 .target_branch
                 .unwrap_or_else(|| "next".to_string().into()),
-            local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            local_repo: merged_config.local_repo,
             parallel_limit: merged_config.parallel_limit.unwrap_or(300.into()),
             max_concurrent_network: merged_config.max_concurrent_network.unwrap_or(100.into()),
             max_concurrent_processing: merged_config.max_concurrent_processing.unwrap_or(10.into()),
