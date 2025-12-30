@@ -14,9 +14,10 @@ use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::Alignment,
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
 };
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -329,6 +330,38 @@ impl DataLoadingState {
             LoadingStage::Complete => "Loading complete".to_string(),
         }
     }
+
+    fn get_progress_percentage(&self) -> u16 {
+        match self.loading_stage {
+            LoadingStage::NotStarted => 0,
+            LoadingStage::FetchingPullRequests => 10,
+            LoadingStage::FetchingWorkItems => 20,
+            LoadingStage::WaitingForWorkItems => {
+                if self.work_items_total > 0 {
+                    let base = 20u16;
+                    let range = 40u16; // 20-60%
+                    let progress = (self.work_items_fetched as f64 / self.work_items_total as f64
+                        * range as f64) as u16;
+                    base + progress
+                } else {
+                    30
+                }
+            }
+            LoadingStage::FetchingCommitInfo => {
+                if self.commit_info_total > 0 {
+                    let base = 60u16;
+                    let range = 20u16; // 60-80%
+                    let progress = (self.commit_info_fetched as f64 / self.commit_info_total as f64
+                        * range as f64) as u16;
+                    base + progress
+                } else {
+                    70
+                }
+            }
+            LoadingStage::AnalyzingDependencies => 85,
+            LoadingStage::Complete => 100,
+        }
+    }
 }
 
 // ============================================================================
@@ -340,11 +373,63 @@ impl ModeState for DataLoadingState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
-        let loading = Paragraph::new(self.get_loading_message())
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(3), // Progress bar
+                Constraint::Min(5),    // Status message
+                Constraint::Length(3), // Help
+            ])
+            .split(f.area());
+
+        // Title
+        let title = Paragraph::new("Merge Mode - Loading Data")
+            .style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(title, chunks[0]);
+
+        // Progress bar
+        let progress = self.get_progress_percentage();
+        let gauge = Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title("Progress"))
+            .gauge_style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .percent(progress)
+            .label(format!("{}%", progress));
+        f.render_widget(gauge, chunks[1]);
+
+        // Status message
+        let status = Paragraph::new(self.get_loading_message())
             .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Loading"))
-            .alignment(Alignment::Center);
-        f.render_widget(loading, f.area());
+            .block(Block::default().borders(Borders::ALL).title("Status"))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(status, chunks[2]);
+
+        // Help text with styled hotkeys
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_lines = vec![Line::from(vec![
+            Span::raw("Loading... Press "),
+            Span::styled("q", key_style),
+            Span::raw(" to cancel"),
+        ])];
+
+        let help = Paragraph::new(help_lines)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Help"));
+        f.render_widget(help, chunks[3]);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {

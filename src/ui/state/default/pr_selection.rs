@@ -1726,12 +1726,6 @@ impl ModeState for PullRequestSelectionState {
         self.render_work_item_details(f, app, chunks[chunk_idx]);
         chunk_idx += 1;
 
-        let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
-        } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
-        };
-
         // Build status summary for Help title
         let selected_count = app.pull_requests().iter().filter(|pr| pr.selected).count();
         let help_title = if selected_count > 0 {
@@ -1747,8 +1741,63 @@ impl ModeState for PullRequestSelectionState {
             "Help".to_string()
         };
 
-        let help = List::new(vec![ListItem::new(help_text)])
-            .block(Block::default().borders(Borders::ALL).title(help_title));
+        // Styled help text with colored hotkeys
+        use ratatui::text::{Line, Span};
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_lines = if self.search_iteration_mode {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("n", key_style),
+                Span::raw(": Next result | "),
+                Span::styled("N", key_style),
+                Span::raw(": Previous result | "),
+                Span::styled("Esc", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        } else {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("/", key_style),
+                Span::raw(": Search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Confirm | "),
+                Span::styled("p", key_style),
+                Span::raw(": Open PR | "),
+                Span::styled("w", key_style),
+                Span::raw(": Open Work Items | "),
+                Span::styled("g", key_style),
+                Span::raw(": Graph | "),
+                Span::styled("s", key_style),
+                Span::raw(": Multi-select by states | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        };
+
+        let help = Paragraph::new(help_lines)
+            .block(Block::default().borders(Borders::ALL).title(help_title))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(help, chunks[chunk_idx]);
 
