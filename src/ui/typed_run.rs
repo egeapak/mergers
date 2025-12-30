@@ -61,7 +61,10 @@ pub async fn run_merge_mode<B: ratatui::backend::Backend>(
     app: &mut MergeApp,
     event_source: &dyn EventSource,
     initial_state: MergeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     let mut current_state = initial_state;
 
     loop {
@@ -115,7 +118,10 @@ pub async fn run_migration_mode<B: ratatui::backend::Backend>(
     app: &mut MigrationApp,
     event_source: &dyn EventSource,
     initial_state: MigrationModeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     let mut current_state = initial_state;
 
     loop {
@@ -169,7 +175,10 @@ pub async fn run_cleanup_mode<B: ratatui::backend::Backend>(
     app: &mut CleanupApp,
     event_source: &dyn EventSource,
     initial_state: CleanupModeState,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
     let mut current_state = initial_state;
 
     loop {
