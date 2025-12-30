@@ -25,6 +25,28 @@ fn help_styles() -> Styles {
         .error(AnsiColor::Red.on_default().bold())
 }
 
+/// Build styled after_help text with colorized EXAMPLES header
+fn styled_after_help() -> &'static str {
+    use std::sync::OnceLock;
+    static AFTER_HELP: OnceLock<String> = OnceLock::new();
+
+    AFTER_HELP.get_or_init(|| {
+        let header_style = AnsiColor::Yellow.on_default().bold();
+        format!(
+            "{header_style}EXAMPLES:{header_style:#}\n    \
+            # Merge mode with Azure DevOps credentials\n    \
+            mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
+            # Migration analysis mode\n    \
+            mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo\n\n    \
+            # Cleanup merged branches\n    \
+            mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
+            # Create sample config file\n    \
+            mergers --create-config\n\n\
+            For more information, see: https://github.com/egeapak/mergers"
+        )
+    })
+}
+
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
 pub struct SharedArgs {
@@ -446,16 +468,7 @@ impl Commands {
         Configuration can be provided via CLI arguments, environment variables (MERGERS_*),\n\
         config file (~/.config/mergers/config.toml), or auto-detected from git remotes.",
     before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
-    after_help = "EXAMPLES:\n    \
-        # Merge mode with Azure DevOps credentials\n    \
-        mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-        # Migration analysis mode\n    \
-        mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo\n\n    \
-        # Cleanup merged branches\n    \
-        mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
-        # Create sample config file\n    \
-        mergers --create-config\n\n\
-        For more information, see: https://github.com/egeapak/mergers",
+    after_help = styled_after_help(),
     styles = help_styles()
 )]
 pub struct Args {
