@@ -2249,12 +2249,96 @@ fn compute_unselected_dependencies(app: &MergeApp) -> HashSet<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::operations::{
+        DependencyCategory, PRDependency, PRDependencyGraph, PRDependencyNode,
+    };
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
         state::typed::AppState,
         testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
     };
     use insta::assert_snapshot;
+
+    /// Creates a test dependency graph with various dependency types.
+    ///
+    /// - PR 100: 2 partial deps, 1 full dep
+    /// - PR 101: 1 partial dep
+    /// - PR 102: 3 full deps
+    fn create_test_dependency_graph() -> PRDependencyGraph {
+        let mut graph = PRDependencyGraph::new();
+
+        // PR 100: 2 partial + 1 full dependency
+        let mut node100 = PRDependencyNode::new(100, "Fix login bug".to_string(), false);
+        node100.dependencies = vec![
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 200,
+                category: DependencyCategory::PartiallyDependent {
+                    shared_files: vec!["src/auth.rs".to_string()],
+                },
+            },
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 201,
+                category: DependencyCategory::PartiallyDependent {
+                    shared_files: vec!["src/login.rs".to_string()],
+                },
+            },
+            PRDependency {
+                from_pr_id: 100,
+                to_pr_id: 202,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/user.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+        ];
+        graph.add_node(node100);
+
+        // PR 101: 1 partial dependency
+        let mut node101 =
+            PRDependencyNode::new(101, "Update user profile page design".to_string(), false);
+        node101.dependencies = vec![PRDependency {
+            from_pr_id: 101,
+            to_pr_id: 300,
+            category: DependencyCategory::PartiallyDependent {
+                shared_files: vec!["src/profile.rs".to_string()],
+            },
+        }];
+        graph.add_node(node101);
+
+        // PR 102: 3 full dependencies
+        let mut node102 = PRDependencyNode::new(102, "Add analytics tracking".to_string(), false);
+        node102.dependencies = vec![
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 400,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/analytics.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 401,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/tracking.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+            PRDependency {
+                from_pr_id: 102,
+                to_pr_id: 402,
+                category: DependencyCategory::Dependent {
+                    shared_files: vec!["src/events.rs".to_string()],
+                    overlapping_files: vec![],
+                },
+            },
+        ];
+        graph.add_node(node102);
+
+        graph
+    }
 
     /// # PR Selection State - Normal Display
     ///
@@ -2340,6 +2424,40 @@ mod tests {
             harness.render_merge_state(&mut state);
 
             assert_snapshot!("with_selections", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - With Dependencies
+    ///
+    /// Tests the PR selection screen with dependency information displayed.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests with a dependency graph
+    /// - PR 100: 2 partial deps, 1 full dep (displays "2 P / 1 F")
+    /// - PR 101: 1 partial dep (displays "1 P")
+    /// - PR 102: 3 full deps (displays "3 F")
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR Dependencies column with correct format
+    /// - Partial deps shown with "P" suffix
+    /// - Full deps shown with "F" suffix
+    /// - Combined format: "X P / Y F"
+    #[test]
+    fn test_pr_selection_with_dependencies() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(create_test_dependency_graph());
+
+            let mut state = MergeState::PullRequestSelection(PullRequestSelectionState::new());
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("with_dependencies", harness.backend());
         });
     }
 
