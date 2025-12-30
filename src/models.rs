@@ -25,10 +25,156 @@ fn help_styles() -> Styles {
         .error(AnsiColor::Red.on_default().bold())
 }
 
-/// Build styled after_help text with colorized EXAMPLES header
+/// Apply syntax highlighting to shell examples
+fn highlight_shell(content: &str) -> String {
+    use clap::builder::styling::AnsiColor;
+
+    let comment_style = AnsiColor::BrightBlack.on_default();
+    let command_style = AnsiColor::Green.on_default().bold();
+    let flag_style = AnsiColor::Cyan.on_default();
+    let string_style = AnsiColor::Yellow.on_default();
+    let reset = AnsiColor::White.on_default();
+
+    let mut result = String::new();
+    let mut in_command_block = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+
+        // Handle comment lines
+        if trimmed.starts_with('#') {
+            result.push_str(&format!("{comment_style}{line}{reset:#}\n"));
+            in_command_block = false;
+            continue;
+        }
+
+        // Handle empty lines
+        if trimmed.is_empty() {
+            result.push('\n');
+            in_command_block = false;
+            continue;
+        }
+
+        // Check if this is a shell command line (starts with known command or continuation)
+        let is_command_line = trimmed.starts_with("mergers")
+            || (in_command_block
+                && trimmed
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '-' || c.is_whitespace()));
+
+        // Non-command lines (like "For more information...") - just output as-is
+        if !is_command_line && !in_command_block {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Track if line ends with continuation
+        let has_continuation = line.trim_end().ends_with('\\');
+        in_command_block = has_continuation;
+
+        // Preserve leading whitespace
+        let leading_spaces = line.len() - trimmed.len();
+        result.push_str(&" ".repeat(leading_spaces));
+
+        // Simple tokenization for shell highlighting
+        let mut chars = trimmed.chars().peekable();
+        let mut current_token = String::new();
+        let mut in_string = false;
+        let mut string_char = ' ';
+        let mut is_first_token = trimmed.starts_with("mergers");
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' | '\'' if !in_string => {
+                    // Flush current token
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    // Start string
+                    in_string = true;
+                    string_char = ch;
+                    current_token.push(ch);
+                }
+                c if c == string_char && in_string => {
+                    // End string
+                    current_token.push(ch);
+                    result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+                    current_token.clear();
+                    in_string = false;
+                }
+                ' ' | '\t' if !in_string => {
+                    // Token boundary
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else if current_token.starts_with('<') && current_token.ends_with('>') {
+                            result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    result.push(ch);
+                }
+                '\\' if chars.peek() == Some(&'\n') => {
+                    // Line continuation
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    result.push_str("\\\n");
+                    chars.next(); // consume the newline
+                }
+                _ => {
+                    current_token.push(ch);
+                }
+            }
+        }
+
+        // Flush remaining token
+        if !current_token.is_empty() {
+            if is_first_token {
+                result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+            } else if current_token.starts_with('-') {
+                result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+            } else if current_token.starts_with('<') && current_token.ends_with('>') {
+                result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+            } else {
+                result.push_str(&current_token);
+            }
+        }
+
+        result.push('\n');
+    }
+
+    result
+}
+
+/// Build styled after_help text with colorized EXAMPLES header and syntax highlighting
 fn styled_examples(content: &str) -> String {
     let header_style = AnsiColor::Yellow.on_default().bold();
-    format!("{header_style}EXAMPLES:{header_style:#}\n{content}")
+    let highlighted = highlight_shell(content);
+    format!("{header_style}EXAMPLES:{header_style:#}\n{highlighted}")
 }
 
 /// Main command examples
