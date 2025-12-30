@@ -1,0 +1,9 @@
+# Analyze migrations with default terminal states
+mergers migrate -o myorg -p myproject -r myrepo -t <PAT>
+
+# Custom terminal states for work items
+mergers migrate -o myorg -p myproject -r myrepo -t <PAT> \
+  --terminal-states "Closed,Done,Resolved"
+
+# Analyze only recent PRs
+mergers mi -o myorg -p proj -r repo -t <PAT> --since 1mo
