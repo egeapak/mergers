@@ -2149,6 +2149,19 @@ fn get_dependency_counts(app: &MergeApp, pr_id: i32) -> (usize, usize) {
     (0, 0)
 }
 
+/// Formats the dependency counts as a display string.
+///
+/// Returns `None` if there are no dependencies, otherwise returns the formatted string.
+/// Format: "X P" for partial only, "Y F" for full only, or "X P / Y F" for both.
+fn format_deps_text(partial: usize, full: usize) -> Option<String> {
+    match (partial > 0, full > 0) {
+        (false, false) => None,
+        (true, false) => Some(format!("{} P", partial)),
+        (false, true) => Some(format!("{} F", full)),
+        (true, true) => Some(format!("{} P / {} F", partial, full)),
+    }
+}
+
 /// Creates a styled cell for the PR Dependencies column.
 ///
 /// Returns an empty cell if there are no dependencies, otherwise returns
@@ -2156,18 +2169,13 @@ fn get_dependency_counts(app: &MergeApp, pr_id: i32) -> (usize, usize) {
 /// shown in yellow and full deps are shown in red.
 fn create_deps_cell(partial: usize, full: usize, is_selected: bool) -> Cell<'static> {
     // Return empty cell if no dependencies
-    if partial == 0 && full == 0 {
+    let Some(_) = format_deps_text(partial, full) else {
         return Cell::from("");
-    }
+    };
 
     // If selected, use white color for everything
     if is_selected {
-        let text = match (partial > 0, full > 0) {
-            (true, true) => format!("{} P / {} F", partial, full),
-            (true, false) => format!("{} P", partial),
-            (false, true) => format!("{} F", full),
-            (false, false) => String::new(),
-        };
+        let text = format_deps_text(partial, full).unwrap_or_default();
         return Cell::from(text).style(Style::default().fg(Color::White));
     }
 
@@ -3513,95 +3521,84 @@ mod tests {
         assert!(!harness.app.pull_requests()[0].selected);
     }
 
-    /// # Create Deps Cell - No Dependencies
+    /// # Format Deps Text - No Dependencies
     ///
-    /// Tests that an empty cell is returned when there are no dependencies.
+    /// Tests that None is returned when there are no dependencies.
     ///
     /// ## Test Scenario
-    /// - Calls create_deps_cell with 0 partial and 0 full dependencies
+    /// - Calls format_deps_text with 0 partial and 0 full dependencies
     ///
     /// ## Expected Outcome
-    /// - Should return an empty cell (function handles this case)
+    /// - Should return None
     #[test]
-    fn test_create_deps_cell_no_dependencies() {
-        // Test that creating a cell with no deps doesn't panic
-        let _cell = create_deps_cell(0, 0, false);
-        // The cell should be empty - verified by snapshot tests
+    fn test_format_deps_text_no_dependencies() {
+        assert_eq!(format_deps_text(0, 0), None);
     }
 
-    /// # Create Deps Cell - Only Partial Dependencies
+    /// # Format Deps Text - Only Partial Dependencies
     ///
     /// Tests that only partial deps are shown with "P" suffix.
     ///
     /// ## Test Scenario
-    /// - Calls create_deps_cell with 2 partial and 0 full dependencies
+    /// - Calls format_deps_text with 2 partial and 0 full dependencies
     ///
     /// ## Expected Outcome
-    /// - Should create cell successfully (format verified by snapshot tests)
+    /// - Should return "2 P"
     #[test]
-    fn test_create_deps_cell_only_partial() {
-        let _cell = create_deps_cell(2, 0, false);
-        // Format "2 P" with yellow color - verified by snapshot tests
+    fn test_format_deps_text_only_partial() {
+        assert_eq!(format_deps_text(2, 0), Some("2 P".to_string()));
+        assert_eq!(format_deps_text(1, 0), Some("1 P".to_string()));
+        assert_eq!(format_deps_text(99, 0), Some("99 P".to_string()));
     }
 
-    /// # Create Deps Cell - Only Full Dependencies
+    /// # Format Deps Text - Only Full Dependencies
     ///
     /// Tests that only full deps are shown with "F" suffix.
     ///
     /// ## Test Scenario
-    /// - Calls create_deps_cell with 0 partial and 3 full dependencies
+    /// - Calls format_deps_text with 0 partial and 3 full dependencies
     ///
     /// ## Expected Outcome
-    /// - Should create cell successfully (format verified by snapshot tests)
+    /// - Should return "3 F"
     #[test]
-    fn test_create_deps_cell_only_full() {
-        let _cell = create_deps_cell(0, 3, false);
-        // Format "3 F" with red color - verified by snapshot tests
+    fn test_format_deps_text_only_full() {
+        assert_eq!(format_deps_text(0, 3), Some("3 F".to_string()));
+        assert_eq!(format_deps_text(0, 1), Some("1 F".to_string()));
+        assert_eq!(format_deps_text(0, 50), Some("50 F".to_string()));
     }
 
-    /// # Create Deps Cell - Both Dependencies
+    /// # Format Deps Text - Both Dependencies
     ///
-    /// Tests that both partial and full deps are shown.
+    /// Tests that both partial and full deps are shown with separator.
     ///
     /// ## Test Scenario
-    /// - Calls create_deps_cell with 2 partial and 3 full dependencies
+    /// - Calls format_deps_text with 2 partial and 3 full dependencies
     ///
     /// ## Expected Outcome
-    /// - Should create cell successfully (format verified by snapshot tests)
+    /// - Should return "2 P / 3 F"
     #[test]
-    fn test_create_deps_cell_both_dependencies() {
-        let _cell = create_deps_cell(2, 3, false);
-        // Format "2 P / 3 F" with yellow for partial and red for full
+    fn test_format_deps_text_both_dependencies() {
+        assert_eq!(format_deps_text(2, 3), Some("2 P / 3 F".to_string()));
+        assert_eq!(format_deps_text(1, 1), Some("1 P / 1 F".to_string()));
+        assert_eq!(format_deps_text(10, 20), Some("10 P / 20 F".to_string()));
     }
 
-    /// # Create Deps Cell - Selected State
+    /// # Format Deps Text - Large Numbers
     ///
-    /// Tests that selected rows use white color for all content.
-    ///
-    /// ## Test Scenario
-    /// - Calls create_deps_cell with dependencies and is_selected = true
-    ///
-    /// ## Expected Outcome
-    /// - Should create cell with white color (verified by snapshot tests)
-    #[test]
-    fn test_create_deps_cell_selected() {
-        let _cell = create_deps_cell(2, 3, true);
-        // Cell style should be white when selected
-    }
-
-    /// # Create Deps Cell - Large Numbers
-    ///
-    /// Tests that large dependency counts are handled correctly.
+    /// Tests that large dependency counts are formatted correctly.
     ///
     /// ## Test Scenario
-    /// - Calls create_deps_cell with large partial and full dependency counts
+    /// - Calls format_deps_text with large partial and full dependency counts
     ///
     /// ## Expected Outcome
-    /// - Should handle large numbers without panic
+    /// - Should format large numbers correctly
     #[test]
-    fn test_create_deps_cell_large_numbers() {
-        let _cell = create_deps_cell(100, 200, false);
-        let _cell_selected = create_deps_cell(100, 200, true);
-        // Should not panic with large numbers
+    fn test_format_deps_text_large_numbers() {
+        assert_eq!(
+            format_deps_text(100, 200),
+            Some("100 P / 200 F".to_string())
+        );
+        assert_eq!(format_deps_text(999, 0), Some("999 P".to_string()));
+        assert_eq!(format_deps_text(0, 1000), Some("1000 F".to_string()));
     }
 }
