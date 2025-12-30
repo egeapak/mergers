@@ -15,6 +15,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{
         Block, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
@@ -1552,15 +1553,23 @@ impl ModeState for PullRequestSelectionState {
             chunk_idx += 1;
         }
         // Create table headers
-        let header_cells = ["", "PR #", "Date", "Title", "Author", "Deps", "Work Items"]
-            .iter()
-            .map(|h| {
-                Cell::from(*h).style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )
-            });
+        let header_cells = [
+            "",
+            "PR #",
+            "Date",
+            "Title",
+            "Author",
+            "Work Items",
+            "PR Dependencies",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
         let header = Row::new(header_cells).height(1);
 
         // Compute unselected dependencies (PRs that selected PRs depend on but aren't selected)
@@ -1624,8 +1633,7 @@ impl ModeState for PullRequestSelectionState {
 
                 // Get dependency counts for this PR
                 let (partial_deps, full_deps) = get_dependency_counts(app, pr_with_wi.pr.id);
-                let deps_text = format_deps_count(partial_deps, full_deps);
-                let deps_style = get_deps_style(partial_deps, full_deps, pr_with_wi.selected);
+                let deps_cell = create_deps_cell(partial_deps, full_deps, pr_with_wi.selected);
 
                 let cells = vec![
                     Cell::from(selected).style(if pr_with_wi.selected {
@@ -1660,12 +1668,12 @@ impl ModeState for PullRequestSelectionState {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Cell::from(deps_text).style(deps_style),
                     Cell::from(work_items).style(if pr_with_wi.selected {
                         Style::default().fg(Color::White)
                     } else {
                         Style::default().fg(get_work_items_color(&pr_with_wi.work_items))
                     }),
+                    deps_cell,
                 ];
 
                 Row::new(cells).height(1).style(row_style)
@@ -1678,10 +1686,10 @@ impl ModeState for PullRequestSelectionState {
                 Constraint::Length(3),      // Selection checkbox
                 Constraint::Length(8),      // PR # (fixed width)
                 Constraint::Length(12),     // Date
-                Constraint::Percentage(25), // Title (reduced from 30%)
-                Constraint::Percentage(15), // Author (reduced from 20%)
-                Constraint::Length(5),      // Deps (P/D format)
-                Constraint::Percentage(25), // Work Items
+                Constraint::Percentage(25), // Title
+                Constraint::Percentage(15), // Author
+                Constraint::Percentage(20), // Work Items
+                Constraint::Length(12),     // PR Dependencies (e.g., "2 P / 3 F")
             ],
         )
         .header(header)
@@ -2102,22 +2110,50 @@ fn get_dependency_counts(app: &MergeApp, pr_id: i32) -> (usize, usize) {
     (0, 0)
 }
 
-/// Returns the style for the dependency column based on counts.
-fn get_deps_style(partial: usize, full: usize, is_selected: bool) -> Style {
-    if is_selected {
-        Style::default().fg(Color::White)
-    } else if full > 0 {
-        Style::default().fg(Color::Red)
-    } else if partial > 0 {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Green)
+/// Creates a styled cell for the PR Dependencies column.
+///
+/// Returns an empty cell if there are no dependencies, otherwise returns
+/// a multi-colored cell with format "X P / Y F" where partial deps are
+/// shown in yellow and full deps are shown in red.
+fn create_deps_cell(partial: usize, full: usize, is_selected: bool) -> Cell<'static> {
+    // Return empty cell if no dependencies
+    if partial == 0 && full == 0 {
+        return Cell::from("");
     }
-}
 
-/// Formats the dependency count as "P/D".
-fn format_deps_count(partial: usize, full: usize) -> String {
-    format!("{}/{}", partial, full)
+    // If selected, use white color for everything
+    if is_selected {
+        let text = match (partial > 0, full > 0) {
+            (true, true) => format!("{} P / {} F", partial, full),
+            (true, false) => format!("{} P", partial),
+            (false, true) => format!("{} F", full),
+            (false, false) => String::new(),
+        };
+        return Cell::from(text).style(Style::default().fg(Color::White));
+    }
+
+    // Build multi-colored spans
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    if partial > 0 {
+        spans.push(Span::styled(
+            format!("{} P", partial),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+
+    if partial > 0 && full > 0 {
+        spans.push(Span::raw(" / "));
+    }
+
+    if full > 0 {
+        spans.push(Span::styled(
+            format!("{} F", full),
+            Style::default().fg(Color::Red),
+        ));
+    }
+
+    Cell::from(Line::from(spans))
 }
 
 /// Computes the set of PR IDs that are dependencies of selected PRs but are not selected.

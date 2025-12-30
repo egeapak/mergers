@@ -1,14 +1,14 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 2275
+assertion_line: 2747
 expression: harness.backend()
 ---
 "                                                                                "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
-" │      PR #     Date         Title        Author      Deps  Work Items       ↑ "
-" │      100      2024-01-10   Fix login bu Alice Johns 0/0   #1001 (Closed)   ║ "
-" │      101      2024-01-12   Update user  Bob Wilson  0/0   #1002 (Active)   █ "
-" │→     102      2024-01-14   Add analytic Carol Marti 0/0   #1003 (Resolved),█ "
+" │      PR #     Date         Title       Author      Work Items  PR Dependenc↑ "
+" │      100      2024-01-10   Fix login b Alice Johns #1001 (Clos             ║ "
+" │      101      2024-01-12   Update user Bob Wilson  #1002 (Acti             █ "
+" │→     102      2024-01-14   Add analyti Carol Marti #1003 (Reso             █ "
 " │                                                                            █ "
 " │                                                                            █ "
 " │                                                                            █ "

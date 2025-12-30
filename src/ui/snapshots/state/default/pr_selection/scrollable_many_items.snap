@@ -1,22 +1,22 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 2404
+assertion_line: 2440
 expression: harness.backend()
 ---
 "                                                                                "
 " ┌Pull Requests───────────────────────────────────────────────────────────────┐ "
-" │      PR #     Date         Title        Author      Deps  Work Items       ↑ "
-" │      1015     2024-01-15   Pull Request Developer 5 0/0   #5015 (New)      ║ "
-" │      1016     2024-01-15   Pull Request Developer 6 0/0                    ║ "
-" │      1017     2024-01-15   Pull Request Developer 7 0/0                    ║ "
-" │      1018     2024-01-15   Pull Request Developer 8 0/0   #5018 (Closed)   ║ "
-" │      1019     2024-01-15   Pull Request Developer 9 0/0                    █ "
-" │  ✓   1020     2024-01-15   Pull Request Developer 0 0/0                    ║ "
-" │  ✓   1021     2024-01-15   Pull Request Developer 1 0/0   #5021 (Resolved) ║ "
-" │  ✓   1022     2024-01-15   Pull Request Developer 2 0/0                    ║ "
-" │  ✓   1023     2024-01-15   Pull Request Developer 3 0/0                    ║ "
-" │  ✓   1024     2024-01-15   Pull Request Developer 4 0/0   #5024 (Active)   ║ "
-" │→ ✓   1025     2024-01-15   Pull Request Developer 5 0/0                    ↓ "
+" │      PR #     Date         Title       Author      Work Items  PR Dependenc↑ "
+" │      1015     2024-01-15   Pull Reques Developer 5 #5015 (New)             ║ "
+" │      1016     2024-01-15   Pull Reques Developer 6                         ║ "
+" │      1017     2024-01-15   Pull Reques Developer 7                         ║ "
+" │      1018     2024-01-15   Pull Reques Developer 8 #5018 (Clos             ║ "
+" │      1019     2024-01-15   Pull Reques Developer 9                         █ "
+" │  ✓   1020     2024-01-15   Pull Reques Developer 0                         ║ "
+" │  ✓   1021     2024-01-15   Pull Reques Developer 1 #5021 (Reso             ║ "
+" │  ✓   1022     2024-01-15   Pull Reques Developer 2                         ║ "
+" │  ✓   1023     2024-01-15   Pull Reques Developer 3                         ║ "
+" │  ✓   1024     2024-01-15   Pull Reques Developer 4 #5024 (Acti             ║ "
+" │→ ✓   1025     2024-01-15   Pull Reques Developer 5                         ↓ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Work Item Details───────────────────────────────────────────────────────────┐ "
 " │              No work items associated with this pull request.              │ "
