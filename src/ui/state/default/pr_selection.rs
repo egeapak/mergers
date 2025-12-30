@@ -56,6 +56,8 @@ pub struct PullRequestSelectionState {
     show_dependency_dialog: bool,
     dependency_dialog_pr_index: Option<usize>,
     dependency_dialog_scroll: usize,
+    // Details pane toggle
+    show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -90,6 +92,8 @@ impl PullRequestSelectionState {
             dependency_dialog_pr_index: None,
             dependency_dialog_scroll: 0,
             table_area: None,
+            // Details pane toggle
+            show_details: true,
         }
     }
 
@@ -1329,7 +1333,7 @@ impl PullRequestSelectionState {
             popup_width,
             1,
         );
-        let help = Paragraph::new("Press Esc/d/q to close, ↑/↓ to scroll")
+        let help = Paragraph::new("Press Esc/g/q to close, ↑/↓ to scroll")
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
@@ -1561,8 +1565,9 @@ impl ModeState for PullRequestSelectionState {
         }
 
         // Add search status line if in search iteration mode
-        let chunks = if self.search_iteration_mode {
-            Layout::default()
+        // Adjust layout based on whether details pane is visible
+        let chunks = match (self.search_iteration_mode, self.show_details) {
+            (true, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1571,9 +1576,17 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Min(0),         // Work item details (fills remaining)
                     Constraint::Length(3),      // Help section
                 ])
-                .split(f.area())
-        } else {
-            Layout::default()
+                .split(f.area()),
+            (true, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3), // Search status line
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
+            (false, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1581,7 +1594,15 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Min(0), // Bottom half for work item details (fills remaining)
                     Constraint::Length(3), // Help section
                 ])
-                .split(f.area())
+                .split(f.area()),
+            (false, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
         };
 
         let mut chunk_idx = 0;
@@ -1762,14 +1783,16 @@ impl ModeState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details
-        self.render_work_item_details(f, app, chunks[chunk_idx]);
-        chunk_idx += 1;
+        // Render work item details if enabled
+        if self.show_details {
+            self.render_work_item_details(f, app, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
 
         let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | d: Details | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | d: Details | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
         };
 
         // Build status summary for Help title
@@ -1997,6 +2020,11 @@ impl ModeState for PullRequestSelectionState {
                             app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
                     }
+                    StateChange::Keep
+                }
+                KeyCode::Char('d') => {
+                    // Toggle details pane
+                    self.show_details = !self.show_details;
                     StateChange::Keep
                 }
                 KeyCode::Char('g') => {
@@ -3476,5 +3504,155 @@ mod tests {
         ModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
         assert!(!state.multi_select_mode);
         assert!(!harness.app.pull_requests()[0].selected);
+    }
+
+    /// # PR Selection State - Details Hidden
+    ///
+    /// Tests the PR selection screen with details pane hidden.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with show_details = false
+    /// - Loads test pull requests
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR table taking full height
+    /// - Should NOT show work item details panel
+    /// - Help text should still include 'd: Details' hotkey
+    #[test]
+    fn test_pr_selection_details_hidden() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_details = false;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("details_hidden", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Dependency Dialog
+    ///
+    /// Tests the PR selection screen with dependency dialog open.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dependency dialog open
+    /// - Loads test pull requests
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display dependency dialog overlay
+    /// - Help text should show "Esc/g/q to close" (not "d")
+    #[test]
+    fn test_pr_selection_dependency_dialog() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_dependency_dialog = true;
+            selection_state.dependency_dialog_pr_index = Some(0);
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("dependency_dialog", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Toggle Details with 'd' Key
+    ///
+    /// Tests that pressing 'd' toggles the details pane visibility.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state (details visible by default)
+    /// - Presses 'd' key
+    /// - Verifies show_details is toggled
+    ///
+    /// ## Expected Outcome
+    /// - show_details should toggle from true to false
+    /// - Pressing again should toggle back to true
+    #[tokio::test]
+    async fn test_pr_selection_toggle_details() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        assert!(state.show_details); // Default is true
+
+        // Press 'd' to hide details
+        ModeState::process_key(&mut state, KeyCode::Char('d'), harness.merge_app_mut()).await;
+        assert!(!state.show_details);
+
+        // Press 'd' again to show details
+        ModeState::process_key(&mut state, KeyCode::Char('d'), harness.merge_app_mut()).await;
+        assert!(state.show_details);
+    }
+
+    /// # PR Selection - Open Dependency Dialog with 'g' Key
+    ///
+    /// Tests that pressing 'g' opens the dependency dialog.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests
+    /// - Presses 'g' key
+    /// - Verifies dialog is opened
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_dialog should be true
+    /// - dependency_dialog_pr_index should be set to selected row
+    #[tokio::test]
+    async fn test_pr_selection_open_dependency_dialog() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0)); // Select first row
+        assert!(!state.show_dependency_dialog);
+
+        // Press 'g' to open dependency dialog
+        ModeState::process_key(&mut state, KeyCode::Char('g'), harness.merge_app_mut()).await;
+        assert!(state.show_dependency_dialog);
+        assert_eq!(state.dependency_dialog_pr_index, Some(0));
+    }
+
+    /// # PR Selection - Close Dependency Dialog with 'g' Key
+    ///
+    /// Tests that pressing 'g' closes the dependency dialog when open.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dialog open
+    /// - Presses 'g' key
+    /// - Verifies dialog is closed
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_dialog should be false
+    /// - dependency_dialog_pr_index should be None
+    #[tokio::test]
+    async fn test_pr_selection_close_dependency_dialog() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.show_dependency_dialog = true;
+        state.dependency_dialog_pr_index = Some(0);
+
+        // Press 'g' to close dependency dialog
+        ModeState::process_key(&mut state, KeyCode::Char('g'), harness.merge_app_mut()).await;
+        assert!(!state.show_dependency_dialog);
+        assert_eq!(state.dependency_dialog_pr_index, None);
     }
 }
