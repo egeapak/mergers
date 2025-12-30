@@ -11,12 +11,27 @@ pub struct AzureDevOpsConfig {
     pub repository: String,
 }
 
+/// Generic Git configuration extracted from non-Azure DevOps URLs (GitHub, GitLab, etc.)
+#[derive(Debug, Clone)]
+pub struct GenericGitConfig {
+    /// The owner/organization (e.g., "egeapak" from github.com/egeapak/mergers)
+    pub owner: String,
+    /// The repository name (e.g., "mergers" from github.com/egeapak/mergers)
+    pub repository: String,
+}
+
 // Static regex patterns compiled once using OnceLock
 static SSH_LEGACY_REGEX: OnceLock<Regex> = OnceLock::new();
 static SSH_MODERN_REGEX: OnceLock<Regex> = OnceLock::new();
 static HTTPS_GIT_REGEX: OnceLock<Regex> = OnceLock::new();
 static HTTPS_SIMPLE_REGEX: OnceLock<Regex> = OnceLock::new();
 static LEGACY_REGEX: OnceLock<Regex> = OnceLock::new();
+// GitHub patterns
+static GITHUB_SSH_REGEX: OnceLock<Regex> = OnceLock::new();
+static GITHUB_HTTPS_REGEX: OnceLock<Regex> = OnceLock::new();
+// Generic git patterns (GitLab, Bitbucket, etc.)
+static GENERIC_SSH_REGEX: OnceLock<Regex> = OnceLock::new();
+static GENERIC_HTTPS_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn get_ssh_legacy_regex() -> &'static Regex {
     SSH_LEGACY_REGEX.get_or_init(|| {
@@ -50,6 +65,38 @@ fn get_legacy_regex() -> &'static Regex {
     LEGACY_REGEX.get_or_init(|| {
         Regex::new(r"^https://([^.]+)\.visualstudio\.com/([^/]+)/_git/([^/]+)/?$")
             .expect("Failed to compile legacy regex")
+    })
+}
+
+fn get_github_ssh_regex() -> &'static Regex {
+    GITHUB_SSH_REGEX.get_or_init(|| {
+        // Matches: git@github.com:owner/repo.git or git@github.com:owner/repo
+        Regex::new(r"^[^@]+@github\.com:([^/]+)/([^/]+?)(?:\.git)?/?$")
+            .expect("Failed to compile GitHub SSH regex")
+    })
+}
+
+fn get_github_https_regex() -> &'static Regex {
+    GITHUB_HTTPS_REGEX.get_or_init(|| {
+        // Matches: https://github.com/owner/repo.git or https://github.com/owner/repo
+        Regex::new(r"^https://(?:[^@]+@)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$")
+            .expect("Failed to compile GitHub HTTPS regex")
+    })
+}
+
+fn get_generic_ssh_regex() -> &'static Regex {
+    GENERIC_SSH_REGEX.get_or_init(|| {
+        // Matches: git@<host>:<owner>/<repo>.git (generic SSH format)
+        Regex::new(r"^[^@]+@[^:]+:([^/]+)/([^/]+?)(?:\.git)?/?$")
+            .expect("Failed to compile generic SSH regex")
+    })
+}
+
+fn get_generic_https_regex() -> &'static Regex {
+    GENERIC_HTTPS_REGEX.get_or_init(|| {
+        // Matches: https://<host>/<owner>/<repo>.git (generic HTTPS format)
+        Regex::new(r"^https://(?:[^@]+@)?[^/]+/([^/]+)/([^/]+?)(?:\.git)?/?$")
+            .expect("Failed to compile generic HTTPS regex")
     })
 }
 
@@ -142,6 +189,63 @@ fn parse_azure_devops_url(url: &str) -> Result<Option<AzureDevOpsConfig>> {
     }
 
     // Not an Azure DevOps URL
+    Ok(None)
+}
+
+/// Extract generic Git configuration from a repository's remote URL.
+///
+/// This function extracts owner and repository name from GitHub, GitLab,
+/// Bitbucket, and other standard Git hosting URLs.
+pub fn detect_generic_git_config<P: AsRef<Path>>(repo_path: P) -> Result<Option<GenericGitConfig>> {
+    let repo_path = repo_path.as_ref();
+
+    // Verify this is a git repository
+    if !is_git_repository(repo_path)? {
+        return Ok(None);
+    }
+
+    // Get the remote URL
+    let remote_url = get_git_remote_url(repo_path)?;
+
+    // Parse generic Git configuration from the URL
+    parse_generic_git_url(&remote_url)
+}
+
+/// Parse generic Git configuration from various URL formats (GitHub, GitLab, etc.)
+pub fn parse_generic_git_url(url: &str) -> Result<Option<GenericGitConfig>> {
+    // Try GitHub SSH format: git@github.com:owner/repo.git
+    if let Some(captures) = get_github_ssh_regex().captures(url) {
+        return Ok(Some(GenericGitConfig {
+            owner: captures.get(1).unwrap().as_str().to_string(),
+            repository: captures.get(2).unwrap().as_str().to_string(),
+        }));
+    }
+
+    // Try GitHub HTTPS format: https://github.com/owner/repo.git
+    if let Some(captures) = get_github_https_regex().captures(url) {
+        return Ok(Some(GenericGitConfig {
+            owner: captures.get(1).unwrap().as_str().to_string(),
+            repository: captures.get(2).unwrap().as_str().to_string(),
+        }));
+    }
+
+    // Try generic SSH format: git@host:owner/repo.git
+    if let Some(captures) = get_generic_ssh_regex().captures(url) {
+        return Ok(Some(GenericGitConfig {
+            owner: captures.get(1).unwrap().as_str().to_string(),
+            repository: captures.get(2).unwrap().as_str().to_string(),
+        }));
+    }
+
+    // Try generic HTTPS format: https://host/owner/repo.git
+    if let Some(captures) = get_generic_https_regex().captures(url) {
+        return Ok(Some(GenericGitConfig {
+            owner: captures.get(1).unwrap().as_str().to_string(),
+            repository: captures.get(2).unwrap().as_str().to_string(),
+        }));
+    }
+
+    // Could not parse the URL
     Ok(None)
 }
 
@@ -313,5 +417,193 @@ mod tests {
         assert_eq!(config.organization, "ceibaeclinics");
         assert_eq!(config.project, "EclinicsFrontend");
         assert_eq!(config.repository, "EclinicsFrontend");
+    }
+
+    // ============================================================================
+    // Generic Git URL Parsing Tests
+    // ============================================================================
+
+    /// # Parse GitHub SSH URL
+    ///
+    /// Tests parsing of GitHub SSH URLs.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub SSH URL format
+    /// - Parses owner and repository information
+    ///
+    /// ## Expected Outcome
+    /// - GitHub SSH URL is correctly parsed
+    /// - Owner and repository are extracted accurately
+    #[test]
+    fn test_parse_github_ssh_url() {
+        let url = "git@github.com:egeapak/mergers.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "egeapak");
+        assert_eq!(config.repository, "mergers");
+    }
+
+    /// # Parse GitHub SSH URL Without .git Extension
+    ///
+    /// Tests parsing of GitHub SSH URLs without .git suffix.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub SSH URL without .git extension
+    ///
+    /// ## Expected Outcome
+    /// - URL is correctly parsed even without .git suffix
+    #[test]
+    fn test_parse_github_ssh_url_no_git_extension() {
+        let url = "git@github.com:user/repo";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "user");
+        assert_eq!(config.repository, "repo");
+    }
+
+    /// # Parse GitHub HTTPS URL
+    ///
+    /// Tests parsing of GitHub HTTPS URLs.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub HTTPS URL format
+    /// - Parses owner and repository information
+    ///
+    /// ## Expected Outcome
+    /// - GitHub HTTPS URL is correctly parsed
+    /// - Owner and repository are extracted accurately
+    #[test]
+    fn test_parse_github_https_url() {
+        let url = "https://github.com/egeapak/mergers.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "egeapak");
+        assert_eq!(config.repository, "mergers");
+    }
+
+    /// # Parse GitHub HTTPS URL Without .git Extension
+    ///
+    /// Tests parsing of GitHub HTTPS URLs without .git suffix.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub HTTPS URL without .git extension
+    ///
+    /// ## Expected Outcome
+    /// - URL is correctly parsed even without .git suffix
+    #[test]
+    fn test_parse_github_https_url_no_git_extension() {
+        let url = "https://github.com/user/repo";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "user");
+        assert_eq!(config.repository, "repo");
+    }
+
+    /// # Parse GitHub HTTPS URL with User Credentials
+    ///
+    /// Tests parsing of GitHub HTTPS URLs with embedded credentials.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub HTTPS URL with user@domain format
+    ///
+    /// ## Expected Outcome
+    /// - URL is correctly parsed, credentials stripped
+    #[test]
+    fn test_parse_github_https_url_with_credentials() {
+        let url = "https://user@github.com/owner/repo.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "owner");
+        assert_eq!(config.repository, "repo");
+    }
+
+    /// # Parse GitLab SSH URL
+    ///
+    /// Tests parsing of GitLab SSH URLs using generic pattern.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitLab SSH URL format
+    ///
+    /// ## Expected Outcome
+    /// - GitLab SSH URL is correctly parsed using generic pattern
+    #[test]
+    fn test_parse_gitlab_ssh_url() {
+        let url = "git@gitlab.com:company/project.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "company");
+        assert_eq!(config.repository, "project");
+    }
+
+    /// # Parse GitLab HTTPS URL
+    ///
+    /// Tests parsing of GitLab HTTPS URLs using generic pattern.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitLab HTTPS URL format
+    ///
+    /// ## Expected Outcome
+    /// - GitLab HTTPS URL is correctly parsed using generic pattern
+    #[test]
+    fn test_parse_gitlab_https_url() {
+        let url = "https://gitlab.com/company/project.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "company");
+        assert_eq!(config.repository, "project");
+    }
+
+    /// # Parse Bitbucket SSH URL
+    ///
+    /// Tests parsing of Bitbucket SSH URLs using generic pattern.
+    ///
+    /// ## Test Scenario
+    /// - Provides Bitbucket SSH URL format
+    ///
+    /// ## Expected Outcome
+    /// - Bitbucket SSH URL is correctly parsed
+    #[test]
+    fn test_parse_bitbucket_ssh_url() {
+        let url = "git@bitbucket.org:team/repository.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "team");
+        assert_eq!(config.repository, "repository");
+    }
+
+    /// # Parse Self-Hosted Git URL
+    ///
+    /// Tests parsing of self-hosted Git server URLs.
+    ///
+    /// ## Test Scenario
+    /// - Provides self-hosted Git server URL
+    ///
+    /// ## Expected Outcome
+    /// - Self-hosted URLs are correctly parsed using generic pattern
+    #[test]
+    fn test_parse_self_hosted_git_url() {
+        let url = "https://git.company.com/team/internal-repo.git";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "team");
+        assert_eq!(config.repository, "internal-repo");
+    }
+
+    /// # Parse URL with Trailing Slash
+    ///
+    /// Tests parsing of Git URLs with trailing slashes.
+    ///
+    /// ## Test Scenario
+    /// - Provides GitHub URL with trailing slash
+    ///
+    /// ## Expected Outcome
+    /// - Trailing slashes are properly handled
+    #[test]
+    fn test_parse_git_url_with_trailing_slash() {
+        let url = "https://github.com/user/repo/";
+        let config = parse_generic_git_url(url).unwrap().unwrap();
+
+        assert_eq!(config.owner, "user");
+        assert_eq!(config.repository, "repo");
     }
 }

@@ -3,19 +3,16 @@
 //! This module provides a client for interacting with Azure DevOps APIs,
 //! specifically for managing pull requests and work items in merge workflows.
 
-use anyhow::{Context, Result};
-use azure_devops_rust_api::{git, wit};
-use chrono::{DateTime, Utc};
-use futures::stream::{self, StreamExt};
-use secrecy::SecretString;
-use std::sync::Arc;
-
-use super::credential::PatCredential;
 use super::mappers::extract_work_item_id;
 use crate::models::{
     MergeCommit, PullRequest, PullRequestWithWorkItems, RepoDetails, WorkItem, WorkItemHistory,
 };
 use crate::utils::parse_since_date;
+use anyhow::{Context, Result};
+use azure_devops_rust_api::{git, wit};
+use chrono::{DateTime, Utc};
+use futures::stream::{self, StreamExt};
+use secrecy::{ExposeSecret, SecretString};
 
 /// Default maximum retries for backward compatibility (no longer used with azure_devops_rust_api).
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
@@ -93,8 +90,8 @@ impl AzureDevOpsClient {
         repository: String,
         pat: SecretString,
     ) -> Result<Self> {
-        let credential = Arc::new(PatCredential::new(pat));
-        let ado_credential = azure_devops_rust_api::Credential::TokenCredential(credential);
+        let ado_credential =
+            azure_devops_rust_api::Credential::Pat(pat.expose_secret().to_string());
 
         let git_client = git::ClientBuilder::new(ado_credential.clone()).build();
         let wit_client = wit::ClientBuilder::new(ado_credential).build();

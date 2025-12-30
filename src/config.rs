@@ -140,11 +140,17 @@ impl Config {
         })
     }
 
-    /// Detect configuration from git remote if repository is Azure DevOps
+    /// Detect configuration from git remote.
+    ///
+    /// For Azure DevOps URLs, extracts organization, project, and repository.
+    /// For other Git URLs (GitHub, GitLab, etc.), uses the repository name as
+    /// the default project value.
     pub fn detect_from_git_remote<P: AsRef<std::path::Path>>(repo_path: P) -> Self {
+        let repo_path_ref = repo_path.as_ref();
+
         // First try to get the remote URL for better error context
         let remote_url = std::process::Command::new("git")
-            .current_dir(repo_path.as_ref())
+            .current_dir(repo_path_ref)
             .args(["remote", "get-url", "origin"])
             .output()
             .ok()
@@ -157,8 +163,9 @@ impl Config {
             })
             .unwrap_or_else(|| "unknown".to_string());
 
-        match git_config::detect_azure_devops_config(repo_path) {
-            Ok(Some(azure_config)) => Self {
+        // First, try Azure DevOps config
+        if let Ok(Some(azure_config)) = git_config::detect_azure_devops_config(repo_path_ref) {
+            return Self {
                 organization: Some(ParsedProperty::Git(
                     azure_config.organization,
                     remote_url.clone(),
@@ -178,9 +185,34 @@ impl Config {
                 max_concurrent_processing: None,
                 tag_prefix: None,
                 run_hooks: None,
-            },
-            _ => Self::default(),
+            };
         }
+
+        // Try generic Git config (GitHub, GitLab, etc.)
+        // Use the repository name as the project default
+        if let Ok(Some(generic_config)) = git_config::detect_generic_git_config(repo_path_ref) {
+            return Self {
+                organization: None,
+                // Use repository name as project default for non-Azure DevOps URLs
+                project: Some(ParsedProperty::Git(
+                    generic_config.repository.clone(),
+                    remote_url.clone(),
+                )),
+                repository: Some(ParsedProperty::Git(generic_config.repository, remote_url)),
+                pat: None,
+                dev_branch: None,
+                target_branch: None,
+                local_repo: None,
+                work_item_state: None,
+                parallel_limit: None,
+                max_concurrent_network: None,
+                max_concurrent_processing: None,
+                tag_prefix: None,
+                run_hooks: None,
+            };
+        }
+
+        Self::default()
     }
 
     /// Load configuration from environment variables

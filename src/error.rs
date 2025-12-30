@@ -89,10 +89,6 @@ pub enum ApiError {
         message: String,
     },
 
-    /// A network error occurred.
-    #[error("Network error: {0}")]
-    Network(#[from] azure_core::Error),
-
     /// The pull request has no merge commit.
     #[error("Pull request {pr_id} has no merge commit")]
     NoMergeCommit {
