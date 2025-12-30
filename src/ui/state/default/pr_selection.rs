@@ -1567,8 +1567,8 @@ impl ModeState for PullRequestSelectionState {
                 .margin(1)
                 .constraints([
                     Constraint::Length(3),      // Search status line
-                    Constraint::Percentage(47), // PR table (slightly smaller)
-                    Constraint::Percentage(37), // Work item details (slightly smaller)
+                    Constraint::Percentage(50), // PR table
+                    Constraint::Min(0),         // Work item details (fills remaining)
                     Constraint::Length(3),      // Help section
                 ])
                 .split(f.area())
@@ -1578,8 +1578,8 @@ impl ModeState for PullRequestSelectionState {
                 .margin(1)
                 .constraints([
                     Constraint::Percentage(50), // Top half for PR table
-                    Constraint::Percentage(40), // Bottom half for work item details
-                    Constraint::Length(3),      // Help section
+                    Constraint::Min(0), // Bottom half for work item details (fills remaining)
+                    Constraint::Length(3), // Help section
                 ])
                 .split(f.area())
         };
@@ -2642,8 +2642,7 @@ mod tests {
             };
 
             // Process mouse event
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2690,8 +2689,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2740,8 +2738,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2788,8 +2785,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event1, app).await;
             });
@@ -2802,7 +2798,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event2, app).await;
             });
