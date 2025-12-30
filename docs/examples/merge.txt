@@ -1,0 +1,10 @@
+# Basic merge with all required args
+mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo
+
+# Merge with custom branches and work item state
+mergers merge -o myorg -p myproject -r myrepo -t <PAT> \
+  --dev-branch develop --target-branch release \
+  --work-item-state "Ready for Test" /path/to/repo
+
+# Merge PRs from the last 2 weeks only
+mergers m -o myorg -p proj -r repo -t <PAT> --since 2w

@@ -52,7 +52,6 @@ enum LoadingStage {
     WaitingForWorkItems,
     FetchingCommitInfo,
     AnalyzingDependencies,
-    Complete,
 }
 
 impl Default for DataLoadingState {
@@ -225,7 +224,7 @@ impl DataLoadingState {
             }
         }
 
-        self.loading_stage = LoadingStage::Complete;
+        // Don't set loading_stage here - let the state machine handle transitions
         Ok(())
     }
 
@@ -250,8 +249,9 @@ impl DataLoadingState {
         let prs = app.pull_requests();
         self.dependency_analysis_total = prs.len();
 
-        // Build PRInfo list
-        let pr_infos: Vec<PRInfo> = prs
+        // Build PRInfo list and sort by closed date (oldest first)
+        // The dependency analyzer expects PRs in chronological order
+        let mut pr_infos: Vec<PRInfo> = prs
             .iter()
             .map(|pr_with_wi| {
                 PRInfo::new(
@@ -266,6 +266,25 @@ impl DataLoadingState {
                 )
             })
             .collect();
+
+        // Sort PRs by closed date (oldest first) for correct dependency analysis
+        // Create a map of PR ID to closed date for sorting
+        let pr_dates: std::collections::HashMap<i32, Option<String>> = prs
+            .iter()
+            .map(|pr| (pr.pr.id, pr.pr.closed_date.clone()))
+            .collect();
+
+        pr_infos.sort_by(|a, b| {
+            let date_a = pr_dates.get(&a.id).and_then(|d| d.as_ref());
+            let date_b = pr_dates.get(&b.id).and_then(|d| d.as_ref());
+
+            match (date_a, date_b) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.id.cmp(&b.id), // Fallback to ID if no dates
+            }
+        });
 
         // Parallel fetch of file changes for each PR
         let pr_changes: HashMap<i32, Vec<FileChange>> = pr_infos
@@ -327,7 +346,6 @@ impl DataLoadingState {
                     "Analyzing dependencies...".to_string()
                 }
             }
-            LoadingStage::Complete => "Loading complete".to_string(),
         }
     }
 
@@ -498,12 +516,6 @@ impl ModeState for DataLoadingState {
                         PullRequestSelectionState::new(),
                     ));
                 }
-                LoadingStage::Complete => {
-                    // Should not reach here, but transition to PR selection just in case
-                    return StateChange::Change(MergeState::PullRequestSelection(
-                        PullRequestSelectionState::new(),
-                    ));
-                }
             }
         }
 
@@ -653,10 +665,10 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut state = DataLoadingState::new();
-            state.loading_stage = LoadingStage::Complete;
+            state.loading_stage = LoadingStage::AnalyzingDependencies;
             harness.render_state(&mut state);
 
-            assert_snapshot!("complete", harness.backend());
+            assert_snapshot!("analyzing_dependencies_no_count", harness.backend());
         });
     }
 
@@ -825,31 +837,6 @@ mod tests {
 
             assert_snapshot!("commit_info_no_total", harness.backend());
         });
-    }
-
-    /// # Data Loading State - Complete Stage Key Processing
-    ///
-    /// Tests that pressing Null key in Complete stage transitions to PR selection.
-    ///
-    /// ## Test Scenario
-    /// - Creates a data loading state in Complete stage
-    /// - Sets loaded=true
-    /// - Processes Null key
-    ///
-    /// ## Expected Outcome
-    /// - Should return StateChange::Change to PullRequestSelectionState
-    #[tokio::test]
-    async fn test_data_loading_complete_stage_transitions() {
-        let config = create_test_config_default();
-        let mut harness = TuiTestHarness::with_config(config);
-
-        let mut state = DataLoadingState::new();
-        state.loaded = true;
-        state.loading_stage = LoadingStage::Complete;
-
-        let result =
-            ModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
-        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Data Loading State - FetchingCommitInfo Stage Key Processing
