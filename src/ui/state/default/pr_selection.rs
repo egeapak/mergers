@@ -2602,8 +2602,7 @@ mod tests {
             };
 
             // Process mouse event
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2650,8 +2649,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2700,8 +2698,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event, app).await;
             });
@@ -2748,8 +2745,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event1, app).await;
             });
@@ -2762,7 +2758,7 @@ mod tests {
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
 
-            rt.block_on(async {
+            tokio_test::block_on(async {
                 let app = harness.merge_app_mut();
                 state.process_mouse(event2, app).await;
             });

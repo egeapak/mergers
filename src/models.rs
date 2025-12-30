@@ -1,8 +1,209 @@
 use crate::{config::Config, parsed_property::ParsedProperty, utils::parse_since_date};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args as ClapArgs, Parser, Subcommand};
+use clap::{
+    Args as ClapArgs, Parser, Subcommand,
+    builder::{Styles, styling::AnsiColor},
+};
 use serde::Deserialize;
+
+/// Build a version string that includes the git commit hash
+fn build_version() -> &'static str {
+    // Use concat! with env! to create a compile-time constant string
+    concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")")
+}
+
+/// Define custom styles for colorized help output
+fn help_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default().bold())
+        .usage(AnsiColor::Yellow.on_default().bold())
+        .literal(AnsiColor::Green.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default())
+        .valid(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default())
+        .error(AnsiColor::Red.on_default().bold())
+}
+
+/// Apply syntax highlighting to shell examples
+fn highlight_shell(content: &str) -> String {
+    use clap::builder::styling::AnsiColor;
+
+    let comment_style = AnsiColor::BrightBlack.on_default();
+    let command_style = AnsiColor::Green.on_default().bold();
+    let flag_style = AnsiColor::Cyan.on_default();
+    let string_style = AnsiColor::Yellow.on_default();
+    let reset = AnsiColor::White.on_default();
+
+    let mut result = String::new();
+    let mut in_command_block = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+
+        // Handle comment lines
+        if trimmed.starts_with('#') {
+            result.push_str(&format!("{comment_style}{line}{reset:#}\n"));
+            in_command_block = false;
+            continue;
+        }
+
+        // Handle empty lines
+        if trimmed.is_empty() {
+            result.push('\n');
+            in_command_block = false;
+            continue;
+        }
+
+        // Check if this is a shell command line (starts with known command or continuation)
+        let is_command_line = trimmed.starts_with("mergers")
+            || (in_command_block
+                && trimmed
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '-' || c.is_whitespace()));
+
+        // Non-command lines (like "For more information...") - just output as-is
+        if !is_command_line && !in_command_block {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Track if line ends with continuation
+        let has_continuation = line.trim_end().ends_with('\\');
+        in_command_block = has_continuation;
+
+        // Preserve leading whitespace
+        let leading_spaces = line.len() - trimmed.len();
+        result.push_str(&" ".repeat(leading_spaces));
+
+        // Simple tokenization for shell highlighting
+        let mut chars = trimmed.chars().peekable();
+        let mut current_token = String::new();
+        let mut in_string = false;
+        let mut string_char = ' ';
+        let mut is_first_token = trimmed.starts_with("mergers");
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '"' | '\'' if !in_string => {
+                    // Flush current token
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    // Start string
+                    in_string = true;
+                    string_char = ch;
+                    current_token.push(ch);
+                }
+                c if c == string_char && in_string => {
+                    // End string
+                    current_token.push(ch);
+                    result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+                    current_token.clear();
+                    in_string = false;
+                }
+                ' ' | '\t' if !in_string => {
+                    // Token boundary
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else if current_token.starts_with('<') && current_token.ends_with('>') {
+                            result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    result.push(ch);
+                }
+                '\\' if chars.peek() == Some(&'\n') => {
+                    // Line continuation
+                    if !current_token.is_empty() {
+                        if is_first_token {
+                            result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+                            is_first_token = false;
+                        } else if current_token.starts_with('-') {
+                            result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+                        } else {
+                            result.push_str(&current_token);
+                        }
+                        current_token.clear();
+                    }
+                    result.push_str("\\\n");
+                    chars.next(); // consume the newline
+                }
+                _ => {
+                    current_token.push(ch);
+                }
+            }
+        }
+
+        // Flush remaining token
+        if !current_token.is_empty() {
+            if is_first_token {
+                result.push_str(&format!("{command_style}{current_token}{reset:#}"));
+            } else if current_token.starts_with('-') {
+                result.push_str(&format!("{flag_style}{current_token}{reset:#}"));
+            } else if current_token.starts_with('<') && current_token.ends_with('>') {
+                result.push_str(&format!("{string_style}{current_token}{reset:#}"));
+            } else {
+                result.push_str(&current_token);
+            }
+        }
+
+        result.push('\n');
+    }
+
+    result
+}
+
+/// Build styled after_help text with colorized EXAMPLES header and syntax highlighting
+fn styled_examples(content: &str) -> String {
+    let header_style = AnsiColor::Yellow.on_default().bold();
+    let highlighted = highlight_shell(content);
+    format!("{header_style}EXAMPLES:{header_style:#}\n{highlighted}")
+}
+
+/// Main command examples
+fn main_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/main.txt")))
+}
+
+/// Merge command examples
+fn merge_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/merge.txt")))
+}
+
+/// Migrate command examples
+fn migrate_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/migrate.txt")))
+}
+
+/// Cleanup command examples
+fn cleanup_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/cleanup.txt")))
+}
 
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
@@ -340,15 +541,7 @@ pub enum Commands {
             This mode fetches completed PRs from Azure DevOps, displays them in an interactive\n\
             TUI for selection, and cherry-picks the selected commits to your target branch.\n\
             Work items can be automatically transitioned to a specified state after merge.",
-        after_help = "EXAMPLES:\n    \
-            # Basic merge with all required args\n    \
-            mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-            # Merge with custom branches and work item state\n    \
-            mergers merge -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
-            --dev-branch develop --target-branch release \\\n      \
-            --work-item-state \"Ready for Test\" /path/to/repo\n\n    \
-            # Merge PRs from the last 2 weeks only\n    \
-            mergers m -o myorg -p proj -r repo -t <PAT> --since 2w"
+        after_help = merge_examples()
     )]
     Merge(MergeArgs),
 
@@ -361,14 +554,7 @@ pub enum Commands {
             • Unsure: Mixed signals requiring manual review\n  \
             • Not merged: PR commits not present in target branch\n\n\
             Results are displayed in an interactive TUI for review and manual override.",
-        after_help = "EXAMPLES:\n    \
-            # Analyze migrations with default terminal states\n    \
-            mergers migrate -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
-            # Custom terminal states for work items\n    \
-            mergers migrate -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
-            --terminal-states \"Closed,Done,Resolved\"\n\n    \
-            # Analyze only recent PRs\n    \
-            mergers mi -o myorg -p proj -r repo -t <PAT> --since 1mo"
+        after_help = migrate_examples()
     )]
     Migrate(MigrateArgs),
 
@@ -379,13 +565,7 @@ pub enum Commands {
             This mode identifies local branches matching the tag prefix pattern (default: merged-*)\n\
             that have been fully merged into the target branch, and offers to delete them.\n\
             Useful for maintaining a clean repository after completing merge operations.",
-        after_help = "EXAMPLES:\n    \
-            # Cleanup branches merged to default target\n    \
-            mergers cleanup -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-            # Cleanup branches merged to a specific target\n    \
-            mergers cleanup -o myorg -p proj -r repo -t <PAT> --target main\n\n    \
-            # Cleanup with custom tag prefix\n    \
-            mergers c -o myorg -p proj -r repo -t <PAT> --tag-prefix patch-"
+        after_help = cleanup_examples()
     )]
     Cleanup(CleanupArgs),
 }
@@ -412,8 +592,10 @@ impl Commands {
 
 #[derive(Parser, Clone)]
 #[command(
+    name = "mergers",
     author,
     version,
+    long_version = build_version(),
     about = "Manage Azure DevOps pull request merging and migration workflows",
     long_about = "A CLI/TUI tool for managing Azure DevOps pull request merging and migration workflows.\n\n\
         Mergers helps you:\n  \
@@ -422,16 +604,9 @@ impl Commands {
         • Clean up merged patch branches\n\n\
         Configuration can be provided via CLI arguments, environment variables (MERGERS_*),\n\
         config file (~/.config/mergers/config.toml), or auto-detected from git remotes.",
-    after_help = "EXAMPLES:\n    \
-        # Merge mode with Azure DevOps credentials\n    \
-        mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-        # Migration analysis mode\n    \
-        mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo\n\n    \
-        # Cleanup merged branches\n    \
-        mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
-        # Create sample config file\n    \
-        mergers --create-config\n\n\
-        For more information, see: https://github.com/egeapak/mergers"
+    before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
+    after_help = main_examples(),
+    styles = help_styles()
 )]
 pub struct Args {
     #[command(subcommand)]
@@ -444,7 +619,13 @@ pub struct Args {
 
 /// Temporary wrapper to parse MergeArgs as if they were top-level
 #[derive(Parser, Clone)]
-#[command(name = "mergers", about = None, long_about = None)]
+#[command(
+    name = "mergers",
+    about = None,
+    long_about = None,
+    before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
+    styles = help_styles()
+)]
 pub struct MergeArgsParser {
     #[command(flatten)]
     pub merge_args: MergeArgs,

@@ -1,0 +1,8 @@
+# Cleanup branches merged to default target
+mergers cleanup -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo
+
+# Cleanup branches merged to a specific target
+mergers cleanup -o myorg -p proj -r repo -t <PAT> --target main
+
+# Cleanup with custom tag prefix
+mergers c -o myorg -p proj -r repo -t <PAT> --tag-prefix patch-

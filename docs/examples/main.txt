@@ -1,0 +1,13 @@
+# Merge mode with Azure DevOps credentials
+mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo
+
+# Migration analysis mode
+mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo
+
+# Cleanup merged branches
+mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>
+
+# Create sample config file
+mergers --create-config
+
+For more information, see: https://github.com/egeapak/mergers
