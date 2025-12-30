@@ -87,16 +87,18 @@ impl CleanupExecutionState {
     }
 
     async fn check_progress(&mut self, app: &mut CleanupApp) -> bool {
-        if let Some(tasks) = &mut self.deletion_tasks {
-            let mut all_complete = true;
+        // Take ownership of tasks to avoid polling completed JoinHandles
+        if let Some(tasks) = self.deletion_tasks.take() {
+            let mut pending_tasks = Vec::new();
 
-            for task in tasks.iter_mut() {
+            for task in tasks {
                 if !task.is_finished() {
-                    all_complete = false;
+                    // Task still running - keep it for next poll
+                    pending_tasks.push(task);
                     continue;
                 }
 
-                // Process completed task
+                // Process completed task (consumes the JoinHandle)
                 if let Ok((idx, result)) = task.await
                     && idx < app.cleanup_branches().len()
                 {
@@ -107,10 +109,13 @@ impl CleanupExecutionState {
                 }
             }
 
-            if all_complete {
+            if pending_tasks.is_empty() {
                 self.is_complete = true;
                 return true;
             }
+
+            // Put remaining tasks back
+            self.deletion_tasks = Some(pending_tasks);
         }
 
         false
@@ -276,6 +281,234 @@ mod tests {
     use super::*;
     use crate::{models::CleanupBranch, models::CleanupStatus, ui::testing::*};
     use insta::assert_snapshot;
+
+    /// # Check Progress Multiple Polls Test
+    ///
+    /// Tests that check_progress can be called multiple times without panic.
+    ///
+    /// ## Test Scenario
+    /// - Creates a CleanupExecutionState with pre-completed tasks
+    /// - Calls check_progress multiple times
+    /// - This simulates KeyCode::Null events arriving repeatedly
+    ///
+    /// ## Expected Outcome
+    /// - Should NOT panic with "JoinHandle polled after completion"
+    /// - Should correctly mark completion after all tasks finish
+    /// - Subsequent calls should be safe (no-op when no tasks remain)
+    ///
+    /// ## Regression Test
+    /// This test verifies the fix for the panic that occurred when
+    /// iter_mut() was used instead of take() - completed JoinHandles
+    /// remained in the vector and panicked on subsequent polls.
+    #[tokio::test]
+    async fn test_check_progress_multiple_polls_no_panic() {
+        let config = create_test_config_cleanup();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Set up branches
+        *harness.app.cleanup_branches_mut() = vec![
+            CleanupBranch {
+                name: "branch-1".to_string(),
+                target: "main".to_string(),
+                version: "1.0.0".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+            CleanupBranch {
+                name: "branch-2".to_string(),
+                target: "main".to_string(),
+                version: "1.0.1".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+        ];
+
+        let mut state = CleanupExecutionState::new();
+
+        // Manually set up tasks that complete immediately
+        let tasks: Vec<DeletionTask> = vec![
+            tokio::spawn(async { (0, Ok(())) }),
+            tokio::spawn(async { (1, Ok(())) }),
+        ];
+        state.deletion_tasks = Some(tasks);
+
+        // Wait briefly for tasks to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // First call - should process completed tasks
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(completed, "Should report completion after all tasks finish");
+        assert!(state.is_complete, "State should be marked complete");
+
+        // Second call - should NOT panic (this is the regression test)
+        // With the old iter_mut() code, this would panic with:
+        // "JoinHandle polled after completion"
+        let completed_again = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(
+            !completed_again,
+            "Should return false when no tasks to process"
+        );
+
+        // Third call - still should not panic
+        let completed_third = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(
+            !completed_third,
+            "Should return false when no tasks to process"
+        );
+    }
+
+    /// # Check Progress With Pending Tasks Test
+    ///
+    /// Tests that check_progress correctly handles a mix of completed
+    /// and still-running tasks across multiple calls.
+    ///
+    /// ## Test Scenario
+    /// - Creates tasks where some complete quickly and others take longer
+    /// - Calls check_progress multiple times
+    /// - Verifies pending tasks are preserved for next poll
+    ///
+    /// ## Expected Outcome
+    /// - Completed tasks should be processed and removed
+    /// - Pending tasks should remain for subsequent polls
+    /// - No panic should occur
+    #[tokio::test]
+    async fn test_check_progress_preserves_pending_tasks() {
+        let config = create_test_config_cleanup();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.cleanup_branches_mut() = vec![
+            CleanupBranch {
+                name: "fast-branch".to_string(),
+                target: "main".to_string(),
+                version: "1.0.0".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+            CleanupBranch {
+                name: "slow-branch".to_string(),
+                target: "main".to_string(),
+                version: "1.0.1".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+        ];
+
+        let mut state = CleanupExecutionState::new();
+
+        // Create tasks: one completes immediately, one takes longer
+        let tasks: Vec<DeletionTask> = vec![
+            tokio::spawn(async { (0, Ok(())) }), // Completes immediately
+            tokio::spawn(async {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                (1, Ok(()))
+            }), // Takes longer
+        ];
+        state.deletion_tasks = Some(tasks);
+
+        // Wait for first task to complete but not the second
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+        // First call - should process completed task, keep pending one
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(
+            !completed,
+            "Should not be complete - one task still pending"
+        );
+        assert!(
+            state.deletion_tasks.is_some(),
+            "Should still have pending tasks"
+        );
+
+        // Verify the fast branch was updated
+        assert!(matches!(
+            harness.app.cleanup_branches()[0].status,
+            CleanupStatus::Success
+        ));
+
+        // Second call - slow task still running, should not panic
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(!completed, "Should still not be complete");
+
+        // Wait for slow task to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Third call - now should complete
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(completed, "Should be complete now");
+
+        // Fourth call - should not panic
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(!completed, "Should return false, no more tasks");
+    }
+
+    /// # Check Progress With Failed Tasks Test
+    ///
+    /// Tests that check_progress correctly handles task failures
+    /// and can still be called multiple times without panic.
+    ///
+    /// ## Test Scenario
+    /// - Creates tasks where some succeed and some fail
+    /// - Calls check_progress multiple times
+    ///
+    /// ## Expected Outcome
+    /// - Failed tasks should update branch status to Failed
+    /// - No panic should occur on subsequent calls
+    #[tokio::test]
+    async fn test_check_progress_with_failed_tasks() {
+        let config = create_test_config_cleanup();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.cleanup_branches_mut() = vec![
+            CleanupBranch {
+                name: "success-branch".to_string(),
+                target: "main".to_string(),
+                version: "1.0.0".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+            CleanupBranch {
+                name: "fail-branch".to_string(),
+                target: "main".to_string(),
+                version: "1.0.1".to_string(),
+                is_merged: true,
+                selected: true,
+                status: CleanupStatus::InProgress,
+            },
+        ];
+
+        let mut state = CleanupExecutionState::new();
+
+        let tasks: Vec<DeletionTask> = vec![
+            tokio::spawn(async { (0, Ok(())) }),
+            tokio::spawn(async { (1, Err("Branch is protected".to_string())) }),
+        ];
+        state.deletion_tasks = Some(tasks);
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // First call
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(completed);
+
+        // Verify statuses
+        assert!(matches!(
+            harness.app.cleanup_branches()[0].status,
+            CleanupStatus::Success
+        ));
+        assert!(matches!(
+            &harness.app.cleanup_branches()[1].status,
+            CleanupStatus::Failed(msg) if msg == "Branch is protected"
+        ));
+
+        // Second call - should not panic
+        let completed = state.check_progress(harness.cleanup_app_mut()).await;
+        assert!(!completed);
+    }
 
     /// # Cleanup Execution Initial State Test
     ///

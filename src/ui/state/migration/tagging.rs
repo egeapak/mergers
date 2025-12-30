@@ -117,61 +117,70 @@ impl MigrationTaggingState {
     }
 
     pub async fn check_progress(&mut self) -> bool {
-        if let Some(tasks) = &mut self.tagging_tasks {
-            let mut completed_count = 0;
+        // Take ownership of tasks to avoid polling completed JoinHandles
+        if let Some(tasks) = self.tagging_tasks.take() {
+            let mut pending_tasks = Vec::new();
             let mut new_errors = Vec::new();
+            let mut completed_in_this_pass = 0;
 
-            // Check each task
-            for (i, task) in tasks.iter_mut().enumerate() {
-                if task.is_finished() {
-                    completed_count += 1;
+            // Check each task - enumerate with original indices for batch tracking
+            for (original_idx, task) in tasks.into_iter().enumerate() {
+                if !task.is_finished() {
+                    // Task still running - keep it for next poll
+                    pending_tasks.push(task);
+                    continue;
+                }
 
-                    // If this batch just completed, collect results
-                    if i >= self.current_batch {
-                        match task.await {
-                            Ok(Ok(batch_errors)) => {
-                                new_errors.extend(batch_errors);
-                            }
-                            Ok(Err(error)) => {
-                                // Task failed entirely
-                                new_errors.push(TaggingError {
-                                    pr_id: 0,
-                                    pr_title: format!("Batch {}", i + 1),
-                                    error: error.to_string(),
-                                });
-                            }
-                            Err(e) => {
-                                // Task panicked
-                                new_errors.push(TaggingError {
-                                    pr_id: 0,
-                                    pr_title: format!("Batch {}", i + 1),
-                                    error: format!("Task failed: {}", e),
-                                });
-                            }
-                        }
+                completed_in_this_pass += 1;
 
-                        self.current_batch = i + 1;
-                        // Estimate tagged PRs based on completed batches
-                        let batch_size = if self.total_prs > 0 && self.total_batches > 0 {
-                            self.total_prs.div_ceil(self.total_batches)
-                        } else {
-                            50
-                        };
-                        self.tagged_prs =
-                            std::cmp::min(self.current_batch * batch_size, self.total_prs);
+                // Process completed task (consumes the JoinHandle)
+                match task.await {
+                    Ok(Ok(batch_errors)) => {
+                        new_errors.extend(batch_errors);
+                    }
+                    Ok(Err(error)) => {
+                        // Task failed entirely
+                        new_errors.push(TaggingError {
+                            pr_id: 0,
+                            pr_title: format!("Batch {}", original_idx + 1),
+                            error: error.to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        // Task panicked
+                        new_errors.push(TaggingError {
+                            pr_id: 0,
+                            pr_title: format!("Batch {}", original_idx + 1),
+                            error: format!("Task failed: {}", e),
+                        });
                     }
                 }
+            }
+
+            // Update batch tracking if we completed any tasks
+            if completed_in_this_pass > 0 {
+                self.current_batch += completed_in_this_pass;
+                // Estimate tagged PRs based on completed batches
+                let batch_size = if self.total_prs > 0 && self.total_batches > 0 {
+                    self.total_prs.div_ceil(self.total_batches)
+                } else {
+                    50
+                };
+                self.tagged_prs = std::cmp::min(self.current_batch * batch_size, self.total_prs);
             }
 
             // Add new errors
             self.errors.extend(new_errors);
 
             // Check if all tasks are complete
-            if completed_count == self.total_batches {
+            if pending_tasks.is_empty() {
                 self.is_complete = true;
                 self.tagged_prs = self.total_prs; // Ensure final count is correct
                 return true;
             }
+
+            // Put remaining tasks back
+            self.tagging_tasks = Some(pending_tasks);
         }
 
         false
@@ -469,6 +478,216 @@ mod tests {
         testing::{TuiTestHarness, create_test_config_migration},
     };
     use insta::assert_snapshot;
+
+    /// # Check Progress Multiple Polls Test
+    ///
+    /// Tests that check_progress can be called multiple times without panic.
+    ///
+    /// ## Test Scenario
+    /// - Creates a MigrationTaggingState with pre-completed tasks
+    /// - Calls check_progress multiple times
+    /// - This simulates KeyCode::Null events arriving repeatedly
+    ///
+    /// ## Expected Outcome
+    /// - Should NOT panic with "JoinHandle polled after completion"
+    /// - Should correctly mark completion after all tasks finish
+    /// - Subsequent calls should be safe (no-op when no tasks remain)
+    ///
+    /// ## Regression Test
+    /// This test verifies the fix for the panic that occurred when
+    /// iter_mut() was used instead of take() - completed JoinHandles
+    /// remained in the vector and panicked on subsequent polls.
+    #[tokio::test]
+    async fn test_check_progress_multiple_polls_no_panic() {
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.total_prs = 2;
+        state.total_batches = 2;
+        state.started = true;
+
+        // Manually set up tasks that complete immediately with no errors
+        let tasks: Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>> = vec![
+            tokio::spawn(async { Ok(vec![]) }),
+            tokio::spawn(async { Ok(vec![]) }),
+        ];
+        state.tagging_tasks = Some(tasks);
+
+        // Wait briefly for tasks to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // First call - should process completed tasks
+        let completed = state.check_progress().await;
+        assert!(completed, "Should report completion after all tasks finish");
+        assert!(state.is_complete, "State should be marked complete");
+
+        // Second call - should NOT panic (this is the regression test)
+        // With the old iter_mut() code, this would panic with:
+        // "JoinHandle polled after completion"
+        let completed_again = state.check_progress().await;
+        assert!(
+            !completed_again,
+            "Should return false when no tasks to process"
+        );
+
+        // Third call - still should not panic
+        let completed_third = state.check_progress().await;
+        assert!(
+            !completed_third,
+            "Should return false when no tasks to process"
+        );
+    }
+
+    /// # Check Progress With Pending Tasks Test
+    ///
+    /// Tests that check_progress correctly handles a mix of completed
+    /// and still-running tasks across multiple calls.
+    ///
+    /// ## Test Scenario
+    /// - Creates tasks where some complete quickly and others take longer
+    /// - Calls check_progress multiple times
+    /// - Verifies pending tasks are preserved for next poll
+    ///
+    /// ## Expected Outcome
+    /// - Completed tasks should be processed and removed
+    /// - Pending tasks should remain for subsequent polls
+    /// - No panic should occur
+    #[tokio::test]
+    async fn test_check_progress_preserves_pending_tasks() {
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.total_prs = 100; // 2 batches of 50
+        state.total_batches = 2;
+        state.started = true;
+
+        // Create tasks: one completes immediately, one takes longer
+        let tasks: Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>> = vec![
+            tokio::spawn(async { Ok(vec![]) }), // Completes immediately
+            tokio::spawn(async {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                Ok(vec![])
+            }), // Takes longer
+        ];
+        state.tagging_tasks = Some(tasks);
+
+        // Wait for first task to complete but not the second
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+
+        // First call - should process completed task, keep pending one
+        let completed = state.check_progress().await;
+        assert!(
+            !completed,
+            "Should not be complete - one task still pending"
+        );
+        assert!(
+            state.tagging_tasks.is_some(),
+            "Should still have pending tasks"
+        );
+        assert_eq!(state.current_batch, 1, "Should have processed one batch");
+
+        // Second call - slow task still running, should not panic
+        let completed = state.check_progress().await;
+        assert!(!completed, "Should still not be complete");
+
+        // Wait for slow task to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Third call - now should complete
+        let completed = state.check_progress().await;
+        assert!(completed, "Should be complete now");
+        assert_eq!(state.current_batch, 2, "Should have processed both batches");
+
+        // Fourth call - should not panic
+        let completed = state.check_progress().await;
+        assert!(!completed, "Should return false, no more tasks");
+    }
+
+    /// # Check Progress With Errors Test
+    ///
+    /// Tests that check_progress correctly handles task errors
+    /// and can still be called multiple times without panic.
+    ///
+    /// ## Test Scenario
+    /// - Creates tasks where some return errors
+    /// - Calls check_progress multiple times
+    ///
+    /// ## Expected Outcome
+    /// - Errors should be collected
+    /// - No panic should occur on subsequent calls
+    #[tokio::test]
+    async fn test_check_progress_with_errors() {
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.total_prs = 2;
+        state.total_batches = 2;
+        state.started = true;
+
+        let tasks: Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>> = vec![
+            tokio::spawn(async { Ok(vec![]) }),
+            tokio::spawn(async {
+                Ok(vec![TaggingError {
+                    pr_id: 123,
+                    pr_title: "Test PR".to_string(),
+                    error: "API error".to_string(),
+                }])
+            }),
+        ];
+        state.tagging_tasks = Some(tasks);
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // First call
+        let completed = state.check_progress().await;
+        assert!(completed);
+
+        // Verify errors were collected
+        assert_eq!(state.errors.len(), 1);
+        assert_eq!(state.errors[0].pr_id, 123);
+
+        // Second call - should not panic
+        let completed = state.check_progress().await;
+        assert!(!completed);
+    }
+
+    /// # Check Progress With Task Panic Test
+    ///
+    /// Tests that check_progress correctly handles tasks that panic
+    /// and can still be called multiple times without panic.
+    ///
+    /// ## Test Scenario
+    /// - Creates tasks where one panics
+    /// - Calls check_progress multiple times
+    ///
+    /// ## Expected Outcome
+    /// - Panic should be converted to error
+    /// - No panic should occur on subsequent calls
+    #[tokio::test]
+    async fn test_check_progress_with_task_panic() {
+        let mut state = MigrationTaggingState::new("v1.0.0".to_string(), "merged/".to_string());
+        state.total_prs = 2;
+        state.total_batches = 2;
+        state.started = true;
+
+        let tasks: Vec<tokio::task::JoinHandle<Result<Vec<TaggingError>>>> = vec![
+            tokio::spawn(async { Ok(vec![]) }),
+            tokio::spawn(async {
+                panic!("Task panicked!");
+                #[allow(unreachable_code)]
+                Ok(vec![])
+            }),
+        ];
+        state.tagging_tasks = Some(tasks);
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // First call - should handle panic gracefully
+        let completed = state.check_progress().await;
+        assert!(completed);
+
+        // Verify panic was converted to error
+        assert_eq!(state.errors.len(), 1);
+        assert!(state.errors[0].error.contains("Task failed"));
+
+        // Second call - should not panic
+        let completed = state.check_progress().await;
+        assert!(!completed);
+    }
 
     /// # Migration Tagging State - In Progress
     ///
