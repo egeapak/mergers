@@ -30,6 +30,6 @@ expression: harness.backend()
 " │2. C│                                                                  │    │ "
 " └────│Direct: Cyan | Transitive: Gray  •  [F]: Overlapping lines | [P]: │────┘ "
 " ┌Help└───────────────Press Esc/g/q to close, ↑/↓ to scroll──────────────┘────┐ "
-" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | E│ "
+" │↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle |  │ "
 " └────────────────────────────────────────────────────────────────────────────┘ "
 "                                                                                "
