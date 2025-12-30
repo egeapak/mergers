@@ -26,25 +26,37 @@ fn help_styles() -> Styles {
 }
 
 /// Build styled after_help text with colorized EXAMPLES header
-fn styled_after_help() -> &'static str {
-    use std::sync::OnceLock;
-    static AFTER_HELP: OnceLock<String> = OnceLock::new();
+fn styled_examples(content: &str) -> String {
+    let header_style = AnsiColor::Yellow.on_default().bold();
+    format!("{header_style}EXAMPLES:{header_style:#}\n{content}")
+}
 
-    AFTER_HELP.get_or_init(|| {
-        let header_style = AnsiColor::Yellow.on_default().bold();
-        format!(
-            "{header_style}EXAMPLES:{header_style:#}\n    \
-            # Merge mode with Azure DevOps credentials\n    \
-            mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-            # Migration analysis mode\n    \
-            mergers migrate -o myorg -p myproject -r myrepo -t <PAT> --since 1mo\n\n    \
-            # Cleanup merged branches\n    \
-            mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
-            # Create sample config file\n    \
-            mergers --create-config\n\n\
-            For more information, see: https://github.com/egeapak/mergers"
-        )
-    })
+/// Main command examples
+fn main_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/main.txt")))
+}
+
+/// Merge command examples
+fn merge_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/merge.txt")))
+}
+
+/// Migrate command examples
+fn migrate_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/migrate.txt")))
+}
+
+/// Cleanup command examples
+fn cleanup_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/cleanup.txt")))
 }
 
 /// Shared arguments used by all commands
@@ -383,15 +395,7 @@ pub enum Commands {
             This mode fetches completed PRs from Azure DevOps, displays them in an interactive\n\
             TUI for selection, and cherry-picks the selected commits to your target branch.\n\
             Work items can be automatically transitioned to a specified state after merge.",
-        after_help = "EXAMPLES:\n    \
-            # Basic merge with all required args\n    \
-            mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-            # Merge with custom branches and work item state\n    \
-            mergers merge -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
-            --dev-branch develop --target-branch release \\\n      \
-            --work-item-state \"Ready for Test\" /path/to/repo\n\n    \
-            # Merge PRs from the last 2 weeks only\n    \
-            mergers m -o myorg -p proj -r repo -t <PAT> --since 2w"
+        after_help = merge_examples()
     )]
     Merge(MergeArgs),
 
@@ -404,14 +408,7 @@ pub enum Commands {
             • Unsure: Mixed signals requiring manual review\n  \
             • Not merged: PR commits not present in target branch\n\n\
             Results are displayed in an interactive TUI for review and manual override.",
-        after_help = "EXAMPLES:\n    \
-            # Analyze migrations with default terminal states\n    \
-            mergers migrate -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
-            # Custom terminal states for work items\n    \
-            mergers migrate -o myorg -p myproject -r myrepo -t <PAT> \\\n      \
-            --terminal-states \"Closed,Done,Resolved\"\n\n    \
-            # Analyze only recent PRs\n    \
-            mergers mi -o myorg -p proj -r repo -t <PAT> --since 1mo"
+        after_help = migrate_examples()
     )]
     Migrate(MigrateArgs),
 
@@ -422,13 +419,7 @@ pub enum Commands {
             This mode identifies local branches matching the tag prefix pattern (default: merged-*)\n\
             that have been fully merged into the target branch, and offers to delete them.\n\
             Useful for maintaining a clean repository after completing merge operations.",
-        after_help = "EXAMPLES:\n    \
-            # Cleanup branches merged to default target\n    \
-            mergers cleanup -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
-            # Cleanup branches merged to a specific target\n    \
-            mergers cleanup -o myorg -p proj -r repo -t <PAT> --target main\n\n    \
-            # Cleanup with custom tag prefix\n    \
-            mergers c -o myorg -p proj -r repo -t <PAT> --tag-prefix patch-"
+        after_help = cleanup_examples()
     )]
     Cleanup(CleanupArgs),
 }
@@ -468,7 +459,7 @@ impl Commands {
         Configuration can be provided via CLI arguments, environment variables (MERGERS_*),\n\
         config file (~/.config/mergers/config.toml), or auto-detected from git remotes.",
     before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
-    after_help = styled_after_help(),
+    after_help = main_examples(),
     styles = help_styles()
 )]
 pub struct Args {
