@@ -350,6 +350,11 @@ impl DataLoadingState {
     }
 
     fn get_progress_percentage(&self) -> u16 {
+        // If loading is complete, return 100%
+        if self.loaded {
+            return 100;
+        }
+
         match self.loading_stage {
             LoadingStage::NotStarted => 0,
             LoadingStage::FetchingPullRequests => 10,
@@ -377,7 +382,6 @@ impl DataLoadingState {
                 }
             }
             LoadingStage::AnalyzingDependencies => 85,
-            LoadingStage::Complete => 100,
         }
     }
 }
