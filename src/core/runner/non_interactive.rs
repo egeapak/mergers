@@ -447,8 +447,28 @@ impl<W: Write> NonInteractiveRunner<W> {
         let state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
-                return RunResult::error(ExitCode::NoStateFile, "No state file found");
+                // No merge in progress - return idle status (not an error)
+                let status_info = StatusInfo {
+                    phase: "idle".to_string(),
+                    status: "idle".to_string(),
+                    version: String::new(),
+                    target_branch: String::new(),
+                    repo_path: repo_path.clone(),
+                    progress: ProgressSummary {
+                        total: 0,
+                        completed: 0,
+                        pending: 0,
+                        current_index: 0,
+                    },
+                    conflict: None,
+                    items: None,
+                };
+
+                if let Err(e) = self.output.write_status(&status_info) {
+                    eprintln!("Warning: Failed to write status: {}", e);
+                }
+
+                return RunResult::success();
             }
             Err(e) => {
                 self.emit_error(&format!("{}", e));
