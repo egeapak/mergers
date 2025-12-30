@@ -176,17 +176,16 @@ impl SettingsConfirmationState {
     }
 
     fn create_settings_display(&self) -> Vec<Line<'_>> {
+        let mode_name = match &self.config {
+            AppConfig::Default { .. } => "Merge",
+            AppConfig::Migration { .. } => "Migration",
+            AppConfig::Cleanup { .. } => "Cleanup",
+        };
+
         let mut lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                format!(
-                    "Mode: {}",
-                    if self.config.is_migration_mode() {
-                        "Migration"
-                    } else {
-                        "Merge"
-                    }
-                ),
+                format!("Mode: {}", mode_name),
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -391,6 +390,34 @@ mod tests {
 
             harness.terminal.draw(|f| state.render(f)).unwrap();
             assert_snapshot!("migration_mode", harness.backend());
+        });
+    }
+
+    /// # Settings Confirmation Cleanup Mode Test
+    ///
+    /// Tests the settings confirmation screen for cleanup mode.
+    ///
+    /// ## Test Scenario
+    /// - Creates a cleanup mode configuration
+    /// - Renders the settings confirmation screen
+    /// - Captures the UI output showing cleanup-specific settings
+    ///
+    /// ## Expected Outcome
+    /// - Should display "Mode: Cleanup" at the top
+    /// - Should show target branch in mode-specific settings
+    /// - Should display all other settings sections normally
+    #[test]
+    fn test_settings_confirmation_cleanup_mode() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let config_for_state = config.clone();
+            let mut harness = TuiTestHarness::with_config(config);
+            let mut state = SettingsConfirmationState::new(config_for_state);
+
+            harness.terminal.draw(|f| state.render(f)).unwrap();
+            assert_snapshot!("cleanup_mode", harness.backend());
         });
     }
 
