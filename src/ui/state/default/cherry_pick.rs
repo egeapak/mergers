@@ -212,12 +212,19 @@ impl ModeState for CherryPickState {
             .wrap(Wrap { trim: true });
         f.render_widget(details, main_chunks[1]);
 
-        let status = if self.processing {
-            "Processing cherry-picks..."
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let status_lines = if self.processing {
+            vec![Line::from("Processing cherry-picks...")]
         } else {
-            "Press any key to continue"
+            vec![Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("any key", key_style),
+                Span::raw(" to continue"),
+            ])]
         };
-        let status_widget = Paragraph::new(status)
+        let status_widget = Paragraph::new(status_lines)
             .style(Style::default().fg(Color::Gray))
             .block(Block::default().borders(Borders::ALL));
         f.render_widget(status_widget, chunks[2]);

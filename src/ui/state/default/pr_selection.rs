@@ -1333,7 +1333,21 @@ impl PullRequestSelectionState {
             popup_width,
             1,
         );
-        let help = Paragraph::new("Press Esc/g/q to close, ↑/↓ to scroll")
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_line = Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("Esc", key_style),
+            Span::raw("/"),
+            Span::styled("g", key_style),
+            Span::raw("/"),
+            Span::styled("q", key_style),
+            Span::raw(" to close, "),
+            Span::styled("↑/↓", key_style),
+            Span::raw(" to scroll"),
+        ]);
+        let help = Paragraph::new(vec![help_line])
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
@@ -1551,15 +1565,26 @@ impl ModeState for PullRequestSelectionState {
 
         // Handle empty PR list
         if app.pull_requests().is_empty() {
-            let empty_message =
-                Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("No Pull Requests"),
-                    )
-                    .alignment(Alignment::Center);
+            let key_style = Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            let empty_lines = vec![
+                Line::from("No pull requests found without merged tags."),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to quit."),
+                ]),
+            ];
+            let empty_message = Paragraph::new(empty_lines)
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("No Pull Requests"),
+                )
+                .alignment(Alignment::Center);
             f.render_widget(empty_message, f.area());
             return;
         }
@@ -1789,12 +1814,6 @@ impl ModeState for PullRequestSelectionState {
             chunk_idx += 1;
         }
 
-        let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | d: Details | r: Refresh | q: Quit"
-        } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | d: Details | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
-        };
-
         // Build status summary for Help title
         let selected_count = app.pull_requests().iter().filter(|pr| pr.selected).count();
         let help_title = if selected_count > 0 {
@@ -1810,8 +1829,63 @@ impl ModeState for PullRequestSelectionState {
             "Help".to_string()
         };
 
-        let help = List::new(vec![ListItem::new(help_text)])
-            .block(Block::default().borders(Borders::ALL).title(help_title));
+        // Styled help text with colored hotkeys
+        use ratatui::text::{Line, Span};
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_lines = if self.search_iteration_mode {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("n", key_style),
+                Span::raw(": Next result | "),
+                Span::styled("N", key_style),
+                Span::raw(": Previous result | "),
+                Span::styled("Esc", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        } else {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("/", key_style),
+                Span::raw(": Search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Confirm | "),
+                Span::styled("p", key_style),
+                Span::raw(": Open PR | "),
+                Span::styled("w", key_style),
+                Span::raw(": Open Work Items | "),
+                Span::styled("g", key_style),
+                Span::raw(": Graph | "),
+                Span::styled("s", key_style),
+                Span::raw(": Multi-select by states | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        };
+
+        let help = Paragraph::new(help_lines)
+            .block(Block::default().borders(Borders::ALL).title(help_title))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(help, chunks[chunk_idx]);
 
