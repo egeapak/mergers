@@ -4,6 +4,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -47,7 +48,15 @@ impl ErrorState {
             .wrap(Wrap { trim: true });
         f.render_widget(error, chunks[1]);
 
-        let help = Paragraph::new("Press 'q' to exit")
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_text = vec![Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("q", key_style),
+            Span::raw(" to exit"),
+        ])];
+        let help = Paragraph::new(help_text)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
         f.render_widget(help, chunks[2]);

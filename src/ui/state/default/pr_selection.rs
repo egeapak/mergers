@@ -1380,7 +1380,21 @@ impl PullRequestSelectionState {
             popup_width,
             1,
         );
-        let help = Paragraph::new("Press Esc/d/q to close, ↑/↓ to scroll")
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_line = Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("Esc", key_style),
+            Span::raw("/"),
+            Span::styled("d", key_style),
+            Span::raw("/"),
+            Span::styled("q", key_style),
+            Span::raw(" to close, "),
+            Span::styled("↑/↓", key_style),
+            Span::raw(" to scroll"),
+        ]);
+        let help = Paragraph::new(vec![help_line])
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
@@ -1507,15 +1521,26 @@ impl ModeState for PullRequestSelectionState {
 
         // Handle empty PR list
         if app.pull_requests().is_empty() {
-            let empty_message =
-                Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("No Pull Requests"),
-                    )
-                    .alignment(Alignment::Center);
+            let key_style = Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            let empty_lines = vec![
+                Line::from("No pull requests found without merged tags."),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to quit."),
+                ]),
+            ];
+            let empty_message = Paragraph::new(empty_lines)
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("No Pull Requests"),
+                )
+                .alignment(Alignment::Center);
             f.render_widget(empty_message, f.area());
             return;
         }

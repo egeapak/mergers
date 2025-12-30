@@ -15,7 +15,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
@@ -285,13 +285,53 @@ impl ModeState for SetupRepoState {
                 f.render_widget(status, chunks[0]);
             }
             SetupState::Error { message, .. } => {
+                let key_style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD);
+
+                // Helper to style hotkeys in a line like "  • Press 'r' to retry"
+                fn style_hotkey_line<'a>(line: &'a str, key_style: Style) -> Line<'a> {
+                    let mut spans = Vec::new();
+                    let mut remaining = line;
+
+                    while let Some(start) = remaining.find('\'') {
+                        // Add text before the quote
+                        if start > 0 {
+                            spans.push(Span::styled(
+                                &remaining[..start],
+                                Style::default().fg(Color::Gray),
+                            ));
+                        }
+
+                        // Find closing quote
+                        if let Some(end) = remaining[start + 1..].find('\'') {
+                            let key = &remaining[start + 1..start + 1 + end];
+                            spans.push(Span::styled(format!("'{}'", key), key_style));
+                            remaining = &remaining[start + 1 + end + 1..];
+                        } else {
+                            spans.push(Span::styled(
+                                &remaining[start..],
+                                Style::default().fg(Color::Gray),
+                            ));
+                            remaining = "";
+                            break;
+                        }
+                    }
+
+                    if !remaining.is_empty() {
+                        spans.push(Span::styled(remaining, Style::default().fg(Color::Gray)));
+                    }
+
+                    Line::from(spans)
+                }
+
                 let message_lines: Vec<Line> = message
                     .lines()
                     .map(|line| {
                         if line.starts_with("Options:") {
                             Line::from(vec![Span::styled(line, Style::default().fg(Color::Cyan))])
                         } else if line.starts_with("  •") {
-                            Line::from(vec![Span::styled(line, Style::default().fg(Color::Yellow))])
+                            style_hotkey_line(line, key_style)
                         } else {
                             Line::from(line)
                         }

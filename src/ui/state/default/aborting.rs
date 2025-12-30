@@ -205,13 +205,20 @@ impl ModeState for AbortingState {
         f.render_widget(content, main_chunks[1]);
 
         // Instructions
-        let instructions = if is_complete {
-            "Press any key to continue to results..."
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let instructions_lines = if is_complete {
+            vec![Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("any key", key_style),
+                Span::raw(" to continue to results..."),
+            ])]
         } else {
-            "Please wait while cleanup is in progress..."
+            vec![Line::from("Please wait while cleanup is in progress...")]
         };
 
-        let instructions_widget = Paragraph::new(instructions)
+        let instructions_widget = Paragraph::new(instructions_lines)
             .block(Block::default().borders(Borders::ALL).title("Instructions"))
             .style(Style::default().fg(Color::White));
         f.render_widget(instructions_widget, main_chunks[2]);
