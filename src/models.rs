@@ -1,8 +1,29 @@
 use crate::{config::Config, parsed_property::ParsedProperty, utils::parse_since_date};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use clap::{Args as ClapArgs, Parser, Subcommand};
+use clap::{
+    Args as ClapArgs, Parser, Subcommand,
+    builder::{Styles, styling::AnsiColor},
+};
 use serde::Deserialize;
+
+/// Build a version string that includes the git commit hash
+fn build_version() -> &'static str {
+    // Use concat! with env! to create a compile-time constant string
+    concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")")
+}
+
+/// Define custom styles for colorized help output
+fn help_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default().bold())
+        .usage(AnsiColor::Yellow.on_default().bold())
+        .literal(AnsiColor::Green.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default())
+        .valid(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default())
+        .error(AnsiColor::Red.on_default().bold())
+}
 
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
@@ -412,8 +433,10 @@ impl Commands {
 
 #[derive(Parser, Clone)]
 #[command(
+    name = "mergers",
     author,
     version,
+    long_version = build_version(),
     about = "Manage Azure DevOps pull request merging and migration workflows",
     long_about = "A CLI/TUI tool for managing Azure DevOps pull request merging and migration workflows.\n\n\
         Mergers helps you:\n  \
@@ -422,6 +445,7 @@ impl Commands {
         • Clean up merged patch branches\n\n\
         Configuration can be provided via CLI arguments, environment variables (MERGERS_*),\n\
         config file (~/.config/mergers/config.toml), or auto-detected from git remotes.",
+    before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
     after_help = "EXAMPLES:\n    \
         # Merge mode with Azure DevOps credentials\n    \
         mergers merge -o myorg -p myproject -r myrepo -t <PAT> /path/to/repo\n\n    \
@@ -431,7 +455,8 @@ impl Commands {
         mergers cleanup -o myorg -p myproject -r myrepo -t <PAT>\n\n    \
         # Create sample config file\n    \
         mergers --create-config\n\n\
-        For more information, see: https://github.com/egeapak/mergers"
+        For more information, see: https://github.com/egeapak/mergers",
+    styles = help_styles()
 )]
 pub struct Args {
     #[command(subcommand)]
@@ -444,7 +469,13 @@ pub struct Args {
 
 /// Temporary wrapper to parse MergeArgs as if they were top-level
 #[derive(Parser, Clone)]
-#[command(name = "mergers", about = None, long_about = None)]
+#[command(
+    name = "mergers",
+    about = None,
+    long_about = None,
+    before_help = concat!("mergers ", env!("CARGO_PKG_VERSION"), " (", env!("GIT_HASH"), ")"),
+    styles = help_styles()
+)]
 pub struct MergeArgsParser {
     #[command(flatten)]
     pub merge_args: MergeArgs,
