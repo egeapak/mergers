@@ -87,16 +87,18 @@ impl CleanupExecutionState {
     }
 
     async fn check_progress(&mut self, app: &mut CleanupApp) -> bool {
-        if let Some(tasks) = &mut self.deletion_tasks {
-            let mut all_complete = true;
+        // Take ownership of tasks to avoid polling completed JoinHandles
+        if let Some(tasks) = self.deletion_tasks.take() {
+            let mut pending_tasks = Vec::new();
 
-            for task in tasks.iter_mut() {
+            for task in tasks {
                 if !task.is_finished() {
-                    all_complete = false;
+                    // Task still running - keep it for next poll
+                    pending_tasks.push(task);
                     continue;
                 }
 
-                // Process completed task
+                // Process completed task (consumes the JoinHandle)
                 if let Ok((idx, result)) = task.await
                     && idx < app.cleanup_branches().len()
                 {
@@ -107,10 +109,13 @@ impl CleanupExecutionState {
                 }
             }
 
-            if all_complete {
+            if pending_tasks.is_empty() {
                 self.is_complete = true;
                 return true;
             }
+
+            // Put remaining tasks back
+            self.deletion_tasks = Some(pending_tasks);
         }
 
         false

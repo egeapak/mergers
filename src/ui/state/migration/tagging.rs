@@ -117,61 +117,70 @@ impl MigrationTaggingState {
     }
 
     pub async fn check_progress(&mut self) -> bool {
-        if let Some(tasks) = &mut self.tagging_tasks {
-            let mut completed_count = 0;
+        // Take ownership of tasks to avoid polling completed JoinHandles
+        if let Some(tasks) = self.tagging_tasks.take() {
+            let mut pending_tasks = Vec::new();
             let mut new_errors = Vec::new();
+            let mut completed_in_this_pass = 0;
 
-            // Check each task
-            for (i, task) in tasks.iter_mut().enumerate() {
-                if task.is_finished() {
-                    completed_count += 1;
+            // Check each task - enumerate with original indices for batch tracking
+            for (original_idx, task) in tasks.into_iter().enumerate() {
+                if !task.is_finished() {
+                    // Task still running - keep it for next poll
+                    pending_tasks.push(task);
+                    continue;
+                }
 
-                    // If this batch just completed, collect results
-                    if i >= self.current_batch {
-                        match task.await {
-                            Ok(Ok(batch_errors)) => {
-                                new_errors.extend(batch_errors);
-                            }
-                            Ok(Err(error)) => {
-                                // Task failed entirely
-                                new_errors.push(TaggingError {
-                                    pr_id: 0,
-                                    pr_title: format!("Batch {}", i + 1),
-                                    error: error.to_string(),
-                                });
-                            }
-                            Err(e) => {
-                                // Task panicked
-                                new_errors.push(TaggingError {
-                                    pr_id: 0,
-                                    pr_title: format!("Batch {}", i + 1),
-                                    error: format!("Task failed: {}", e),
-                                });
-                            }
-                        }
+                completed_in_this_pass += 1;
 
-                        self.current_batch = i + 1;
-                        // Estimate tagged PRs based on completed batches
-                        let batch_size = if self.total_prs > 0 && self.total_batches > 0 {
-                            self.total_prs.div_ceil(self.total_batches)
-                        } else {
-                            50
-                        };
-                        self.tagged_prs =
-                            std::cmp::min(self.current_batch * batch_size, self.total_prs);
+                // Process completed task (consumes the JoinHandle)
+                match task.await {
+                    Ok(Ok(batch_errors)) => {
+                        new_errors.extend(batch_errors);
+                    }
+                    Ok(Err(error)) => {
+                        // Task failed entirely
+                        new_errors.push(TaggingError {
+                            pr_id: 0,
+                            pr_title: format!("Batch {}", original_idx + 1),
+                            error: error.to_string(),
+                        });
+                    }
+                    Err(e) => {
+                        // Task panicked
+                        new_errors.push(TaggingError {
+                            pr_id: 0,
+                            pr_title: format!("Batch {}", original_idx + 1),
+                            error: format!("Task failed: {}", e),
+                        });
                     }
                 }
+            }
+
+            // Update batch tracking if we completed any tasks
+            if completed_in_this_pass > 0 {
+                self.current_batch += completed_in_this_pass;
+                // Estimate tagged PRs based on completed batches
+                let batch_size = if self.total_prs > 0 && self.total_batches > 0 {
+                    self.total_prs.div_ceil(self.total_batches)
+                } else {
+                    50
+                };
+                self.tagged_prs = std::cmp::min(self.current_batch * batch_size, self.total_prs);
             }
 
             // Add new errors
             self.errors.extend(new_errors);
 
             // Check if all tasks are complete
-            if completed_count == self.total_batches {
+            if pending_tasks.is_empty() {
                 self.is_complete = true;
                 self.tagged_prs = self.total_prs; // Ensure final count is correct
                 return true;
             }
+
+            // Put remaining tasks back
+            self.tagging_tasks = Some(pending_tasks);
         }
 
         false
