@@ -447,8 +447,28 @@ impl<W: Write> NonInteractiveRunner<W> {
         let state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
-                return RunResult::error(ExitCode::NoStateFile, "No state file found");
+                // No merge in progress - return idle status (not an error)
+                let status_info = StatusInfo {
+                    phase: "idle".to_string(),
+                    status: "idle".to_string(),
+                    version: String::new(),
+                    target_branch: String::new(),
+                    repo_path: repo_path.clone(),
+                    progress: ProgressSummary {
+                        total: 0,
+                        completed: 0,
+                        pending: 0,
+                        current_index: 0,
+                    },
+                    conflict: None,
+                    items: None,
+                };
+
+                if let Err(e) = self.output.write_status(&status_info) {
+                    eprintln!("Warning: Failed to write status: {}", e);
+                }
+
+                return RunResult::success();
             }
             Err(e) => {
                 self.emit_error(&format!("{}", e));
@@ -1161,5 +1181,70 @@ mod tests {
         assert!(!result.is_success());
         assert_eq!(result.exit_code, crate::core::ExitCode::PartialSuccess);
         assert_eq!(result.message, Some("3 of 5 succeeded".to_string()));
+    }
+
+    /// # Status Returns Idle When No State File
+    ///
+    /// Verifies that status returns idle status (not error) when no state file exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a runner with a temporary directory (no state file)
+    /// - Calls status method
+    ///
+    /// ## Expected Outcome
+    /// - Returns success (exit code 0)
+    /// - Output contains "idle" phase and status
+    #[test]
+    fn test_status_returns_idle_when_no_state_file() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        // Use a temp directory that has no state file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = runner.status(Some(temp_dir.path()));
+
+        // Should return success, not an error
+        assert!(result.is_success());
+        assert_eq!(result.exit_code, crate::core::ExitCode::Success);
+
+        // Output should contain idle status
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("idle"),
+            "Output should contain 'idle' status: {}",
+            output
+        );
+    }
+
+    /// # Status Idle Output JSON Format
+    ///
+    /// Verifies that idle status is properly formatted in JSON output.
+    ///
+    /// ## Test Scenario
+    /// - Creates a runner with JSON output format
+    /// - Calls status with no state file
+    ///
+    /// ## Expected Outcome
+    /// - JSON output contains phase: "idle" and status: "idle"
+    #[test]
+    fn test_status_idle_json_format() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Json;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = runner.status(Some(temp_dir.path()));
+
+        assert!(result.is_success());
+
+        let output = String::from_utf8(buffer).unwrap();
+        // Parse as JSON and verify structure
+        let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(json["phase"], "idle");
+        assert_eq!(json["status"], "idle");
+        assert_eq!(json["progress"]["total"], 0);
+        assert_eq!(json["progress"]["completed"], 0);
     }
 }
