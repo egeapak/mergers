@@ -331,10 +331,14 @@ pub fn create_worktree(
             .args(["config", "core.hooksPath", "/dev/null"])
             .output()
             .map_err(|e| {
+                // Clean up the worktree we just created before returning error
+                let _ = force_remove_worktree(base_repo_path, version);
                 RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
             })?;
 
         if !config_output.status.success() {
+            // Clean up the worktree we just created before returning error
+            let _ = force_remove_worktree(base_repo_path, version);
             return Err(RepositorySetupError::Other(format!(
                 "Failed to configure hooks path: {}",
                 String::from_utf8_lossy(&config_output.stderr)

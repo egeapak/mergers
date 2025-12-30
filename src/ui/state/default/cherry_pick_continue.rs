@@ -377,7 +377,10 @@ impl ModeState for CherryPickContinueState {
                         let version_opt = app.version();
                         let version = version_opt.as_ref().unwrap().to_string();
                         let target_branch = app.target_branch().to_string();
+                        let base_repo_path =
+                            app.state_file().and_then(|sf| sf.base_repo_path.clone());
                         StateChange::Change(MergeState::Aborting(AbortingState::new(
+                            base_repo_path,
                             repo_path,
                             version,
                             target_branch,

@@ -35,10 +35,16 @@ impl AbortingState {
     /// Create a new aborting state and immediately start the cleanup in a background thread.
     ///
     /// # Arguments
+    /// * `base_repo_path` - Path to the base repository (for worktree cleanup)
     /// * `repo_path` - Path to the repository (worktree or cloned repo)
     /// * `version` - Version string used for the patch branch
     /// * `target_branch` - Target branch name
-    pub fn new(repo_path: PathBuf, version: String, target_branch: String) -> Self {
+    pub fn new(
+        base_repo_path: Option<PathBuf>,
+        repo_path: PathBuf,
+        version: String,
+        target_branch: String,
+    ) -> Self {
         let is_complete = Arc::new(Mutex::new(false));
         let cleanup_result = Arc::new(Mutex::new(None));
 
@@ -51,7 +57,7 @@ impl AbortingState {
         // Spawn a thread to run the cleanup in the background
         thread::spawn(move || {
             let result = git::cleanup_cherry_pick(
-                None, // base_repo_path is no longer stored in App
+                base_repo_path.as_deref(),
                 &repo_path_clone,
                 &version_clone,
                 &target_branch_clone,
@@ -205,13 +211,20 @@ impl ModeState for AbortingState {
         f.render_widget(content, main_chunks[1]);
 
         // Instructions
-        let instructions = if is_complete {
-            "Press any key to continue to results..."
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let instructions_lines = if is_complete {
+            vec![Line::from(vec![
+                Span::raw("Press "),
+                Span::styled("any key", key_style),
+                Span::raw(" to continue to results..."),
+            ])]
         } else {
-            "Please wait while cleanup is in progress..."
+            vec![Line::from("Please wait while cleanup is in progress...")]
         };
 
-        let instructions_widget = Paragraph::new(instructions)
+        let instructions_widget = Paragraph::new(instructions_lines)
             .block(Block::default().borders(Borders::ALL).title("Instructions"))
             .style(Style::default().fg(Color::White));
         f.render_widget(instructions_widget, main_chunks[2]);

@@ -14,9 +14,10 @@ use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::Alignment,
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
 };
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -51,7 +52,6 @@ enum LoadingStage {
     WaitingForWorkItems,
     FetchingCommitInfo,
     AnalyzingDependencies,
-    Complete,
 }
 
 impl Default for DataLoadingState {
@@ -224,7 +224,7 @@ impl DataLoadingState {
             }
         }
 
-        self.loading_stage = LoadingStage::Complete;
+        // Don't set loading_stage here - let the state machine handle transitions
         Ok(())
     }
 
@@ -249,8 +249,9 @@ impl DataLoadingState {
         let prs = app.pull_requests();
         self.dependency_analysis_total = prs.len();
 
-        // Build PRInfo list
-        let pr_infos: Vec<PRInfo> = prs
+        // Build PRInfo list and sort by closed date (oldest first)
+        // The dependency analyzer expects PRs in chronological order
+        let mut pr_infos: Vec<PRInfo> = prs
             .iter()
             .map(|pr_with_wi| {
                 PRInfo::new(
@@ -265,6 +266,25 @@ impl DataLoadingState {
                 )
             })
             .collect();
+
+        // Sort PRs by closed date (oldest first) for correct dependency analysis
+        // Create a map of PR ID to closed date for sorting
+        let pr_dates: std::collections::HashMap<i32, Option<String>> = prs
+            .iter()
+            .map(|pr| (pr.pr.id, pr.pr.closed_date.clone()))
+            .collect();
+
+        pr_infos.sort_by(|a, b| {
+            let date_a = pr_dates.get(&a.id).and_then(|d| d.as_ref());
+            let date_b = pr_dates.get(&b.id).and_then(|d| d.as_ref());
+
+            match (date_a, date_b) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.id.cmp(&b.id), // Fallback to ID if no dates
+            }
+        });
 
         // Parallel fetch of file changes for each PR
         let pr_changes: HashMap<i32, Vec<FileChange>> = pr_infos
@@ -326,7 +346,42 @@ impl DataLoadingState {
                     "Analyzing dependencies...".to_string()
                 }
             }
-            LoadingStage::Complete => "Loading complete".to_string(),
+        }
+    }
+
+    fn get_progress_percentage(&self) -> u16 {
+        // If loading is complete, return 100%
+        if self.loaded {
+            return 100;
+        }
+
+        match self.loading_stage {
+            LoadingStage::NotStarted => 0,
+            LoadingStage::FetchingPullRequests => 10,
+            LoadingStage::FetchingWorkItems => 20,
+            LoadingStage::WaitingForWorkItems => {
+                if self.work_items_total > 0 {
+                    let base = 20u16;
+                    let range = 40u16; // 20-60%
+                    let progress = (self.work_items_fetched as f64 / self.work_items_total as f64
+                        * range as f64) as u16;
+                    base + progress
+                } else {
+                    30
+                }
+            }
+            LoadingStage::FetchingCommitInfo => {
+                if self.commit_info_total > 0 {
+                    let base = 60u16;
+                    let range = 20u16; // 60-80%
+                    let progress = (self.commit_info_fetched as f64 / self.commit_info_total as f64
+                        * range as f64) as u16;
+                    base + progress
+                } else {
+                    70
+                }
+            }
+            LoadingStage::AnalyzingDependencies => 85,
         }
     }
 }
@@ -340,11 +395,63 @@ impl ModeState for DataLoadingState {
     type Mode = MergeState;
 
     fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
-        let loading = Paragraph::new(self.get_loading_message())
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(3), // Progress bar
+                Constraint::Min(5),    // Status message
+                Constraint::Length(3), // Help
+            ])
+            .split(f.area());
+
+        // Title
+        let title = Paragraph::new("Merge Mode - Loading Data")
+            .style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(title, chunks[0]);
+
+        // Progress bar
+        let progress = self.get_progress_percentage();
+        let gauge = Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title("Progress"))
+            .gauge_style(
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .percent(progress)
+            .label(format!("{}%", progress));
+        f.render_widget(gauge, chunks[1]);
+
+        // Status message
+        let status = Paragraph::new(self.get_loading_message())
             .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Loading"))
-            .alignment(Alignment::Center);
-        f.render_widget(loading, f.area());
+            .block(Block::default().borders(Borders::ALL).title("Status"))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        f.render_widget(status, chunks[2]);
+
+        // Help text with styled hotkeys
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_lines = vec![Line::from(vec![
+            Span::raw("Loading... Press "),
+            Span::styled("q", key_style),
+            Span::raw(" to cancel"),
+        ])];
+
+        let help = Paragraph::new(help_lines)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL).title("Help"));
+        f.render_widget(help, chunks[3]);
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
@@ -409,12 +516,6 @@ impl ModeState for DataLoadingState {
                         )));
                     }
                     // Transition to PR selection
-                    return StateChange::Change(MergeState::PullRequestSelection(
-                        PullRequestSelectionState::new(),
-                    ));
-                }
-                LoadingStage::Complete => {
-                    // Should not reach here, but transition to PR selection just in case
                     return StateChange::Change(MergeState::PullRequestSelection(
                         PullRequestSelectionState::new(),
                     ));
@@ -568,10 +669,10 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut state = DataLoadingState::new();
-            state.loading_stage = LoadingStage::Complete;
+            state.loading_stage = LoadingStage::AnalyzingDependencies;
             harness.render_state(&mut state);
 
-            assert_snapshot!("complete", harness.backend());
+            assert_snapshot!("analyzing_dependencies_no_count", harness.backend());
         });
     }
 
@@ -740,31 +841,6 @@ mod tests {
 
             assert_snapshot!("commit_info_no_total", harness.backend());
         });
-    }
-
-    /// # Data Loading State - Complete Stage Key Processing
-    ///
-    /// Tests that pressing Null key in Complete stage transitions to PR selection.
-    ///
-    /// ## Test Scenario
-    /// - Creates a data loading state in Complete stage
-    /// - Sets loaded=true
-    /// - Processes Null key
-    ///
-    /// ## Expected Outcome
-    /// - Should return StateChange::Change to PullRequestSelectionState
-    #[tokio::test]
-    async fn test_data_loading_complete_stage_transitions() {
-        let config = create_test_config_default();
-        let mut harness = TuiTestHarness::with_config(config);
-
-        let mut state = DataLoadingState::new();
-        state.loaded = true;
-        state.loading_stage = LoadingStage::Complete;
-
-        let result =
-            ModeState::process_key(&mut state, KeyCode::Null, harness.merge_app_mut()).await;
-        assert!(matches!(result, StateChange::Change(_)));
     }
 
     /// # Data Loading State - FetchingCommitInfo Stage Key Processing

@@ -5,7 +5,7 @@ expression: harness.backend()
 "┌No Pull Requests──────────────────────────────────────────────────────────────┐"
 "│                  No pull requests found without merged tags.                 │"
 "│                                                                              │"
-"│                              Press 'q' to quit.                              │"
+"│                               Press q to quit.                               │"
 "│                                                                              │"
 "│                                                                              │"
 "│                                                                              │"

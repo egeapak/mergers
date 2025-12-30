@@ -15,6 +15,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{
         Block, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
@@ -22,9 +23,6 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use std::time::Instant;
-
-/// A dependency entry with PR ID, title, category, and whether it's transitive.
-type DependencyEntry = (i32, String, DependencyCategory, bool);
 
 #[derive(Debug, Clone)]
 enum SearchQuery {
@@ -58,6 +56,8 @@ pub struct PullRequestSelectionState {
     show_dependency_dialog: bool,
     dependency_dialog_pr_index: Option<usize>,
     dependency_dialog_scroll: usize,
+    // Details pane toggle
+    show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -92,6 +92,8 @@ impl PullRequestSelectionState {
             dependency_dialog_pr_index: None,
             dependency_dialog_scroll: 0,
             table_area: None,
+            // Details pane toggle
+            show_details: true,
         }
     }
 
@@ -1191,9 +1193,9 @@ impl PullRequestSelectionState {
         let pr_id = pr_with_wi.pr.id;
         let pr_title = &pr_with_wi.pr.title;
 
-        // Calculate popup dimensions
-        let popup_width = (area.width as f32 * 0.7).min(80.0) as u16;
-        let popup_height = (area.height as f32 * 0.7).min(25.0) as u16;
+        // Calculate popup dimensions (made larger)
+        let popup_width = (area.width as f32 * 0.85).min(100.0) as u16;
+        let popup_height = (area.height as f32 * 0.85).min(35.0) as u16;
         let popup_x = (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = (area.height.saturating_sub(popup_height)) / 2;
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -1206,8 +1208,9 @@ impl PullRequestSelectionState {
 
         // Get dependency graph
         if let Some(graph) = app.dependency_graph() {
-            // Compute transitive dependencies
-            let (deps, dependents) = compute_transitive_dependencies(graph, pr_id, app);
+            // Build dependency trees
+            let deps_tree = build_dependency_tree(graph, pr_id, app, true);
+            let dependents_tree = build_dependency_tree(graph, pr_id, app, false);
 
             // Dependencies section
             lines.push(Line::from(Span::styled(
@@ -1217,50 +1220,13 @@ impl PullRequestSelectionState {
                     .add_modifier(Modifier::BOLD),
             )));
 
-            if deps.is_empty() {
+            if deps_tree.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  No dependencies",
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
-                for (dep_pr_id, dep_title, category, is_transitive) in &deps {
-                    let cat_label = match category {
-                        DependencyCategory::Dependent { .. } => "[FULL]",
-                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
-                        DependencyCategory::Independent => "",
-                    };
-                    let cat_color = match category {
-                        DependencyCategory::Dependent { .. } => Color::Red,
-                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
-                        DependencyCategory::Independent => Color::Green,
-                    };
-                    let label_color = if *is_transitive {
-                        Color::DarkGray
-                    } else {
-                        Color::Cyan
-                    };
-                    let label = if *is_transitive {
-                        "(transitive)"
-                    } else {
-                        "(direct)"
-                    };
-                    let prefix = if *is_transitive {
-                        "    └─ "
-                    } else {
-                        "  ├─ "
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(label_color)),
-                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
-                        Span::styled(
-                            truncate_title(dep_title, 30),
-                            Style::default().fg(label_color),
-                        ),
-                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
-                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
+                render_dependency_tree(&deps_tree, &mut lines, "", true);
             }
 
             lines.push(Line::from("")); // Spacer
@@ -1273,50 +1239,13 @@ impl PullRequestSelectionState {
                     .add_modifier(Modifier::BOLD),
             )));
 
-            if dependents.is_empty() {
+            if dependents_tree.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  No dependents",
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
-                for (dep_pr_id, dep_title, category, is_transitive) in &dependents {
-                    let cat_label = match category {
-                        DependencyCategory::Dependent { .. } => "[FULL]",
-                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
-                        DependencyCategory::Independent => "",
-                    };
-                    let cat_color = match category {
-                        DependencyCategory::Dependent { .. } => Color::Red,
-                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
-                        DependencyCategory::Independent => Color::Green,
-                    };
-                    let label_color = if *is_transitive {
-                        Color::DarkGray
-                    } else {
-                        Color::Cyan
-                    };
-                    let label = if *is_transitive {
-                        "(transitive)"
-                    } else {
-                        "(direct)"
-                    };
-                    let prefix = if *is_transitive {
-                        "    └─ "
-                    } else {
-                        "  ├─ "
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(label_color)),
-                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
-                        Span::styled(
-                            truncate_title(dep_title, 30),
-                            Style::default().fg(label_color),
-                        ),
-                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
-                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
+                render_dependency_tree(&dependents_tree, &mut lines, "", true);
             }
         } else {
             lines.push(Line::from(Span::styled(
@@ -1329,20 +1258,8 @@ impl PullRequestSelectionState {
             )));
         }
 
-        // Add legend
-        lines.push(Line::from("")); // Spacer
-        lines.push(Line::from(vec![
-            Span::styled("Colors: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Direct", Style::default().fg(Color::Cyan)),
-            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Transitive", Style::default().fg(Color::DarkGray)),
-            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("[FULL]", Style::default().fg(Color::Red)),
-            Span::styled(" = overlapping lines", Style::default().fg(Color::DarkGray)),
-        ]));
-
-        // Apply scroll offset
-        let visible_height = popup_height.saturating_sub(4) as usize; // Account for borders and title
+        // Apply scroll offset (reserve space for legend at bottom)
+        let visible_height = popup_height.saturating_sub(5) as usize; // Account for borders, title, and legend
         let max_scroll = lines.len().saturating_sub(visible_height);
         let scroll = self.dependency_dialog_scroll.min(max_scroll);
         let visible_lines: Vec<Line> = lines
@@ -1373,6 +1290,42 @@ impl PullRequestSelectionState {
 
         f.render_widget(dialog, popup_area);
 
+        // Add legend at bottom (fixed, not scrollable) - two columns
+        let legend_area = Rect::new(
+            popup_x + 1,
+            popup_y + popup_height.saturating_sub(2),
+            popup_width.saturating_sub(2),
+            1,
+        );
+        let legend = Paragraph::new(Line::from(vec![
+            Span::styled("Direct: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Cyan", Style::default().fg(Color::Cyan)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Transitive: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Gray", Style::default().fg(Color::DarkGray)),
+            Span::styled("  •  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "[F]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                ": Overlapping lines | ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                "[P]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                ": Same files, different lines",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+        .alignment(Alignment::Center);
+        f.render_widget(legend, legend_area);
+
         // Add help line at bottom
         let help_area = Rect::new(
             popup_x,
@@ -1380,105 +1333,210 @@ impl PullRequestSelectionState {
             popup_width,
             1,
         );
-        let help = Paragraph::new("Press Esc/d/q to close, ↑/↓ to scroll")
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+        let help_line = Line::from(vec![
+            Span::raw("Press "),
+            Span::styled("Esc", key_style),
+            Span::raw("/"),
+            Span::styled("g", key_style),
+            Span::raw("/"),
+            Span::styled("q", key_style),
+            Span::raw(" to close, "),
+            Span::styled("↑/↓", key_style),
+            Span::raw(" to scroll"),
+        ]);
+        let help = Paragraph::new(vec![help_line])
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
     }
 }
 
-/// Computes transitive dependencies and dependents for a PR.
-///
-/// Returns (dependencies, dependents) where each is a Vec of (pr_id, title, category, is_transitive).
-fn compute_transitive_dependencies(
+/// Tree node representing a PR and its dependencies
+#[derive(Debug, Clone)]
+struct DependencyTreeNode {
+    pr_id: i32,
+    title: String,
+    category: DependencyCategory,
+    closed_date: Option<String>,
+    children: Vec<DependencyTreeNode>,
+}
+
+/// Builds a dependency tree for display
+fn build_dependency_tree(
     graph: &crate::core::operations::PRDependencyGraph,
     pr_id: i32,
     app: &MergeApp,
-) -> (Vec<DependencyEntry>, Vec<DependencyEntry>) {
-    use std::collections::VecDeque;
+    build_dependencies: bool,
+) -> Vec<DependencyTreeNode> {
+    use std::collections::HashSet;
 
-    // Get PR titles from app
-    let get_pr_title = |id: i32| -> String {
+    let get_pr_info = |id: i32| -> (String, Option<String>) {
         app.pull_requests()
             .iter()
             .find(|pr| pr.pr.id == id)
-            .map(|pr| pr.pr.title.clone())
-            .unwrap_or_else(|| format!("PR #{}", id))
+            .map(|pr| (pr.pr.title.clone(), pr.pr.closed_date.clone()))
+            .unwrap_or_else(|| (format!("PR #{}", id), None))
     };
 
-    // Compute dependencies (PRs this PR depends on)
-    let mut dependencies = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    visited.insert(pr_id);
 
-    if let Some(node) = graph.get_node(pr_id) {
-        // Add direct dependencies
-        for dep in &node.dependencies {
-            let title = get_pr_title(dep.to_pr_id);
-            dependencies.push((dep.to_pr_id, title, dep.category.clone(), false));
-            queue.push_back(dep.to_pr_id);
-            visited.insert(dep.to_pr_id);
-        }
-    }
+    fn build_subtree(
+        graph: &crate::core::operations::PRDependencyGraph,
+        current_id: i32,
+        visited: &mut HashSet<i32>,
+        get_pr_info: &dyn Fn(i32) -> (String, Option<String>),
+        build_dependencies: bool,
+    ) -> Vec<DependencyTreeNode> {
+        let node = match graph.get_node(current_id) {
+            Some(n) => n,
+            None => return Vec::new(),
+        };
 
-    // BFS for transitive dependencies
-    while let Some(current_id) = queue.pop_front() {
-        if let Some(node) = graph.get_node(current_id) {
-            for dep in &node.dependencies {
-                if !visited.contains(&dep.to_pr_id) {
-                    let title = get_pr_title(dep.to_pr_id);
-                    dependencies.push((dep.to_pr_id, title, dep.category.clone(), true));
-                    queue.push_back(dep.to_pr_id);
+        if build_dependencies {
+            // Build dependency tree (PRs this PR depends on)
+            let mut children: Vec<DependencyTreeNode> = node
+                .dependencies
+                .iter()
+                .filter_map(|dep| {
+                    if visited.contains(&dep.to_pr_id) {
+                        return None;
+                    }
                     visited.insert(dep.to_pr_id);
-                }
-            }
-        }
-    }
 
-    // Compute dependents (PRs that depend on this PR)
-    let mut dependents = Vec::new();
-    visited.clear();
+                    let children = build_subtree(graph, dep.to_pr_id, visited, get_pr_info, true);
+                    let (title, closed_date) = get_pr_info(dep.to_pr_id);
 
-    if let Some(node) = graph.get_node(pr_id) {
-        // Add direct dependents
-        for &dependent_id in &node.dependents {
-            if let Some(dependent_node) = graph.get_node(dependent_id) {
-                // Find the dependency entry to get the category
-                if let Some(dep) = dependent_node
-                    .dependencies
-                    .iter()
-                    .find(|d| d.to_pr_id == pr_id)
-                {
-                    let title = get_pr_title(dependent_id);
-                    dependents.push((dependent_id, title, dep.category.clone(), false));
-                    queue.push_back(dependent_id);
-                    visited.insert(dependent_id);
-                }
-            }
-        }
-    }
+                    Some(DependencyTreeNode {
+                        pr_id: dep.to_pr_id,
+                        title,
+                        category: dep.category.clone(),
+                        closed_date,
+                        children,
+                    })
+                })
+                .collect();
 
-    // BFS for transitive dependents
-    while let Some(current_id) = queue.pop_front() {
-        if let Some(node) = graph.get_node(current_id) {
-            for &dependent_id in &node.dependents {
-                if !visited.contains(&dependent_id)
-                    && let Some(dependent_node) = graph.get_node(dependent_id)
-                    && let Some(dep) = dependent_node
+            // Sort children by closed_date (newest first)
+            children.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => b.pr_id.cmp(&a.pr_id),
+            });
+            children
+        } else {
+            // Build dependent tree (PRs that depend on this PR)
+            let mut children: Vec<DependencyTreeNode> = node
+                .dependents
+                .iter()
+                .filter_map(|&dependent_id| {
+                    if visited.contains(&dependent_id) {
+                        return None;
+                    }
+
+                    let dependent_node = graph.get_node(dependent_id)?;
+                    let dep = dependent_node
                         .dependencies
                         .iter()
-                        .find(|d| d.to_pr_id == current_id)
-                {
-                    let title = get_pr_title(dependent_id);
-                    dependents.push((dependent_id, title, dep.category.clone(), true));
-                    queue.push_back(dependent_id);
+                        .find(|d| d.to_pr_id == current_id)?;
+
                     visited.insert(dependent_id);
-                }
-            }
+
+                    let children = build_subtree(graph, dependent_id, visited, get_pr_info, false);
+                    let (title, closed_date) = get_pr_info(dependent_id);
+
+                    Some(DependencyTreeNode {
+                        pr_id: dependent_id,
+                        title,
+                        category: dep.category.clone(),
+                        closed_date,
+                        children,
+                    })
+                })
+                .collect();
+
+            // Sort children by closed_date (newest first)
+            children.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => b.pr_id.cmp(&a.pr_id),
+            });
+            children
         }
     }
 
-    (dependencies, dependents)
+    // Check if the PR exists in the graph
+    if graph.get_node(pr_id).is_none() {
+        return Vec::new();
+    }
+
+    let mut roots = build_subtree(graph, pr_id, &mut visited, &get_pr_info, build_dependencies);
+
+    // Sort roots by closed_date (newest first, same as PR list)
+    roots.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+        (Some(da), Some(db)) => da.cmp(db),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b.pr_id.cmp(&a.pr_id),
+    });
+
+    roots
+}
+
+/// Renders a dependency tree with proper indentation and connectors
+fn render_dependency_tree(
+    nodes: &[DependencyTreeNode],
+    lines: &mut Vec<Line>,
+    prefix: &str,
+    is_root: bool,
+) {
+    for (idx, node) in nodes.iter().enumerate() {
+        let is_last = idx == nodes.len() - 1;
+
+        let (cat_prefix, cat_color) = match &node.category {
+            DependencyCategory::Dependent { .. } => ("[F] ", Color::Red),
+            DependencyCategory::PartiallyDependent { .. } => ("[P] ", Color::Yellow),
+            DependencyCategory::Independent => ("    ", Color::Green),
+        };
+
+        // Determine tree characters
+        let (connector, child_prefix) = if is_last {
+            ("└─ ", "   ")
+        } else {
+            ("├─ ", "│  ")
+        };
+
+        // Direct dependencies are cyan, transitive are gray
+        let color = if is_root {
+            Color::Cyan // Direct dependency
+        } else {
+            Color::DarkGray // Transitive dependency
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                cat_prefix,
+                Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{}{}", prefix, connector),
+                Style::default().fg(color),
+            ),
+            Span::styled(format!("#{} ", node.pr_id), Style::default().fg(color)),
+            Span::styled(truncate_title(&node.title, 60), Style::default().fg(color)),
+        ]));
+
+        // Render children with updated prefix
+        if !node.children.is_empty() {
+            let new_prefix = format!("{}{}", prefix, child_prefix);
+            render_dependency_tree(&node.children, lines, &new_prefix, false);
+        }
+    }
 }
 
 /// Truncates a title to fit within a given width.
@@ -1507,22 +1565,34 @@ impl ModeState for PullRequestSelectionState {
 
         // Handle empty PR list
         if app.pull_requests().is_empty() {
-            let empty_message =
-                Paragraph::new("No pull requests found without merged tags.\n\nPress 'q' to quit.")
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("No Pull Requests"),
-                    )
-                    .alignment(Alignment::Center);
+            let key_style = Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+            let empty_lines = vec![
+                Line::from("No pull requests found without merged tags."),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("q", key_style),
+                    Span::raw(" to quit."),
+                ]),
+            ];
+            let empty_message = Paragraph::new(empty_lines)
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("No Pull Requests"),
+                )
+                .alignment(Alignment::Center);
             f.render_widget(empty_message, f.area());
             return;
         }
 
         // Add search status line if in search iteration mode
-        let chunks = if self.search_iteration_mode {
-            Layout::default()
+        // Adjust layout based on whether details pane is visible
+        let chunks = match (self.search_iteration_mode, self.show_details) {
+            (true, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1531,9 +1601,17 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Min(0),         // Work item details (fills remaining)
                     Constraint::Length(3),      // Help section
                 ])
-                .split(f.area())
-        } else {
-            Layout::default()
+                .split(f.area()),
+            (true, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3), // Search status line
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
+            (false, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1541,7 +1619,15 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Min(0), // Bottom half for work item details (fills remaining)
                     Constraint::Length(3), // Help section
                 ])
-                .split(f.area())
+                .split(f.area()),
+            (false, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
         };
 
         let mut chunk_idx = 0;
@@ -1722,15 +1808,11 @@ impl ModeState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details
-        self.render_work_item_details(f, app, chunks[chunk_idx]);
-        chunk_idx += 1;
-
-        let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
-        } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
-        };
+        // Render work item details if enabled
+        if self.show_details {
+            self.render_work_item_details(f, app, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
 
         // Build status summary for Help title
         let selected_count = app.pull_requests().iter().filter(|pr| pr.selected).count();
@@ -1747,8 +1829,63 @@ impl ModeState for PullRequestSelectionState {
             "Help".to_string()
         };
 
-        let help = List::new(vec![ListItem::new(help_text)])
-            .block(Block::default().borders(Borders::ALL).title(help_title));
+        // Styled help text with colored hotkeys
+        use ratatui::text::{Line, Span};
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        let help_lines = if self.search_iteration_mode {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("n", key_style),
+                Span::raw(": Next result | "),
+                Span::styled("N", key_style),
+                Span::raw(": Previous result | "),
+                Span::styled("Esc", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Exit search | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        } else {
+            vec![Line::from(vec![
+                Span::styled("↑/↓", key_style),
+                Span::raw(": Navigate PRs | "),
+                Span::styled("←/→", key_style),
+                Span::raw(": Navigate Work Items | "),
+                Span::styled("/", key_style),
+                Span::raw(": Search | "),
+                Span::styled("Space", key_style),
+                Span::raw(": Toggle | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Confirm | "),
+                Span::styled("p", key_style),
+                Span::raw(": Open PR | "),
+                Span::styled("w", key_style),
+                Span::raw(": Open Work Items | "),
+                Span::styled("g", key_style),
+                Span::raw(": Graph | "),
+                Span::styled("s", key_style),
+                Span::raw(": Multi-select by states | "),
+                Span::styled("r", key_style),
+                Span::raw(": Refresh | "),
+                Span::styled("q", key_style),
+                Span::raw(": Quit"),
+            ])]
+        };
+
+        let help = Paragraph::new(help_lines)
+            .block(Block::default().borders(Borders::ALL).title(help_title))
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         f.render_widget(help, chunks[chunk_idx]);
 
@@ -1957,6 +2094,11 @@ impl ModeState for PullRequestSelectionState {
                             app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
                     }
+                    StateChange::Keep
+                }
+                KeyCode::Char('d') => {
+                    // Toggle details pane
+                    self.show_details = !self.show_details;
                     StateChange::Keep
                 }
                 KeyCode::Char('g') => {
@@ -3436,5 +3578,155 @@ mod tests {
         ModeState::process_key(&mut state, KeyCode::Char('c'), harness.merge_app_mut()).await;
         assert!(!state.multi_select_mode);
         assert!(!harness.app.pull_requests()[0].selected);
+    }
+
+    /// # PR Selection State - Details Hidden
+    ///
+    /// Tests the PR selection screen with details pane hidden.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with show_details = false
+    /// - Loads test pull requests
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display PR table taking full height
+    /// - Should NOT show work item details panel
+    /// - Help text should still include 'd: Details' hotkey
+    #[test]
+    fn test_pr_selection_details_hidden() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_details = false;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("details_hidden", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Dependency Dialog
+    ///
+    /// Tests the PR selection screen with dependency dialog open.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dependency dialog open
+    /// - Loads test pull requests
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - Should display dependency dialog overlay
+    /// - Help text should show "Esc/g/q to close" (not "d")
+    #[test]
+    fn test_pr_selection_dependency_dialog() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_dependency_dialog = true;
+            selection_state.dependency_dialog_pr_index = Some(0);
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("dependency_dialog", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Toggle Details with 'd' Key
+    ///
+    /// Tests that pressing 'd' toggles the details pane visibility.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state (details visible by default)
+    /// - Presses 'd' key
+    /// - Verifies show_details is toggled
+    ///
+    /// ## Expected Outcome
+    /// - show_details should toggle from true to false
+    /// - Pressing again should toggle back to true
+    #[tokio::test]
+    async fn test_pr_selection_toggle_details() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        assert!(state.show_details); // Default is true
+
+        // Press 'd' to hide details
+        ModeState::process_key(&mut state, KeyCode::Char('d'), harness.merge_app_mut()).await;
+        assert!(!state.show_details);
+
+        // Press 'd' again to show details
+        ModeState::process_key(&mut state, KeyCode::Char('d'), harness.merge_app_mut()).await;
+        assert!(state.show_details);
+    }
+
+    /// # PR Selection - Open Dependency Dialog with 'g' Key
+    ///
+    /// Tests that pressing 'g' opens the dependency dialog.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state
+    /// - Loads test pull requests
+    /// - Presses 'g' key
+    /// - Verifies dialog is opened
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_dialog should be true
+    /// - dependency_dialog_pr_index should be set to selected row
+    #[tokio::test]
+    async fn test_pr_selection_open_dependency_dialog() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.table_state.select(Some(0)); // Select first row
+        assert!(!state.show_dependency_dialog);
+
+        // Press 'g' to open dependency dialog
+        ModeState::process_key(&mut state, KeyCode::Char('g'), harness.merge_app_mut()).await;
+        assert!(state.show_dependency_dialog);
+        assert_eq!(state.dependency_dialog_pr_index, Some(0));
+    }
+
+    /// # PR Selection - Close Dependency Dialog with 'g' Key
+    ///
+    /// Tests that pressing 'g' closes the dependency dialog when open.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dialog open
+    /// - Presses 'g' key
+    /// - Verifies dialog is closed
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_dialog should be false
+    /// - dependency_dialog_pr_index should be None
+    #[tokio::test]
+    async fn test_pr_selection_close_dependency_dialog() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut state = PullRequestSelectionState::new();
+        state.show_dependency_dialog = true;
+        state.dependency_dialog_pr_index = Some(0);
+
+        // Press 'g' to close dependency dialog
+        ModeState::process_key(&mut state, KeyCode::Char('g'), harness.merge_app_mut()).await;
+        assert!(!state.show_dependency_dialog);
+        assert_eq!(state.dependency_dialog_pr_index, None);
     }
 }
