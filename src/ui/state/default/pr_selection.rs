@@ -58,6 +58,8 @@ pub struct PullRequestSelectionState {
     show_dependency_dialog: bool,
     dependency_dialog_pr_index: Option<usize>,
     dependency_dialog_scroll: usize,
+    // Details pane toggle
+    show_details: bool,
 }
 
 impl Default for PullRequestSelectionState {
@@ -92,6 +94,8 @@ impl PullRequestSelectionState {
             dependency_dialog_pr_index: None,
             dependency_dialog_scroll: 0,
             table_area: None,
+            // Details pane toggle
+            show_details: true,
         }
     }
 
@@ -1380,7 +1384,7 @@ impl PullRequestSelectionState {
             popup_width,
             1,
         );
-        let help = Paragraph::new("Press Esc/d/q to close, ↑/↓ to scroll")
+        let help = Paragraph::new("Press Esc/g/q to close, ↑/↓ to scroll")
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
@@ -1521,8 +1525,9 @@ impl ModeState for PullRequestSelectionState {
         }
 
         // Add search status line if in search iteration mode
-        let chunks = if self.search_iteration_mode {
-            Layout::default()
+        // Adjust layout based on whether details pane is visible
+        let chunks = match (self.search_iteration_mode, self.show_details) {
+            (true, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1531,9 +1536,17 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Percentage(37), // Work item details (slightly smaller)
                     Constraint::Length(3),      // Help section
                 ])
-                .split(f.area())
-        } else {
-            Layout::default()
+                .split(f.area()),
+            (true, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Length(3), // Search status line
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
+            (false, true) => Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([
@@ -1541,7 +1554,15 @@ impl ModeState for PullRequestSelectionState {
                     Constraint::Percentage(40), // Bottom half for work item details
                     Constraint::Length(3),      // Help section
                 ])
-                .split(f.area())
+                .split(f.area()),
+            (false, false) => Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([
+                    Constraint::Min(0),    // PR table (full height)
+                    Constraint::Length(3), // Help section
+                ])
+                .split(f.area()),
         };
 
         let mut chunk_idx = 0;
@@ -1722,14 +1743,16 @@ impl ModeState for PullRequestSelectionState {
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.scrollbar_state);
         chunk_idx += 1;
 
-        // Render work item details
-        self.render_work_item_details(f, app, chunks[chunk_idx]);
-        chunk_idx += 1;
+        // Render work item details if enabled
+        if self.show_details {
+            self.render_work_item_details(f, app, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
 
         let help_text = if self.search_iteration_mode {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | n: Next result | N: Previous result | Esc: Exit search | Space: Toggle | Enter: Exit search | d: Details | r: Refresh | q: Quit"
         } else {
-            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
+            "↑/↓: Navigate PRs | ←/→: Navigate Work Items | /: Search | Space: Toggle | Enter: Confirm | p: Open PR | w: Open Work Items | d: Details | g: Graph | s: Multi-select by states | r: Refresh | q: Quit"
         };
 
         // Build status summary for Help title
@@ -1957,6 +1980,11 @@ impl ModeState for PullRequestSelectionState {
                             app.open_work_items_in_browser(std::slice::from_ref(work_item));
                         }
                     }
+                    StateChange::Keep
+                }
+                KeyCode::Char('d') => {
+                    // Toggle details pane
+                    self.show_details = !self.show_details;
                     StateChange::Keep
                 }
                 KeyCode::Char('g') => {
