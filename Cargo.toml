@@ -29,7 +29,7 @@ chrono = { version = "=0.4.42", features = ["serde"] }
 anyhow = "=1.0.100"
 thiserror = "=2.0.17"
 secrecy = "=0.10.3"
-clap = { version = "=4.5.53", features = ["derive"] }
+clap = { version = "=4.5.53", features = ["derive", "color"] }
 async-trait = "=0.1.89"
 futures = "=0.3.31"
 tempfile = "=3.24.0"
