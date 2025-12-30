@@ -15,6 +15,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{
         Block, Borders, Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Table, TableState,
@@ -22,9 +23,6 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use std::time::Instant;
-
-/// A dependency entry with PR ID, title, category, and whether it's transitive.
-type DependencyEntry = (i32, String, DependencyCategory, bool);
 
 #[derive(Debug, Clone)]
 enum SearchQuery {
@@ -1191,9 +1189,9 @@ impl PullRequestSelectionState {
         let pr_id = pr_with_wi.pr.id;
         let pr_title = &pr_with_wi.pr.title;
 
-        // Calculate popup dimensions
-        let popup_width = (area.width as f32 * 0.7).min(80.0) as u16;
-        let popup_height = (area.height as f32 * 0.7).min(25.0) as u16;
+        // Calculate popup dimensions (made larger)
+        let popup_width = (area.width as f32 * 0.85).min(100.0) as u16;
+        let popup_height = (area.height as f32 * 0.85).min(35.0) as u16;
         let popup_x = (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = (area.height.saturating_sub(popup_height)) / 2;
         let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -1206,8 +1204,9 @@ impl PullRequestSelectionState {
 
         // Get dependency graph
         if let Some(graph) = app.dependency_graph() {
-            // Compute transitive dependencies
-            let (deps, dependents) = compute_transitive_dependencies(graph, pr_id, app);
+            // Build dependency trees
+            let deps_tree = build_dependency_tree(graph, pr_id, app, true);
+            let dependents_tree = build_dependency_tree(graph, pr_id, app, false);
 
             // Dependencies section
             lines.push(Line::from(Span::styled(
@@ -1217,50 +1216,13 @@ impl PullRequestSelectionState {
                     .add_modifier(Modifier::BOLD),
             )));
 
-            if deps.is_empty() {
+            if deps_tree.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  No dependencies",
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
-                for (dep_pr_id, dep_title, category, is_transitive) in &deps {
-                    let cat_label = match category {
-                        DependencyCategory::Dependent { .. } => "[FULL]",
-                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
-                        DependencyCategory::Independent => "",
-                    };
-                    let cat_color = match category {
-                        DependencyCategory::Dependent { .. } => Color::Red,
-                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
-                        DependencyCategory::Independent => Color::Green,
-                    };
-                    let label_color = if *is_transitive {
-                        Color::DarkGray
-                    } else {
-                        Color::Cyan
-                    };
-                    let label = if *is_transitive {
-                        "(transitive)"
-                    } else {
-                        "(direct)"
-                    };
-                    let prefix = if *is_transitive {
-                        "    └─ "
-                    } else {
-                        "  ├─ "
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(label_color)),
-                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
-                        Span::styled(
-                            truncate_title(dep_title, 30),
-                            Style::default().fg(label_color),
-                        ),
-                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
-                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
+                render_dependency_tree(&deps_tree, &mut lines, "", true);
             }
 
             lines.push(Line::from("")); // Spacer
@@ -1273,50 +1235,13 @@ impl PullRequestSelectionState {
                     .add_modifier(Modifier::BOLD),
             )));
 
-            if dependents.is_empty() {
+            if dependents_tree.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  No dependents",
                     Style::default().fg(Color::DarkGray),
                 )));
             } else {
-                for (dep_pr_id, dep_title, category, is_transitive) in &dependents {
-                    let cat_label = match category {
-                        DependencyCategory::Dependent { .. } => "[FULL]",
-                        DependencyCategory::PartiallyDependent { .. } => "[PARTIAL]",
-                        DependencyCategory::Independent => "",
-                    };
-                    let cat_color = match category {
-                        DependencyCategory::Dependent { .. } => Color::Red,
-                        DependencyCategory::PartiallyDependent { .. } => Color::Yellow,
-                        DependencyCategory::Independent => Color::Green,
-                    };
-                    let label_color = if *is_transitive {
-                        Color::DarkGray
-                    } else {
-                        Color::Cyan
-                    };
-                    let label = if *is_transitive {
-                        "(transitive)"
-                    } else {
-                        "(direct)"
-                    };
-                    let prefix = if *is_transitive {
-                        "    └─ "
-                    } else {
-                        "  ├─ "
-                    };
-
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, Style::default().fg(label_color)),
-                        Span::styled(format!("#{} ", dep_pr_id), Style::default().fg(label_color)),
-                        Span::styled(
-                            truncate_title(dep_title, 30),
-                            Style::default().fg(label_color),
-                        ),
-                        Span::styled(format!(" {}", cat_label), Style::default().fg(cat_color)),
-                        Span::styled(format!(" {}", label), Style::default().fg(Color::DarkGray)),
-                    ]));
-                }
+                render_dependency_tree(&dependents_tree, &mut lines, "", true);
             }
         } else {
             lines.push(Line::from(Span::styled(
@@ -1329,20 +1254,8 @@ impl PullRequestSelectionState {
             )));
         }
 
-        // Add legend
-        lines.push(Line::from("")); // Spacer
-        lines.push(Line::from(vec![
-            Span::styled("Colors: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Direct", Style::default().fg(Color::Cyan)),
-            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Transitive", Style::default().fg(Color::DarkGray)),
-            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled("[FULL]", Style::default().fg(Color::Red)),
-            Span::styled(" = overlapping lines", Style::default().fg(Color::DarkGray)),
-        ]));
-
-        // Apply scroll offset
-        let visible_height = popup_height.saturating_sub(4) as usize; // Account for borders and title
+        // Apply scroll offset (reserve space for legend at bottom)
+        let visible_height = popup_height.saturating_sub(5) as usize; // Account for borders, title, and legend
         let max_scroll = lines.len().saturating_sub(visible_height);
         let scroll = self.dependency_dialog_scroll.min(max_scroll);
         let visible_lines: Vec<Line> = lines
@@ -1373,6 +1286,42 @@ impl PullRequestSelectionState {
 
         f.render_widget(dialog, popup_area);
 
+        // Add legend at bottom (fixed, not scrollable) - two columns
+        let legend_area = Rect::new(
+            popup_x + 1,
+            popup_y + popup_height.saturating_sub(2),
+            popup_width.saturating_sub(2),
+            1,
+        );
+        let legend = Paragraph::new(Line::from(vec![
+            Span::styled("Direct: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Cyan", Style::default().fg(Color::Cyan)),
+            Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Transitive: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Gray", Style::default().fg(Color::DarkGray)),
+            Span::styled("  •  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                "[F]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                ": Overlapping lines | ",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                "[P]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                ": Same files, different lines",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+        .alignment(Alignment::Center);
+        f.render_widget(legend, legend_area);
+
         // Add help line at bottom
         let help_area = Rect::new(
             popup_x,
@@ -1387,98 +1336,189 @@ impl PullRequestSelectionState {
     }
 }
 
-/// Computes transitive dependencies and dependents for a PR.
-///
-/// Returns (dependencies, dependents) where each is a Vec of (pr_id, title, category, is_transitive).
-fn compute_transitive_dependencies(
+/// Tree node representing a PR and its dependencies
+#[derive(Debug, Clone)]
+struct DependencyTreeNode {
+    pr_id: i32,
+    title: String,
+    category: DependencyCategory,
+    closed_date: Option<String>,
+    children: Vec<DependencyTreeNode>,
+}
+
+/// Builds a dependency tree for display
+fn build_dependency_tree(
     graph: &crate::core::operations::PRDependencyGraph,
     pr_id: i32,
     app: &MergeApp,
-) -> (Vec<DependencyEntry>, Vec<DependencyEntry>) {
-    use std::collections::VecDeque;
+    build_dependencies: bool,
+) -> Vec<DependencyTreeNode> {
+    use std::collections::HashSet;
 
-    // Get PR titles from app
-    let get_pr_title = |id: i32| -> String {
+    let get_pr_info = |id: i32| -> (String, Option<String>) {
         app.pull_requests()
             .iter()
             .find(|pr| pr.pr.id == id)
-            .map(|pr| pr.pr.title.clone())
-            .unwrap_or_else(|| format!("PR #{}", id))
+            .map(|pr| (pr.pr.title.clone(), pr.pr.closed_date.clone()))
+            .unwrap_or_else(|| (format!("PR #{}", id), None))
     };
 
-    // Compute dependencies (PRs this PR depends on)
-    let mut dependencies = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+    visited.insert(pr_id);
 
-    if let Some(node) = graph.get_node(pr_id) {
-        // Add direct dependencies
-        for dep in &node.dependencies {
-            let title = get_pr_title(dep.to_pr_id);
-            dependencies.push((dep.to_pr_id, title, dep.category.clone(), false));
-            queue.push_back(dep.to_pr_id);
-            visited.insert(dep.to_pr_id);
-        }
-    }
+    fn build_subtree(
+        graph: &crate::core::operations::PRDependencyGraph,
+        current_id: i32,
+        visited: &mut HashSet<i32>,
+        get_pr_info: &dyn Fn(i32) -> (String, Option<String>),
+        build_dependencies: bool,
+    ) -> Vec<DependencyTreeNode> {
+        let node = match graph.get_node(current_id) {
+            Some(n) => n,
+            None => return Vec::new(),
+        };
 
-    // BFS for transitive dependencies
-    while let Some(current_id) = queue.pop_front() {
-        if let Some(node) = graph.get_node(current_id) {
-            for dep in &node.dependencies {
-                if !visited.contains(&dep.to_pr_id) {
-                    let title = get_pr_title(dep.to_pr_id);
-                    dependencies.push((dep.to_pr_id, title, dep.category.clone(), true));
-                    queue.push_back(dep.to_pr_id);
+        if build_dependencies {
+            // Build dependency tree (PRs this PR depends on)
+            let mut children: Vec<DependencyTreeNode> = node
+                .dependencies
+                .iter()
+                .filter_map(|dep| {
+                    if visited.contains(&dep.to_pr_id) {
+                        return None;
+                    }
                     visited.insert(dep.to_pr_id);
-                }
-            }
-        }
-    }
 
-    // Compute dependents (PRs that depend on this PR)
-    let mut dependents = Vec::new();
-    visited.clear();
+                    let children = build_subtree(graph, dep.to_pr_id, visited, get_pr_info, true);
+                    let (title, closed_date) = get_pr_info(dep.to_pr_id);
 
-    if let Some(node) = graph.get_node(pr_id) {
-        // Add direct dependents
-        for &dependent_id in &node.dependents {
-            if let Some(dependent_node) = graph.get_node(dependent_id) {
-                // Find the dependency entry to get the category
-                if let Some(dep) = dependent_node
-                    .dependencies
-                    .iter()
-                    .find(|d| d.to_pr_id == pr_id)
-                {
-                    let title = get_pr_title(dependent_id);
-                    dependents.push((dependent_id, title, dep.category.clone(), false));
-                    queue.push_back(dependent_id);
-                    visited.insert(dependent_id);
-                }
-            }
-        }
-    }
+                    Some(DependencyTreeNode {
+                        pr_id: dep.to_pr_id,
+                        title,
+                        category: dep.category.clone(),
+                        closed_date,
+                        children,
+                    })
+                })
+                .collect();
 
-    // BFS for transitive dependents
-    while let Some(current_id) = queue.pop_front() {
-        if let Some(node) = graph.get_node(current_id) {
-            for &dependent_id in &node.dependents {
-                if !visited.contains(&dependent_id)
-                    && let Some(dependent_node) = graph.get_node(dependent_id)
-                    && let Some(dep) = dependent_node
+            // Sort children by closed_date (newest first)
+            children.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => b.pr_id.cmp(&a.pr_id),
+            });
+            children
+        } else {
+            // Build dependent tree (PRs that depend on this PR)
+            let mut children: Vec<DependencyTreeNode> = node
+                .dependents
+                .iter()
+                .filter_map(|&dependent_id| {
+                    if visited.contains(&dependent_id) {
+                        return None;
+                    }
+
+                    let dependent_node = graph.get_node(dependent_id)?;
+                    let dep = dependent_node
                         .dependencies
                         .iter()
-                        .find(|d| d.to_pr_id == current_id)
-                {
-                    let title = get_pr_title(dependent_id);
-                    dependents.push((dependent_id, title, dep.category.clone(), true));
-                    queue.push_back(dependent_id);
+                        .find(|d| d.to_pr_id == current_id)?;
+
                     visited.insert(dependent_id);
-                }
-            }
+
+                    let children = build_subtree(graph, dependent_id, visited, get_pr_info, false);
+                    let (title, closed_date) = get_pr_info(dependent_id);
+
+                    Some(DependencyTreeNode {
+                        pr_id: dependent_id,
+                        title,
+                        category: dep.category.clone(),
+                        closed_date,
+                        children,
+                    })
+                })
+                .collect();
+
+            // Sort children by closed_date (newest first)
+            children.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+                (Some(da), Some(db)) => da.cmp(db),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => b.pr_id.cmp(&a.pr_id),
+            });
+            children
         }
     }
 
-    (dependencies, dependents)
+    // Check if the PR exists in the graph
+    if graph.get_node(pr_id).is_none() {
+        return Vec::new();
+    }
+
+    let mut roots = build_subtree(graph, pr_id, &mut visited, &get_pr_info, build_dependencies);
+
+    // Sort roots by closed_date (newest first, same as PR list)
+    roots.sort_by(|a, b| match (&b.closed_date, &a.closed_date) {
+        (Some(da), Some(db)) => da.cmp(db),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => b.pr_id.cmp(&a.pr_id),
+    });
+
+    roots
+}
+
+/// Renders a dependency tree with proper indentation and connectors
+fn render_dependency_tree(
+    nodes: &[DependencyTreeNode],
+    lines: &mut Vec<Line>,
+    prefix: &str,
+    is_root: bool,
+) {
+    for (idx, node) in nodes.iter().enumerate() {
+        let is_last = idx == nodes.len() - 1;
+
+        let (cat_prefix, cat_color) = match &node.category {
+            DependencyCategory::Dependent { .. } => ("[F] ", Color::Red),
+            DependencyCategory::PartiallyDependent { .. } => ("[P] ", Color::Yellow),
+            DependencyCategory::Independent => ("    ", Color::Green),
+        };
+
+        // Determine tree characters
+        let (connector, child_prefix) = if is_last {
+            ("└─ ", "   ")
+        } else {
+            ("├─ ", "│  ")
+        };
+
+        // Direct dependencies are cyan, transitive are gray
+        let color = if is_root {
+            Color::Cyan // Direct dependency
+        } else {
+            Color::DarkGray // Transitive dependency
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                cat_prefix,
+                Style::default().fg(cat_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{}{}", prefix, connector),
+                Style::default().fg(color),
+            ),
+            Span::styled(format!("#{} ", node.pr_id), Style::default().fg(color)),
+            Span::styled(truncate_title(&node.title, 60), Style::default().fg(color)),
+        ]));
+
+        // Render children with updated prefix
+        if !node.children.is_empty() {
+            let new_prefix = format!("{}{}", prefix, child_prefix);
+            render_dependency_tree(&node.children, lines, &new_prefix, false);
+        }
+    }
 }
 
 /// Truncates a title to fit within a given width.
