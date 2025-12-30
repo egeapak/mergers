@@ -43,9 +43,26 @@ impl CherryPickContinueState {
 
         // Spawn a thread to run the git cherry-pick --continue command
         thread::spawn(move || {
+            // Check if the commit would be empty by checking staged changes
+            // git diff --cached --quiet exits with 1 if there are changes, 0 if empty
+            let is_empty_commit = Command::new("git")
+                .current_dir(&repo_path)
+                .args(["diff", "--cached", "--quiet"])
+                .status()
+                .map(|s| s.success()) // success (exit 0) means no staged changes = empty
+                .unwrap_or(false);
+
+            // For empty commits, use git commit --allow-empty directly
+            // because git cherry-pick --continue doesn't support --keep-redundant-commits
+            let command_args: &[&str] = if is_empty_commit {
+                &["commit", "--allow-empty", "--no-edit"]
+            } else {
+                &["cherry-pick", "--continue", "--no-edit"]
+            };
+
             let mut child = match Command::new("git")
                 .current_dir(&repo_path)
-                .args(["cherry-pick", "--continue", "--no-edit"])
+                .args(command_args)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -62,7 +79,7 @@ impl CherryPickContinueState {
                 }
             };
 
-            // Read stdout
+            // Read stdout in a separate thread for real-time output (hooks may produce output)
             if let Some(stdout) = child.stdout.take() {
                 use std::io::{BufRead, BufReader};
                 let output_clone = output_clone.clone();
@@ -75,7 +92,7 @@ impl CherryPickContinueState {
                 });
             }
 
-            // Read stderr
+            // Read stderr in a separate thread for real-time output
             if let Some(stderr) = child.stderr.take() {
                 use std::io::{BufRead, BufReader};
                 let output_clone = output_clone.clone();
@@ -1138,5 +1155,177 @@ mod tests {
             harness.app.cherry_pick_items()[0].status,
             CherryPickStatus::Conflict
         ));
+    }
+
+    /// # Cherry Pick Continue - Empty Commit Integration
+    ///
+    /// Tests that CherryPickContinueState handles empty commits correctly.
+    /// When a conflict is resolved but results in no changes, git commit --allow-empty
+    /// is used automatically.
+    ///
+    /// ## Test Scenario
+    /// - Creates a git repo with a conflict situation
+    /// - Resolves the conflict by keeping the same content (resulting in empty diff)
+    /// - Runs CherryPickContinueState which should handle the empty commit
+    ///
+    /// ## Expected Outcome
+    /// - State completes successfully even when commit is empty
+    #[test]
+    fn test_cherry_pick_continue_empty_commit() {
+        use std::process::Command;
+        use tempfile::TempDir;
+
+        // Set up test repository
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().to_path_buf();
+
+        // Initialize git repo
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+
+        // Configure git user for commits
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.email", "test@test.com"])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "user.name", "Test User"])
+            .output()
+            .unwrap();
+
+        // Disable commit signing for test
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "commit.gpgsign", "false"])
+            .output()
+            .unwrap();
+
+        // Set default branch to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "main"])
+            .output()
+            .unwrap();
+
+        // Create initial commit with a file
+        std::fs::write(repo_path.join("file.txt"), "original content\n").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create feature branch and modify the same file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "final content\n").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Feature changes"])
+            .output()
+            .unwrap();
+
+        // Get feature commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and make the SAME content change (will cause conflict that resolves to empty)
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "final content\n").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Main also has final content"])
+            .output()
+            .unwrap();
+
+        // Start cherry-pick which will create a conflict (or succeed with empty)
+        let cherry_pick_result = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["cherry-pick", &feature_hash])
+            .output()
+            .unwrap();
+
+        if !cherry_pick_result.status.success() {
+            // We got a conflict - resolve by keeping the same content (empty result)
+            std::fs::write(repo_path.join("file.txt"), "final content\n").unwrap();
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["add", "file.txt"])
+                .output()
+                .unwrap();
+
+            // Now create the CherryPickContinueState which should handle empty commit
+            let conflicted_files = vec!["file.txt".to_string()];
+            let state = CherryPickContinueState::new(conflicted_files, repo_path.clone());
+
+            // Wait for the command to complete (with timeout)
+            let start = std::time::Instant::now();
+            let timeout = std::time::Duration::from_secs(10);
+
+            while !*state.is_complete.lock().unwrap() {
+                if start.elapsed() > timeout {
+                    panic!("Timed out waiting for cherry-pick continue to complete");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            // Verify success - this is the key assertion for empty commit handling
+            let success = *state.success.lock().unwrap();
+            let error = state.error_message.lock().unwrap().clone();
+            assert_eq!(
+                success,
+                Some(true),
+                "Cherry-pick continue should succeed with empty commit. Error: {:?}",
+                error
+            );
+
+            // Verify we're no longer in cherry-pick state
+            let status_output = Command::new("git")
+                .current_dir(&repo_path)
+                .args(["status"])
+                .output()
+                .unwrap();
+            let status = String::from_utf8_lossy(&status_output.stdout);
+            assert!(
+                !status.contains("cherry-picking"),
+                "Should no longer be in cherry-pick state"
+            );
+        }
+        // If cherry-pick succeeded directly (no conflict), that's also fine
+        // This can happen if git is smart enough to detect identical changes
     }
 }

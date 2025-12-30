@@ -469,6 +469,7 @@ pub fn setup_repository(
     }
 }
 
+#[derive(Debug)]
 pub enum CherryPickResult {
     Success,
     Conflict(Vec<String>), // List of conflicted files
@@ -550,19 +551,35 @@ pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
 }
 
 pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
-    let output = Command::new("git")
+    // Check if the commit would be empty by checking staged changes
+    // git diff --cached --quiet exits with 1 if there are changes, 0 if empty
+    let is_empty_commit = Command::new("git")
         .current_dir(repo_path)
-        .args(["cherry-pick", "--continue"])
-        .output()?;
+        .args(["diff", "--cached", "--quiet"])
+        .status()
+        .map(|s| s.success()) // success (exit 0) means no staged changes = empty
+        .unwrap_or(false);
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "Failed to continue cherry-pick: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+    // For empty commits, use git commit --allow-empty directly
+    // because git cherry-pick --continue doesn't support --keep-redundant-commits
+    let output = if is_empty_commit {
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["commit", "--allow-empty", "--no-edit"])
+            .output()?
+    } else {
+        Command::new("git")
+            .current_dir(repo_path)
+            .args(["cherry-pick", "--continue", "--no-edit"])
+            .output()?
+    };
+
+    if output.status.success() {
+        return Ok(());
     }
 
-    Ok(())
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!("Failed to continue cherry-pick: {}", stderr);
 }
 
 pub fn abort_cherry_pick(repo_path: &Path) -> Result<()> {
@@ -3903,5 +3920,173 @@ mod tests {
             !String::from_utf8_lossy(&status_after.stdout).contains("cherry-picking"),
             "Cherry-pick should be aborted"
         );
+    }
+
+    /// # Continue Cherry Pick With Empty Commit
+    ///
+    /// Tests that continue_cherry_pick handles empty commits correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict situation during cherry-pick
+    /// - Resolves the conflict by keeping the original content (making the result empty)
+    /// - Calls continue_cherry_pick which should use git commit --allow-empty
+    ///
+    /// ## Expected Outcome
+    /// - continue_cherry_pick succeeds even when the commit would be empty
+    /// - A commit is created (even if empty)
+    #[test]
+    fn test_continue_cherry_pick_empty_commit() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit with a file
+        std::fs::write(repo_path.join("file.txt"), "original content\n").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create feature branch and modify the file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "feature content\n").unwrap();
+        create_commit_with_message(&repo_path, "Feature commit");
+
+        // Get the feature commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and make the SAME change (this will cause a conflict
+        // that when resolved to feature content results in an empty diff)
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "feature content\n").unwrap();
+        create_commit_with_message(&repo_path, "Main commit with same content as feature");
+
+        // Try to cherry-pick - this will conflict because both modified the same file
+        // even though they have the same content
+        let result = cherry_pick_commit(&repo_path, &feature_hash);
+        assert!(result.is_ok());
+
+        // Check what kind of result we got
+        match result.as_ref().unwrap() {
+            CherryPickResult::Success => {
+                // If it succeeded directly (git detected no changes needed), that's fine too
+                // This can happen if git is smart enough to see the changes are identical
+            }
+            CherryPickResult::Conflict(_) => {
+                // Resolve conflict by keeping what we have (same as feature)
+                // This makes the commit "empty" because the content is already there
+                std::fs::write(repo_path.join("file.txt"), "feature content\n").unwrap();
+
+                // Stage the resolved file
+                Command::new("git")
+                    .current_dir(&repo_path)
+                    .args(["add", "file.txt"])
+                    .output()
+                    .unwrap();
+
+                // Now continue - this is where we test the empty commit handling
+                let continue_result = continue_cherry_pick(&repo_path);
+                assert!(
+                    continue_result.is_ok(),
+                    "continue_cherry_pick should succeed with empty commit: {:?}",
+                    continue_result.err()
+                );
+
+                // Verify we're no longer in cherry-pick state
+                let status = Command::new("git")
+                    .current_dir(&repo_path)
+                    .args(["status"])
+                    .output()
+                    .unwrap();
+                let status_str = String::from_utf8_lossy(&status.stdout);
+                assert!(
+                    !status_str.contains("cherry-picking"),
+                    "Should no longer be in cherry-pick state"
+                );
+            }
+            CherryPickResult::Failed(msg) => {
+                panic!("Cherry-pick failed unexpectedly: {}", msg);
+            }
+        }
+    }
+
+    /// # Continue Cherry Pick With Real Empty Commit
+    ///
+    /// Tests continue_cherry_pick when the original commit had no changes
+    /// that apply to the target branch.
+    ///
+    /// ## Test Scenario
+    /// - Creates a feature branch commit that changes a file
+    /// - On main, makes the exact same change before cherry-picking
+    /// - Cherry-pick will see the changes are already applied
+    ///
+    /// ## Expected Outcome
+    /// - Cherry-pick with --allow-empty handles this correctly
+    #[test]
+    fn test_cherry_pick_already_applied_content() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        std::fs::write(repo_path.join("file.txt"), "version 1\n").unwrap();
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create feature branch and change file
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "feature"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "version 2\n").unwrap();
+        create_commit_with_message(&repo_path, "Update to version 2");
+
+        // Get feature commit hash
+        let output = Command::new("git")
+            .current_dir(&repo_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let feature_hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Go back to main and make the SAME change independently
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        std::fs::write(repo_path.join("file.txt"), "version 2\n").unwrap();
+        create_commit_with_message(&repo_path, "Also update to version 2");
+
+        // Cherry-pick should succeed with --allow-empty (already in cherry_pick_commit)
+        let result = cherry_pick_commit(&repo_path, &feature_hash);
+        assert!(result.is_ok(), "Cherry-pick should not error: {:?}", result);
+
+        // The result should be Success (--allow-empty allows the empty commit)
+        match result.unwrap() {
+            CherryPickResult::Success => {
+                // Expected - cherry-pick succeeded with empty commit
+            }
+            CherryPickResult::Conflict(_) => {
+                // Also acceptable if git sees a conflict - we tested this path above
+            }
+            CherryPickResult::Failed(msg) => {
+                // This would indicate our --allow-empty isn't working
+                panic!(
+                    "Cherry-pick failed when content was already applied: {}",
+                    msg
+                );
+            }
+        }
     }
 }
