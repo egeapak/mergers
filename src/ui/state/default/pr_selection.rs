@@ -21,7 +21,7 @@ use ratatui::{
         ScrollbarState, Table, TableState,
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -1661,6 +1661,10 @@ impl ModeState for PullRequestSelectionState {
         let unselected_deps = compute_unselected_dependencies(app);
         let missing_deps_count = unselected_deps.len();
 
+        // Compute highlighted PR's dependencies and dependents for visual highlighting
+        let highlighted_relationships =
+            compute_highlighted_pr_relationships(app, self.table_state.selected());
+
         // Create table rows
         let rows: Vec<Row> = app
             .pull_requests()
@@ -1702,12 +1706,33 @@ impl ModeState for PullRequestSelectionState {
                 // Check if this PR is an unselected dependency (missing dependency warning)
                 let is_unselected_dep = unselected_deps.contains(&pr_with_wi.pr.id);
 
-                // Apply background highlighting for selected items, unselected deps, and search results
-                // Priority: Selected (green) > Unselected dep (orange/amber) > Search results (blue)
+                // Check if this PR is related to the highlighted PR
+                let highlighted_relationship =
+                    highlighted_relationships.get(&pr_with_wi.pr.id).copied();
+
+                // Apply background highlighting for selected items, unselected deps, dependencies, and search results
+                // Priority: Selected (green) > Unselected dep (orange/amber) > Highlighted deps/dependents > Search results (blue)
                 let row_style = if pr_with_wi.selected {
                     Style::default().bg(Color::Rgb(0, 60, 0)) // Dark green
                 } else if is_unselected_dep {
                     Style::default().bg(Color::Rgb(80, 40, 0)) // Orange/amber for missing deps
+                } else if let Some(rel_type) = highlighted_relationship {
+                    match rel_type {
+                        // Dependencies (PRs the highlighted PR depends on) - cyan/teal tint
+                        HighlightedDependencyType::DirectDependency => {
+                            Style::default().bg(Color::Rgb(0, 50, 60)) // Teal for direct dependency
+                        }
+                        HighlightedDependencyType::TransitiveDependency => {
+                            Style::default().bg(Color::Rgb(0, 30, 40)) // Darker teal for transitive
+                        }
+                        // Dependents (PRs that depend on the highlighted PR) - purple/magenta tint
+                        HighlightedDependencyType::DirectDependent => {
+                            Style::default().bg(Color::Rgb(50, 0, 50)) // Purple for direct dependent
+                        }
+                        HighlightedDependencyType::TransitiveDependent => {
+                            Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
+                        }
+                    }
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
                 } else if is_search_result {
@@ -2346,6 +2371,111 @@ fn compute_unselected_dependencies(app: &MergeApp) -> HashSet<i32> {
     }
 
     unselected_deps
+}
+
+/// Represents the dependency relationship type for row highlighting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HighlightedDependencyType {
+    /// This PR is a direct dependency of the highlighted PR (highlighted PR depends on this)
+    DirectDependency,
+    /// This PR is a transitive dependency of the highlighted PR
+    TransitiveDependency,
+    /// This PR directly depends on the highlighted PR
+    DirectDependent,
+    /// This PR transitively depends on the highlighted PR
+    TransitiveDependent,
+}
+
+/// Computes the dependencies and dependents of the currently highlighted (cursor-selected) PR.
+///
+/// Returns a HashMap mapping PR IDs to their relationship type with the highlighted PR.
+/// This is used to highlight related PRs in the table when navigating.
+fn compute_highlighted_pr_relationships(
+    app: &MergeApp,
+    highlighted_index: Option<usize>,
+) -> HashMap<i32, HighlightedDependencyType> {
+    use std::collections::VecDeque;
+
+    let mut relationships = HashMap::new();
+
+    let Some(index) = highlighted_index else {
+        return relationships;
+    };
+
+    let pull_requests = app.pull_requests();
+    let Some(highlighted_pr) = pull_requests.get(index) else {
+        return relationships;
+    };
+
+    let highlighted_pr_id = highlighted_pr.pr.id;
+
+    let Some(graph) = app.dependency_graph() else {
+        return relationships;
+    };
+
+    // Get valid PR IDs (only PRs in our list)
+    let valid_pr_ids: HashSet<i32> = pull_requests.iter().map(|pr| pr.pr.id).collect();
+
+    // Compute dependencies (PRs the highlighted PR depends on)
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Some(node) = graph.get_node(highlighted_pr_id) {
+        // Add direct dependencies
+        for dep in &node.dependencies {
+            if valid_pr_ids.contains(&dep.to_pr_id) && !visited.contains(&dep.to_pr_id) {
+                relationships.insert(dep.to_pr_id, HighlightedDependencyType::DirectDependency);
+                queue.push_back(dep.to_pr_id);
+                visited.insert(dep.to_pr_id);
+            }
+        }
+    }
+
+    // BFS for transitive dependencies
+    while let Some(current_id) = queue.pop_front() {
+        if let Some(node) = graph.get_node(current_id) {
+            for dep in &node.dependencies {
+                if valid_pr_ids.contains(&dep.to_pr_id) && !visited.contains(&dep.to_pr_id) {
+                    relationships.insert(
+                        dep.to_pr_id,
+                        HighlightedDependencyType::TransitiveDependency,
+                    );
+                    queue.push_back(dep.to_pr_id);
+                    visited.insert(dep.to_pr_id);
+                }
+            }
+        }
+    }
+
+    // Compute dependents (PRs that depend on the highlighted PR)
+    visited.clear();
+
+    if let Some(node) = graph.get_node(highlighted_pr_id) {
+        // Add direct dependents
+        for &dependent_id in &node.dependents {
+            if valid_pr_ids.contains(&dependent_id) && !visited.contains(&dependent_id) {
+                relationships.insert(dependent_id, HighlightedDependencyType::DirectDependent);
+                queue.push_back(dependent_id);
+                visited.insert(dependent_id);
+            }
+        }
+    }
+
+    // BFS for transitive dependents
+    while let Some(current_id) = queue.pop_front() {
+        if let Some(node) = graph.get_node(current_id) {
+            for &dependent_id in &node.dependents {
+                if valid_pr_ids.contains(&dependent_id) && !visited.contains(&dependent_id) {
+                    relationships
+                        .insert(dependent_id, HighlightedDependencyType::TransitiveDependent);
+                    queue.push_back(dependent_id);
+                    visited.insert(dependent_id);
+                }
+            }
+        }
+    }
+
+    relationships
 }
 
 #[cfg(test)]
