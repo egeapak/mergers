@@ -15,8 +15,8 @@ use ratatui::{Terminal, backend::TestBackend};
 use std::{path::PathBuf, sync::Arc};
 
 /// Fixed terminal dimensions for consistent snapshot testing
-pub const TEST_TERMINAL_WIDTH: u16 = 80;
-pub const TEST_TERMINAL_HEIGHT: u16 = 30;
+pub const TEST_TERMINAL_WIDTH: u16 = 120;
+pub const TEST_TERMINAL_HEIGHT: u16 = 50;
 
 /// Typed initial state for the test harness.
 ///
