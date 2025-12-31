@@ -957,3 +957,58 @@ pub fn create_test_work_item_states() -> Vec<String> {
         "Removed".to_string(),
     ]
 }
+
+/// Create a test dependency graph for PR highlighting tests.
+///
+/// Creates a graph with the following dependencies:
+/// - PR 100 depends on PR 101 (direct dependency)
+/// - PR 101 depends on PR 102 (so PR 100 transitively depends on PR 102)
+/// - PR 102 is independent (no dependencies)
+///
+/// This means:
+/// - When PR 100 is highlighted: PR 101 is direct dep, PR 102 is transitive dep
+/// - When PR 101 is highlighted: PR 102 is direct dep, PR 100 is direct dependent
+/// - When PR 102 is highlighted: PR 101 is direct dependent, PR 100 is transitive dependent
+pub fn create_test_dependency_graph() -> crate::core::operations::PRDependencyGraph {
+    use crate::core::operations::{
+        DependencyCategory, PRDependency, PRDependencyGraph, PRDependencyNode,
+    };
+
+    let mut graph = PRDependencyGraph::new();
+
+    // PR 100: depends on PR 101
+    let mut node_100 = PRDependencyNode::new(100, "Fix login bug".to_string(), false);
+    node_100.dependencies.push(PRDependency {
+        from_pr_id: 100,
+        to_pr_id: 101,
+        category: DependencyCategory::PartiallyDependent {
+            shared_files: vec!["src/auth.rs".to_string()],
+        },
+    });
+    node_100.dependents = vec![]; // No one depends on PR 100
+
+    // PR 101: depends on PR 102, is depended on by PR 100
+    let mut node_101 =
+        PRDependencyNode::new(101, "Update user profile page design".to_string(), false);
+    node_101.dependencies.push(PRDependency {
+        from_pr_id: 101,
+        to_pr_id: 102,
+        category: DependencyCategory::Dependent {
+            shared_files: vec!["src/user.rs".to_string()],
+            overlapping_files: vec![],
+        },
+    });
+    node_101.dependents = vec![100]; // PR 100 depends on this
+
+    // PR 102: independent, but PR 101 depends on it
+    let mut node_102 = PRDependencyNode::new(102, "Add analytics tracking".to_string(), false);
+    node_102.dependencies = vec![]; // No dependencies
+    node_102.dependents = vec![101]; // PR 101 depends on this
+
+    graph.add_node(node_100);
+    graph.add_node(node_101);
+    graph.add_node(node_102);
+    graph.topological_order = vec![102, 101, 100]; // Order: dependencies first
+
+    graph
+}
