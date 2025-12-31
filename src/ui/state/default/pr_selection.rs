@@ -2374,7 +2374,7 @@ fn compute_unselected_dependencies(app: &MergeApp) -> HashSet<i32> {
 }
 
 /// Represents the dependency relationship type for row highlighting.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HighlightedDependencyType {
     /// This PR is a direct dependency of the highlighted PR (highlighted PR depends on this)
     DirectDependency,
@@ -4100,5 +4100,262 @@ mod tests {
         );
         assert_eq!(format_deps_text(999, 0), Some("999 P".to_string()));
         assert_eq!(format_deps_text(0, 1000), Some("1000 F".to_string()));
+    }
+
+    // ========================================================================
+    // Dependency Highlighting Tests
+    // ========================================================================
+
+    /// # Compute Highlighted PR Relationships - No Highlighted PR
+    ///
+    /// Tests that compute_highlighted_pr_relationships returns empty when no PR is highlighted.
+    ///
+    /// ## Test Scenario
+    /// - Creates an app with PRs and a dependency graph
+    /// - Calls compute_highlighted_pr_relationships with None as the highlighted index
+    ///
+    /// ## Expected Outcome
+    /// - Should return an empty HashMap
+    #[test]
+    fn test_highlighted_relationships_no_selection() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness
+            .merge_app_mut()
+            .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+        let relationships = compute_highlighted_pr_relationships(harness.merge_app(), None);
+        assert!(relationships.is_empty());
+    }
+
+    /// # Compute Highlighted PR Relationships - Direct Dependencies
+    ///
+    /// Tests that compute_highlighted_pr_relationships correctly identifies direct dependencies.
+    ///
+    /// ## Test Scenario
+    /// - Creates an app with PRs and a dependency graph where PR 100 depends on PR 101
+    /// - Highlights PR 100 (index 0)
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should be marked as DirectDependency
+    /// - PR 102 should be marked as TransitiveDependency (PR 100 -> PR 101 -> PR 102)
+    #[test]
+    fn test_highlighted_relationships_direct_dependencies() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness
+            .merge_app_mut()
+            .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+        // PR 100 is at index 0, it depends on PR 101
+        let relationships = compute_highlighted_pr_relationships(harness.merge_app(), Some(0));
+
+        assert_eq!(
+            relationships.get(&101),
+            Some(&HighlightedDependencyType::DirectDependency)
+        );
+        assert_eq!(
+            relationships.get(&102),
+            Some(&HighlightedDependencyType::TransitiveDependency)
+        );
+        // PR 100 should not be in the relationships (it's the highlighted one)
+        assert!(!relationships.contains_key(&100));
+    }
+
+    /// # Compute Highlighted PR Relationships - Direct Dependents
+    ///
+    /// Tests that compute_highlighted_pr_relationships correctly identifies direct dependents.
+    ///
+    /// ## Test Scenario
+    /// - Creates an app with PRs and a dependency graph
+    /// - Highlights PR 102 (index 2), which has PR 101 depending on it
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should be marked as DirectDependent
+    /// - PR 100 should be marked as TransitiveDependent (PR 100 -> PR 101 -> PR 102)
+    #[test]
+    fn test_highlighted_relationships_direct_dependents() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness
+            .merge_app_mut()
+            .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+        // PR 102 is at index 2, PR 101 depends on it
+        let relationships = compute_highlighted_pr_relationships(harness.merge_app(), Some(2));
+
+        assert_eq!(
+            relationships.get(&101),
+            Some(&HighlightedDependencyType::DirectDependent)
+        );
+        assert_eq!(
+            relationships.get(&100),
+            Some(&HighlightedDependencyType::TransitiveDependent)
+        );
+        // PR 102 should not be in the relationships
+        assert!(!relationships.contains_key(&102));
+    }
+
+    /// # Compute Highlighted PR Relationships - Middle PR (Both Deps and Dependents)
+    ///
+    /// Tests a PR that has both dependencies and dependents.
+    ///
+    /// ## Test Scenario
+    /// - Highlights PR 101 (index 1), which depends on PR 102 and is depended on by PR 100
+    ///
+    /// ## Expected Outcome
+    /// - PR 102 should be marked as DirectDependency
+    /// - PR 100 should be marked as DirectDependent
+    #[test]
+    fn test_highlighted_relationships_middle_pr() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        harness
+            .merge_app_mut()
+            .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+        // PR 101 is at index 1
+        let relationships = compute_highlighted_pr_relationships(harness.merge_app(), Some(1));
+
+        assert_eq!(
+            relationships.get(&102),
+            Some(&HighlightedDependencyType::DirectDependency)
+        );
+        assert_eq!(
+            relationships.get(&100),
+            Some(&HighlightedDependencyType::DirectDependent)
+        );
+    }
+
+    /// # Compute Highlighted PR Relationships - No Dependency Graph
+    ///
+    /// Tests behavior when no dependency graph is available.
+    ///
+    /// ## Test Scenario
+    /// - Creates an app with PRs but no dependency graph
+    /// - Highlights a PR
+    ///
+    /// ## Expected Outcome
+    /// - Should return an empty HashMap
+    #[test]
+    fn test_highlighted_relationships_no_graph() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        // Don't set a dependency graph
+
+        let relationships = compute_highlighted_pr_relationships(harness.merge_app(), Some(0));
+        assert!(relationships.is_empty());
+    }
+
+    /// # PR Selection State - Dependency Highlighting Display
+    ///
+    /// Tests that dependency highlighting is visible in the PR selection display.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dependency graph
+    /// - Highlights PR 100 (which depends on PR 101 and transitively on PR 102)
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should have teal background (direct dependency)
+    /// - PR 102 should have darker teal background (transitive dependency)
+    /// - The first row (PR 100) should be highlighted as the current selection
+    #[test]
+    fn test_pr_selection_dependency_highlighting() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0)); // Highlight PR 100
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("dependency_highlighting_first_pr", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Dependent Highlighting Display
+    ///
+    /// Tests that dependent highlighting is visible in the PR selection display.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dependency graph
+    /// - Highlights PR 102 (which has PR 101 and PR 100 depending on it)
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should have purple background (direct dependent)
+    /// - PR 100 should have darker purple background (transitive dependent)
+    /// - The third row (PR 102) should be highlighted as the current selection
+    #[test]
+    fn test_pr_selection_dependent_highlighting() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(2)); // Highlight PR 102
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("dependency_highlighting_last_pr", harness.backend());
+        });
+    }
+
+    /// # PR Selection State - Middle PR Highlighting
+    ///
+    /// Tests highlighting when middle PR is selected (has both deps and dependents).
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with dependency graph
+    /// - Highlights PR 101 (which depends on PR 102 and is depended on by PR 100)
+    /// - Renders the display
+    ///
+    /// ## Expected Outcome
+    /// - PR 102 should have teal background (direct dependency)
+    /// - PR 100 should have purple background (direct dependent)
+    /// - The second row (PR 101) should be highlighted as the current selection
+    #[test]
+    fn test_pr_selection_middle_pr_highlighting() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(1)); // Highlight PR 101
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("dependency_highlighting_middle_pr", harness.backend());
+        });
     }
 }
