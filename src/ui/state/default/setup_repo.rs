@@ -14,16 +14,152 @@ use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
+/// Represents the individual steps in the repository setup wizard
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WizardStep {
+    FetchDetails,
+    CloneOrWorktree,
+    CreateBranch,
+    InitializeState,
+}
+
+impl WizardStep {
+    /// Returns the display name for this step
+    fn display_name(&self, is_clone_mode: bool) -> &'static str {
+        match self {
+            WizardStep::FetchDetails => "Fetch Details",
+            WizardStep::CloneOrWorktree => {
+                if is_clone_mode {
+                    "Clone Repository"
+                } else {
+                    "Create Worktree"
+                }
+            }
+            WizardStep::CreateBranch => "Create Branch",
+            WizardStep::InitializeState => "Initialize State",
+        }
+    }
+
+    /// Returns the progress message for this step
+    fn progress_message(&self, is_clone_mode: bool) -> &'static str {
+        match self {
+            WizardStep::FetchDetails => "Fetching repository details...",
+            WizardStep::CloneOrWorktree => {
+                if is_clone_mode {
+                    "Cloning repository..."
+                } else {
+                    "Creating worktree..."
+                }
+            }
+            WizardStep::CreateBranch => "Creating branch...",
+            WizardStep::InitializeState => "Initializing state file...",
+        }
+    }
+}
+
+/// Status of a wizard step
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Skipped,
+}
+
+/// Tracks progress through the setup wizard steps
+#[derive(Debug, Clone)]
+pub struct WizardProgress {
+    /// Whether we're in clone mode (vs worktree mode)
+    is_clone_mode: bool,
+    /// Status of fetch details step
+    fetch_details: StepStatus,
+    /// Status of clone/worktree step
+    clone_or_worktree: StepStatus,
+    /// Status of create branch step
+    create_branch: StepStatus,
+    /// Status of initialize state step
+    initialize_state: StepStatus,
+    /// Current step being executed
+    current_step: Option<WizardStep>,
+}
+
+impl WizardProgress {
+    /// Creates a new wizard progress tracker
+    pub fn new(is_clone_mode: bool) -> Self {
+        Self {
+            is_clone_mode,
+            fetch_details: if is_clone_mode {
+                StepStatus::Pending
+            } else {
+                StepStatus::Skipped
+            },
+            clone_or_worktree: StepStatus::Pending,
+            create_branch: StepStatus::Pending,
+            initialize_state: StepStatus::Pending,
+            current_step: None,
+        }
+    }
+
+    /// Returns the list of steps with their status
+    pub fn steps(&self) -> Vec<(WizardStep, StepStatus)> {
+        let mut steps = Vec::new();
+        if self.is_clone_mode {
+            steps.push((WizardStep::FetchDetails, self.fetch_details));
+        }
+        steps.push((WizardStep::CloneOrWorktree, self.clone_or_worktree));
+        steps.push((WizardStep::CreateBranch, self.create_branch));
+        steps.push((WizardStep::InitializeState, self.initialize_state));
+        steps
+    }
+
+    /// Sets a step to in-progress status
+    pub fn start_step(&mut self, step: WizardStep) {
+        self.current_step = Some(step);
+        match step {
+            WizardStep::FetchDetails => self.fetch_details = StepStatus::InProgress,
+            WizardStep::CloneOrWorktree => self.clone_or_worktree = StepStatus::InProgress,
+            WizardStep::CreateBranch => self.create_branch = StepStatus::InProgress,
+            WizardStep::InitializeState => self.initialize_state = StepStatus::InProgress,
+        }
+    }
+
+    /// Marks a step as completed
+    pub fn complete_step(&mut self, step: WizardStep) {
+        match step {
+            WizardStep::FetchDetails => self.fetch_details = StepStatus::Completed,
+            WizardStep::CloneOrWorktree => self.clone_or_worktree = StepStatus::Completed,
+            WizardStep::CreateBranch => self.create_branch = StepStatus::Completed,
+            WizardStep::InitializeState => self.initialize_state = StepStatus::Completed,
+        }
+        if self.current_step == Some(step) {
+            self.current_step = None;
+        }
+    }
+
+    /// Returns the current step's progress message
+    pub fn current_message(&self) -> String {
+        match self.current_step {
+            Some(step) => step.progress_message(self.is_clone_mode).to_string(),
+            None => "Initializing...".to_string(),
+        }
+    }
+
+    /// Returns whether in clone mode
+    pub fn is_clone_mode(&self) -> bool {
+        self.is_clone_mode
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SetupState {
     Initializing,
-    InProgress(String),
+    InProgress(WizardProgress),
     Error {
         error: git::RepositorySetupError,
         message: String,
@@ -33,6 +169,8 @@ pub enum SetupState {
 pub struct SetupRepoState {
     state: SetupState,
     started: bool,
+    /// Cached mode detection (None until first run)
+    is_clone_mode: Option<bool>,
 }
 
 impl Default for SetupRepoState {
@@ -46,11 +184,36 @@ impl SetupRepoState {
         Self {
             state: SetupState::Initializing,
             started: false,
+            is_clone_mode: None,
         }
     }
 
-    fn set_status(&mut self, status: String) {
-        self.state = SetupState::InProgress(status);
+    /// Initialize the wizard progress tracker
+    fn init_progress(&mut self, is_clone_mode: bool) {
+        self.is_clone_mode = Some(is_clone_mode);
+        self.state = SetupState::InProgress(WizardProgress::new(is_clone_mode));
+    }
+
+    /// Get mutable reference to progress if in progress state
+    fn progress_mut(&mut self) -> Option<&mut WizardProgress> {
+        match &mut self.state {
+            SetupState::InProgress(progress) => Some(progress),
+            _ => None,
+        }
+    }
+
+    /// Start a wizard step
+    fn start_step(&mut self, step: WizardStep) {
+        if let Some(progress) = self.progress_mut() {
+            progress.start_step(step);
+        }
+    }
+
+    /// Complete a wizard step
+    fn complete_step(&mut self, step: WizardStep) {
+        if let Some(progress) = self.progress_mut() {
+            progress.complete_step(step);
+        }
     }
 
     fn set_error(&mut self, error: git::RepositorySetupError) {
@@ -81,11 +244,18 @@ impl SetupRepoState {
     }
 
     async fn setup_repository(&mut self, app: &mut MergeApp) -> StateChange<MergeState> {
-        // Get SSH URL if needed
-        let ssh_url = if app.local_repo().is_none() {
-            self.set_status("Fetching repository details...".to_string());
+        // Determine mode and initialize progress tracker
+        let is_clone_mode = app.local_repo().is_none();
+        self.init_progress(is_clone_mode);
+
+        // Get SSH URL if needed (Step 1 for clone mode)
+        let ssh_url = if is_clone_mode {
+            self.start_step(WizardStep::FetchDetails);
             match app.client().fetch_repo_details().await {
-                Ok(details) => details.ssh_url,
+                Ok(details) => {
+                    self.complete_step(WizardStep::FetchDetails);
+                    details.ssh_url
+                }
                 Err(e) => {
                     app.set_error_message(Some(format!(
                         "Failed to fetch repository details: {}",
@@ -98,13 +268,8 @@ impl SetupRepoState {
             String::new()
         };
 
-        // Get status message before any setup operations
-        let status_msg = if app.local_repo().is_some() {
-            "Creating worktree...".to_string()
-        } else {
-            "Cloning repository...".to_string()
-        };
-        self.set_status(status_msg);
+        // Step 2: Clone or create worktree
+        self.start_step(WizardStep::CloneOrWorktree);
 
         // Extract ALL immutable data before any mutations
         let version: String;
@@ -138,6 +303,8 @@ impl SetupRepoState {
         // Now handle the result with mutable access to app
         match setup_result {
             Ok(setup) => {
+                self.complete_step(WizardStep::CloneOrWorktree);
+
                 match setup {
                     git::RepositorySetup::Local(path) => {
                         // Store the base repo path for cleanup (worktree case)
@@ -170,8 +337,8 @@ impl SetupRepoState {
                 } else {
                     *app.cherry_pick_items_mut() = cherry_pick_items;
 
-                    // Create branch for cherry-picking
-                    self.set_status("Creating branch...".to_string());
+                    // Step 3: Create branch for cherry-picking
+                    self.start_step(WizardStep::CreateBranch);
                     let branch_name = format!("patch/{}-{}", target_branch, version);
 
                     if let Err(e) =
@@ -180,8 +347,10 @@ impl SetupRepoState {
                         app.set_error_message(Some(format!("Failed to create branch: {}", e)));
                         StateChange::Change(MergeState::Error(ErrorState::new()))
                     } else {
-                        // Create state file for cross-mode resume support
-                        self.set_status("Initializing state file...".to_string());
+                        self.complete_step(WizardStep::CreateBranch);
+
+                        // Step 4: Create state file for cross-mode resume support
+                        self.start_step(WizardStep::InitializeState);
                         let repo_path = app.repo_path().as_ref().unwrap().to_path_buf();
                         let base_repo_path = app.worktree.base_repo_path.clone();
                         let is_worktree = base_repo_path.is_some();
@@ -194,6 +363,7 @@ impl SetupRepoState {
                             // Set initial phase to CherryPicking
                             let _ = app.update_state_phase(MergePhase::CherryPicking);
                         }
+                        self.complete_step(WizardStep::InitializeState);
 
                         StateChange::Change(MergeState::CherryPick(CherryPickState::new()))
                     }
@@ -215,7 +385,7 @@ impl SetupRepoState {
 
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
-                self.set_status("Force deleting branch...".to_string());
+                // Force delete the branch before retrying
                 if let Some(repo_path) = app.local_repo()
                     && let Err(e) =
                         git::force_delete_branch(std::path::Path::new(repo_path), &branch_name)
@@ -225,7 +395,7 @@ impl SetupRepoState {
                 }
             }
             git::RepositorySetupError::WorktreeExists(_) => {
-                self.set_status("Force removing worktree...".to_string());
+                // Force remove the worktree before retrying
                 if let Some(repo_path) = app.local_repo()
                     && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
@@ -248,43 +418,202 @@ impl SetupRepoState {
 // ModeState Implementation
 // ============================================================================
 
+/// Renders the wizard step indicator showing all steps with their status
+fn render_step_indicator(f: &mut Frame, area: Rect, progress: &WizardProgress) {
+    let steps = progress.steps();
+    let total_steps = steps.len();
+
+    // Build the step indicator spans
+    let mut spans: Vec<Span> = Vec::new();
+
+    for (i, (step, status)) in steps.iter().enumerate() {
+        let step_num = i + 1;
+        let step_name = step.display_name(progress.is_clone_mode());
+
+        // Choose style and symbol based on status
+        let (symbol, style) = match status {
+            StepStatus::Completed => (
+                "✓",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            StepStatus::InProgress => (
+                "●",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            StepStatus::Pending => ("○", Style::default().fg(Color::DarkGray)),
+            StepStatus::Skipped => ("−", Style::default().fg(Color::DarkGray)),
+        };
+
+        // Number style matches the status
+        let num_style = match status {
+            StepStatus::Completed => Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+            StepStatus::InProgress => Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            _ => Style::default().fg(Color::DarkGray),
+        };
+
+        // Step name style
+        let name_style = match status {
+            StepStatus::Completed => Style::default().fg(Color::Green),
+            StepStatus::InProgress => Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            _ => Style::default().fg(Color::DarkGray),
+        };
+
+        // Add step: "1 ✓ Fetch Details"
+        spans.push(Span::styled(format!("{}", step_num), num_style));
+        spans.push(Span::styled(format!(" {} ", symbol), style));
+        spans.push(Span::styled(step_name.to_string(), name_style));
+
+        // Add connector between steps (except last)
+        if i < total_steps - 1 {
+            spans.push(Span::styled("  →  ", Style::default().fg(Color::DarkGray)));
+        }
+    }
+
+    let line = Line::from(spans);
+    let paragraph = Paragraph::new(line).alignment(Alignment::Center);
+    f.render_widget(paragraph, area);
+}
+
+/// Renders the current step progress details
+fn render_current_step_progress(f: &mut Frame, area: Rect, progress: &WizardProgress) {
+    let message = progress.current_message();
+
+    // Build content with current step message
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            message,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    // Add a visual spinner/progress indicator
+    lines.push(Line::from(Span::styled(
+        "Please wait...",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let paragraph = Paragraph::new(lines).alignment(Alignment::Center).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Current Step")
+            .title_style(Style::default().fg(Color::Cyan)),
+    );
+
+    f.render_widget(paragraph, area);
+}
+
 #[async_trait]
 impl ModeState for SetupRepoState {
     type Mode = MergeState;
 
-    fn ui(&mut self, f: &mut Frame, _app: &MergeApp) {
+    fn ui(&mut self, f: &mut Frame, app: &MergeApp) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(2)
-            .constraints([Constraint::Min(0)])
+            .constraints([
+                Constraint::Length(3), // Title
+                Constraint::Length(3), // Step indicator
+                Constraint::Min(5),    // Current step progress
+            ])
             .split(f.area());
+
+        // Title - color changes based on state
+        let (title_text, title_color) = match &self.state {
+            SetupState::Error { .. } => ("Repository Setup - Error", Color::Red),
+            _ => ("Repository Setup", Color::Green),
+        };
+        let title = Paragraph::new(title_text)
+            .style(
+                Style::default()
+                    .fg(title_color)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(title, chunks[0]);
 
         match &self.state {
             SetupState::Initializing => {
-                let status = Paragraph::new("Initializing repository...")
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Repository Setup"),
-                    )
-                    .alignment(Alignment::Center);
+                // Show default step indicator for initial state
+                // Determine mode from app context
+                let is_clone_mode = app.local_repo().is_none();
+                let progress = WizardProgress::new(is_clone_mode);
 
-                f.render_widget(status, chunks[0]);
+                // Step indicator
+                let step_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Steps")
+                    .title_style(Style::default().fg(Color::Cyan));
+                let inner_area = step_block.inner(chunks[1]);
+                f.render_widget(step_block, chunks[1]);
+                render_step_indicator(f, inner_area, &progress);
+
+                // Progress area
+                let status = Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Initializing...",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Please wait...",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ])
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Current Step")
+                        .title_style(Style::default().fg(Color::Cyan)),
+                );
+                f.render_widget(status, chunks[2]);
             }
-            SetupState::InProgress(message) => {
-                let status = Paragraph::new(message.as_str())
-                    .style(Style::default().fg(Color::Yellow))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Repository Setup"),
-                    )
-                    .alignment(Alignment::Center);
+            SetupState::InProgress(progress) => {
+                // Step indicator
+                let step_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Steps")
+                    .title_style(Style::default().fg(Color::Cyan));
+                let inner_area = step_block.inner(chunks[1]);
+                f.render_widget(step_block, chunks[1]);
+                render_step_indicator(f, inner_area, progress);
 
-                f.render_widget(status, chunks[0]);
+                // Current step progress
+                render_current_step_progress(f, chunks[2], progress);
             }
             SetupState::Error { message, .. } => {
+                // Show step indicator with error state
+                let is_clone_mode = self.is_clone_mode.unwrap_or(app.local_repo().is_none());
+                let progress = WizardProgress::new(is_clone_mode);
+
+                // Step indicator
+                let step_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Steps")
+                    .title_style(Style::default().fg(Color::Red));
+                let inner_area = step_block.inner(chunks[1]);
+                f.render_widget(step_block, chunks[1]);
+                render_step_indicator(f, inner_area, &progress);
+
+                // Error message
                 let key_style = Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD);
@@ -343,13 +672,13 @@ impl ModeState for SetupRepoState {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title("Repository Setup Error")
+                            .title("Error")
                             .title_style(Style::default().fg(Color::Red)),
                     )
                     .wrap(Wrap { trim: true })
                     .alignment(Alignment::Left);
 
-                f.render_widget(error_paragraph, chunks[0]);
+                f.render_widget(error_paragraph, chunks[2]);
             }
         }
     }
@@ -426,18 +755,48 @@ mod tests {
         });
     }
 
-    /// # Setup Repo State - Cloning
+    /// # Setup Repo State - Cloning (Fetch Details Step)
+    ///
+    /// Tests the repository setup screen during fetching details (clone mode).
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with clone mode progress
+    /// - Sets current step to FetchDetails
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display wizard steps at top with FetchDetails highlighted
+    /// - Should show "Fetching repository details..." message
+    #[test]
+    fn test_setup_repo_fetch_details() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut inner_state = SetupRepoState::new();
+            let mut progress = WizardProgress::new(true); // clone mode
+            progress.start_step(WizardStep::FetchDetails);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(true);
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("fetch_details", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Cloning Repository
     ///
     /// Tests the repository setup screen during cloning.
     ///
     /// ## Test Scenario
-    /// - Creates a setup repo state
-    /// - Sets state to InProgress with cloning message
+    /// - Creates a setup repo state with clone mode progress
+    /// - Sets current step to CloneOrWorktree after completing FetchDetails
     /// - Renders the state
     ///
     /// ## Expected Outcome
-    /// - Should display "Cloning repository..." message
-    /// - Should maintain consistent layout
+    /// - Should display wizard steps with FetchDetails completed and CloneOrWorktree active
+    /// - Should show "Cloning repository..." message
     #[test]
     fn test_setup_repo_cloning() {
         with_settings_and_module_path(module_path!(), || {
@@ -445,7 +804,11 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut inner_state = SetupRepoState::new();
-            inner_state.state = SetupState::InProgress("Cloning repository...".to_string());
+            let mut progress = WizardProgress::new(true); // clone mode
+            progress.complete_step(WizardStep::FetchDetails);
+            progress.start_step(WizardStep::CloneOrWorktree);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(true);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
 
@@ -458,12 +821,13 @@ mod tests {
     /// Tests the repository setup screen during worktree creation.
     ///
     /// ## Test Scenario
-    /// - Creates a setup repo state
-    /// - Sets state to InProgress with worktree message
+    /// - Creates a setup repo state with worktree mode progress
+    /// - Sets current step to CloneOrWorktree (worktree mode)
     /// - Renders the state
     ///
     /// ## Expected Outcome
-    /// - Should display "Creating worktree..." message
+    /// - Should display wizard steps with CloneOrWorktree active (no FetchDetails step)
+    /// - Should show "Creating worktree..." message
     #[test]
     fn test_setup_repo_creating_worktree() {
         with_settings_and_module_path(module_path!(), || {
@@ -471,11 +835,77 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut inner_state = SetupRepoState::new();
-            inner_state.state = SetupState::InProgress("Creating worktree...".to_string());
+            let mut progress = WizardProgress::new(false); // worktree mode
+            progress.start_step(WizardStep::CloneOrWorktree);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
 
             assert_snapshot!("creating_worktree", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Creating Branch
+    ///
+    /// Tests the repository setup screen during branch creation.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with worktree mode progress
+    /// - Sets current step to CreateBranch after completing previous steps
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display wizard steps with previous steps completed and CreateBranch active
+    /// - Should show "Creating branch..." message
+    #[test]
+    fn test_setup_repo_creating_branch() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut inner_state = SetupRepoState::new();
+            let mut progress = WizardProgress::new(false); // worktree mode
+            progress.complete_step(WizardStep::CloneOrWorktree);
+            progress.start_step(WizardStep::CreateBranch);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(false);
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("creating_branch", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Initializing State File
+    ///
+    /// Tests the repository setup screen during state file initialization.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with worktree mode progress
+    /// - Sets current step to InitializeState after completing previous steps
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display wizard steps with previous steps completed and InitializeState active
+    /// - Should show "Initializing state file..." message
+    #[test]
+    fn test_setup_repo_initializing_state() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut inner_state = SetupRepoState::new();
+            let mut progress = WizardProgress::new(false); // worktree mode
+            progress.complete_step(WizardStep::CloneOrWorktree);
+            progress.complete_step(WizardStep::CreateBranch);
+            progress.start_step(WizardStep::InitializeState);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(false);
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("initializing_state", harness.backend());
         });
     }
 
@@ -653,57 +1083,5 @@ mod tests {
         let result =
             ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, StateChange::Keep));
-    }
-
-    /// # Setup Repo State - Creating Branch Status
-    ///
-    /// Tests the creating branch status message.
-    ///
-    /// ## Test Scenario
-    /// - Creates a setup repo state
-    /// - Sets status to "Creating branch..."
-    /// - Renders the state
-    ///
-    /// ## Expected Outcome
-    /// - Should display "Creating branch..." message
-    #[test]
-    fn test_setup_repo_creating_branch() {
-        with_settings_and_module_path(module_path!(), || {
-            let config = create_test_config_default();
-            let mut harness = TuiTestHarness::with_config(config);
-
-            let mut inner_state = SetupRepoState::new();
-            inner_state.set_status("Creating branch...".to_string());
-            let mut state = MergeState::SetupRepo(inner_state);
-            harness.render_merge_state(&mut state);
-
-            assert_snapshot!("creating_branch", harness.backend());
-        });
-    }
-
-    /// # Setup Repo State - Fetching Repo Details Status
-    ///
-    /// Tests the fetching repository details status message.
-    ///
-    /// ## Test Scenario
-    /// - Creates a setup repo state
-    /// - Sets status to "Fetching repository details..."
-    /// - Renders the state
-    ///
-    /// ## Expected Outcome
-    /// - Should display "Fetching repository details..." message
-    #[test]
-    fn test_setup_repo_fetching_details() {
-        with_settings_and_module_path(module_path!(), || {
-            let config = create_test_config_default();
-            let mut harness = TuiTestHarness::with_config(config);
-
-            let mut inner_state = SetupRepoState::new();
-            inner_state.set_status("Fetching repository details...".to_string());
-            let mut state = MergeState::SetupRepo(inner_state);
-            harness.render_merge_state(&mut state);
-
-            assert_snapshot!("fetching_details", harness.backend());
-        });
     }
 }

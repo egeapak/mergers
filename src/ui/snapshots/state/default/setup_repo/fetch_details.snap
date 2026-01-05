@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/setup_repo.rs
-assertion_line: 878
+assertion_line: 786
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -9,11 +9,11 @@ expression: harness.backend()
 "  │                                                 Repository Setup                                                 │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Steps─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
-"  │                        1 ✓ Create Worktree  →  2 ● Create Branch  →  3 ○ Initialize State                        │  "
+"  │             1 ● Fetch Details  →  2 ○ Clone Repository  →  3 ○ Create Branch  →  4 ○ Initialize State            │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Current Step──────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
 "  │                                                                                                                  │  "
-"  │                                                Creating branch...                                                │  "
+"  │                                          Fetching repository details...                                          │  "
 "  │                                                                                                                  │  "
 "  │                                                  Please wait...                                                  │  "
 "  │                                                                                                                  │  "
