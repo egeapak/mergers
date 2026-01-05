@@ -4947,4 +4947,184 @@ mod tests {
         // Note: Can't test async process_key here, but the logic is covered in the impl
         assert!(!state.show_dependency_dialog);
     }
+
+    /// # PR Selection - Settings Dialog Display
+    ///
+    /// Tests that the settings dialog renders correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state with settings dialog open
+    /// - Renders the state
+    /// - Compares against snapshot
+    ///
+    /// ## Expected Outcome
+    /// - Settings dialog is rendered as an overlay
+    /// - Both settings are shown with checkboxes
+    #[test]
+    fn test_pr_selection_settings_dialog() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 0;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Settings Dialog Second Item Selected
+    ///
+    /// Tests that the settings dialog highlights the second item when selected.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog with second item selected
+    /// - Renders the state
+    /// - Verifies second item is highlighted
+    ///
+    /// ## Expected Outcome
+    /// - Second settings item is visually highlighted
+    #[test]
+    fn test_pr_selection_settings_dialog_second_selection() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 1;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog_second_selection", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Settings Dialog Key Handling
+    ///
+    /// Tests settings dialog keyboard navigation.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Navigates with arrow keys
+    /// - Verifies selection changes
+    ///
+    /// ## Expected Outcome
+    /// - Arrow keys navigate between settings
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_navigation() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog
+        state.show_settings_dialog = true;
+        state.settings_selection = 0;
+
+        // Navigate down
+        ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 1);
+
+        // Navigate up
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 0);
+
+        // Can't go below 0
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 0);
+    }
+
+    /// # PR Selection - Settings Dialog Toggle
+    ///
+    /// Tests toggling settings in the dialog.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Toggles a setting with Space
+    /// - Verifies setting changed in app
+    ///
+    /// ## Expected Outcome
+    /// - Settings can be toggled with Space or Enter
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_toggle() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog and toggle first setting
+        state.show_settings_dialog = true;
+        state.settings_selection = 0;
+
+        let initial = harness.merge_app().show_dependency_highlights();
+
+        // Toggle with space
+        ModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+
+        assert_eq!(harness.merge_app().show_dependency_highlights(), !initial);
+
+        // Toggle back with Enter
+        ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+
+        assert_eq!(harness.merge_app().show_dependency_highlights(), initial);
+    }
+
+    /// # PR Selection - Settings Dialog Close with Escape
+    ///
+    /// Tests closing settings dialog with Escape.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Presses Escape
+    /// - Verifies dialog closes
+    ///
+    /// ## Expected Outcome
+    /// - Dialog closes on Escape
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_close_escape() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog
+        state.show_settings_dialog = true;
+        assert!(state.show_settings_dialog);
+
+        // Press Escape to close
+        ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+
+        assert!(!state.show_settings_dialog);
+    }
+
+    /// # PR Selection - Open Settings with Comma Key
+    ///
+    /// Tests that comma key opens settings dialog.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state
+    /// - Presses comma key
+    /// - Verifies settings dialog opens
+    ///
+    /// ## Expected Outcome
+    /// - show_settings_dialog should be true
+    #[tokio::test]
+    async fn test_pr_selection_open_settings_dialog() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        assert!(!state.show_settings_dialog);
+
+        // Press comma to open settings
+        ModeState::process_key(&mut state, KeyCode::Char(','), harness.merge_app_mut()).await;
+
+        assert!(state.show_settings_dialog);
+        assert_eq!(state.settings_selection, 0);
+    }
 }

@@ -729,4 +729,106 @@ mod tests {
         app.base_mut().version = Some("2.0.0".to_string());
         assert_eq!(app.version, Some("2.0.0".to_string()));
     }
+
+    /// # MergeApp UI Settings Defaults
+    ///
+    /// Tests that UI settings have correct defaults when created with explicit settings.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp with explicit UI settings
+    /// - Verifies settings match what was passed
+    ///
+    /// ## Expected Outcome
+    /// - Settings match constructor arguments
+    #[test]
+    fn test_ui_settings_with_explicit_values() {
+        let app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            false,
+            true,
+        );
+
+        assert!(!app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
+    }
+
+    /// # MergeApp UI Settings Toggle
+    ///
+    /// Tests that UI settings can be toggled correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp with known settings
+    /// - Toggles each setting
+    /// - Verifies settings changed
+    ///
+    /// ## Expected Outcome
+    /// - Toggle inverts the value
+    /// - Returns the new value
+    #[test]
+    fn test_ui_settings_toggle() {
+        let mut app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            true,
+            true,
+        );
+
+        // Initially both true
+        assert!(app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
+
+        // Toggle dependency highlights
+        let new_value = app.toggle_dependency_highlights();
+        assert!(!new_value);
+        assert!(!app.show_dependency_highlights());
+
+        // Toggle work item highlights
+        let new_value = app.toggle_work_item_highlights();
+        assert!(!new_value);
+        assert!(!app.show_work_item_highlights());
+
+        // Toggle again - should be back to true
+        let new_value = app.toggle_dependency_highlights();
+        assert!(new_value);
+        assert!(app.show_dependency_highlights());
+    }
+
+    /// # MergeApp UI Settings Setters
+    ///
+    /// Tests that UI settings can be set directly.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp
+    /// - Sets each setting to specific values
+    /// - Verifies settings were updated
+    ///
+    /// ## Expected Outcome
+    /// - Setters update the values correctly
+    #[test]
+    fn test_ui_settings_setters() {
+        let mut app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            true,
+            true,
+        );
+
+        // Set to false
+        app.set_show_dependency_highlights(false);
+        app.set_show_work_item_highlights(false);
+
+        assert!(!app.show_dependency_highlights());
+        assert!(!app.show_work_item_highlights());
+
+        // Set back to true
+        app.set_show_dependency_highlights(true);
+        app.set_show_work_item_highlights(true);
+
+        assert!(app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
+    }
 }
