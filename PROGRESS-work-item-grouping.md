@@ -1,6 +1,6 @@
 # Progress: PR Work Item Grouping Feature
 
-## Status: Complete
+## Status: Complete (v2 - Highlighting Approach)
 
 ## Completed Tasks
 - [x] Explored codebase structure
@@ -19,24 +19,31 @@
 - [x] Add unit tests for all functions
 - [x] Export module from `mod.rs`
 
-### Phase 2: UI State Extensions
-- [x] Add new state fields to `PullRequestSelectionState`
+### Phase 2: UI State Extensions (Revised - Highlighting Approach)
+- [x] Add `work_item_pr_index` field to `PullRequestSelectionState`
 - [x] Initialize `WorkItemPrIndex` in state creation
-- [x] Add keyboard handler modifications
-- [x] Implement dialog state transitions
+- [x] Add `HighlightedWorkItemRelationType` enum
+- [x] Add `compute_work_item_relationships()` function
+- [x] Remove dialog-based state fields
 
-### Phase 3: UI Rendering
-- [x] Create `render_work_item_warning_dialog()` method
-- [x] Implement dialog button navigation
+### Phase 3: UI Rendering (Revised - Highlighting Approach)
+- [x] Add gold background highlighting for work item relationships
+- [x] Lighter gold (Rgb(70, 55, 0)) for PRs sharing work items with highlighted PR
+- [x] Darker gold (Rgb(45, 35, 0)) for PRs sharing work items with selected PRs
+- [x] Remove dialog rendering code
 
-### Phase 4: Integration
-- [x] Connect index building to PR load
-- [x] Modify selection flow
-- [x] Handle dialog actions
+### Phase 4: Hotkey Integration
+- [x] Add 'i' hotkey: Select highlighted PR and all related PRs
+- [x] Add 'I' hotkey: Select all unselected PRs sharing work items with selected PRs
+- [x] Implement `select_highlighted_and_related()` method
+- [x] Implement `select_all_related_to_selected()` method
+- [x] Update help text with new hotkeys
 
-### Phase 5: Testing
+### Phase 5: Testing (Revised)
 - [x] Unit tests for `work_item_grouping.rs`
-- [x] Snapshot tests for dialog
+- [x] Snapshot tests for highlighting
+- [x] Remove old dialog snapshot tests
+- [x] Update existing snapshots with new help text
 
 ## Verification
 - [x] `cargo fmt` passes
@@ -45,13 +52,16 @@
 
 ## Notes
 - Started: 2026-01-05
-- Completed: 2026-01-05
+- Initial implementation (dialog): 2026-01-05
+- Revised implementation (highlighting): 2026-01-05
 - Branch: `claude/pr-work-item-grouping-GAJmb`
 
-## Features Implemented
+## Features Implemented (Final)
 1. **WorkItemPrIndex**: Bidirectional index mapping work items to PRs and vice versa
-2. **Selection Warning**: When selecting a PR that shares work items with unselected PRs, a warning dialog appears
-3. **Dialog Options**:
-   - "Select This Only": Selects just the clicked PR
-   - "Select All Related": Selects the PR and all PRs that share work items
-4. **Keyboard Navigation**: Left/Right arrows to switch between buttons, Enter to confirm, Esc to cancel
+2. **Visual Highlighting**:
+   - Gold background for PRs sharing work items with the currently highlighted PR
+   - Darker gold background for PRs sharing work items with any selected PRs
+3. **Hotkeys**:
+   - `i`: Select the highlighted PR and all related PRs sharing work items
+   - `I`: Select all unselected PRs that share work items with any currently selected PRs
+4. **Non-intrusive UX**: No forced dialogs; users can see relationships visually and choose when to select related PRs

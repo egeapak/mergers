@@ -1,9 +1,6 @@
 use super::{DataLoadingState, VersionInputState};
 use crate::{
-    core::operations::{
-        DependencyCategory, SelectionWarning, WorkItemPrIndex, check_selection_warning,
-        get_work_item_title,
-    },
+    core::operations::{DependencyCategory, WorkItemPrIndex},
     models::WorkItemHistory,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
@@ -61,11 +58,8 @@ pub struct PullRequestSelectionState {
     dependency_dialog_scroll: usize,
     // Details pane toggle
     show_details: bool,
-    // Work item grouping
+    // Work item grouping index (for highlighting and hotkeys)
     work_item_pr_index: Option<WorkItemPrIndex>,
-    show_work_item_warning_dialog: bool,
-    work_item_warning: Option<SelectionWarning>,
-    warning_dialog_selection: usize, // 0 = Select This Only, 1 = Select All Related
 }
 
 impl Default for PullRequestSelectionState {
@@ -102,11 +96,8 @@ impl PullRequestSelectionState {
             table_area: None,
             // Details pane toggle
             show_details: true,
-            // Work item grouping
+            // Work item grouping index (for highlighting and hotkeys)
             work_item_pr_index: None,
-            show_work_item_warning_dialog: false,
-            work_item_warning: None,
-            warning_dialog_selection: 0,
         }
     }
 
@@ -368,85 +359,80 @@ impl PullRequestSelectionState {
     }
 
     fn toggle_selection(&mut self, app: &mut MergeApp) {
-        if let Some(i) = self.table_state.selected() {
-            let is_currently_selected = app
-                .pull_requests()
-                .get(i)
-                .map(|pr| pr.selected)
-                .unwrap_or(false);
-
-            if is_currently_selected {
-                // Deselecting - no warning needed
-                if let Some(pr) = app.pull_requests_mut().get_mut(i) {
-                    pr.selected = false;
-                }
-            } else {
-                // Selecting - check for warning
-                self.try_select_with_warning(i, app);
-            }
+        if let Some(i) = self.table_state.selected()
+            && let Some(pr) = app.pull_requests_mut().get_mut(i)
+        {
+            pr.selected = !pr.selected;
         }
     }
 
-    /// Try to select a PR, showing a warning dialog if there are unselected related PRs.
-    /// Returns true if a warning dialog was shown, false if the PR was selected directly.
-    fn try_select_with_warning(&mut self, pr_index: usize, app: &mut MergeApp) -> bool {
+    /// Select the highlighted PR and all unselected PRs that share work items with it.
+    /// Hotkey: 'i' for "include related"
+    fn select_highlighted_and_related(&mut self, app: &mut MergeApp) {
         // Ensure the index is built
         if self.work_item_pr_index.is_none() {
             self.init_work_item_index(app);
         }
 
-        if let Some(ref index) = self.work_item_pr_index
-            && let Some(warning) = check_selection_warning(app.pull_requests(), index, pr_index)
-        {
-            // Show warning dialog
-            self.work_item_warning = Some(warning);
-            self.show_work_item_warning_dialog = true;
-            self.warning_dialog_selection = 0;
-            return true;
-        }
-
-        // No warning needed, just select
-        if let Some(pr) = app.pull_requests_mut().get_mut(pr_index) {
-            pr.selected = true;
-        }
-        false
-    }
-
-    /// Confirm the warning dialog selection.
-    fn confirm_work_item_warning(&mut self, app: &mut MergeApp) {
-        let Some(ref warning) = self.work_item_warning else {
-            self.close_work_item_warning_dialog();
+        let Some(highlighted_index) = self.table_state.selected() else {
             return;
         };
 
-        let pr_index = warning.selected_pr_index;
-        let related_indices = warning.unselected_related_prs.clone();
+        // Select the highlighted PR
+        if let Some(pr) = app.pull_requests_mut().get_mut(highlighted_index) {
+            pr.selected = true;
+        }
 
-        if self.warning_dialog_selection == 0 {
-            // Select This Only
-            if let Some(pr) = app.pull_requests_mut().get_mut(pr_index) {
-                pr.selected = true;
-            }
-        } else {
-            // Select All Related
-            if let Some(pr) = app.pull_requests_mut().get_mut(pr_index) {
-                pr.selected = true;
-            }
-            for idx in related_indices {
-                if let Some(pr) = app.pull_requests_mut().get_mut(idx) {
+        // Select all related unselected PRs
+        if let Some(ref index) = self.work_item_pr_index {
+            let related_indices = index.get_related_pr_indices(highlighted_index);
+            for pr_index in related_indices {
+                if let Some(pr) = app.pull_requests_mut().get_mut(pr_index)
+                    && !pr.selected
+                {
                     pr.selected = true;
                 }
             }
         }
-
-        self.close_work_item_warning_dialog();
     }
 
-    /// Close the work item warning dialog.
-    fn close_work_item_warning_dialog(&mut self) {
-        self.show_work_item_warning_dialog = false;
-        self.work_item_warning = None;
-        self.warning_dialog_selection = 0;
+    /// Select all unselected PRs that share work items with any currently selected PRs.
+    /// Hotkey: 'I' for "include all related"
+    fn select_all_related_to_selected(&mut self, app: &mut MergeApp) {
+        // Ensure the index is built
+        if self.work_item_pr_index.is_none() {
+            self.init_work_item_index(app);
+        }
+
+        let Some(ref index) = self.work_item_pr_index else {
+            return;
+        };
+
+        // Find all currently selected PR indices
+        let selected_indices: Vec<usize> = app
+            .pull_requests()
+            .iter()
+            .enumerate()
+            .filter(|(_, pr)| pr.selected)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Collect all related PR indices
+        let mut to_select: HashSet<usize> = HashSet::new();
+        for selected_idx in selected_indices {
+            for related_idx in index.get_related_pr_indices(selected_idx) {
+                to_select.insert(related_idx);
+            }
+        }
+
+        // Select all related unselected PRs
+        for pr_index in to_select {
+            if let Some(pr) = app.pull_requests_mut().get_mut(pr_index)
+                && !pr.selected
+            {
+                pr.selected = true;
+            }
+        }
     }
 
     fn next_work_item(&mut self, app: &MergeApp) {
@@ -1445,165 +1431,6 @@ impl PullRequestSelectionState {
             .alignment(Alignment::Center);
         f.render_widget(help, help_area);
     }
-
-    /// Render the work item warning dialog.
-    fn render_work_item_warning_dialog(&self, f: &mut Frame, area: Rect, app: &MergeApp) {
-        use ratatui::widgets::Clear;
-
-        let Some(ref warning) = self.work_item_warning else {
-            return;
-        };
-
-        let prs = app.pull_requests();
-        let selected_pr = match prs.get(warning.selected_pr_index) {
-            Some(pr) => pr,
-            None => return,
-        };
-
-        // Calculate popup dimensions
-        let popup_width = (area.width as f32 * 0.7).min(80.0) as u16;
-        let popup_height = (area.height as f32 * 0.6).min(25.0) as u16;
-        let popup_x = (area.width.saturating_sub(popup_width)) / 2;
-        let popup_y = (area.height.saturating_sub(popup_height)) / 2;
-        let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
-
-        // Clear the area
-        f.render_widget(Clear, popup_area);
-
-        // Build the dialog content
-        let mut lines: Vec<Line> = Vec::new();
-
-        lines.push(Line::from(Span::styled(
-            format!(
-                "Selecting PR #{}: {}",
-                selected_pr.pr.id,
-                truncate_title(&selected_pr.pr.title, 40)
-            ),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "This PR shares work items with other unselected PRs:",
-            Style::default().fg(Color::Yellow),
-        )));
-        lines.push(Line::from(""));
-
-        // Group by work item
-        for (&work_item_id, related_pr_indices) in &warning.shared_work_items {
-            let wi_title = get_work_item_title(prs, work_item_id);
-            lines.push(Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    format!("#{}", work_item_id),
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(": {}", truncate_title(&wi_title, 35)),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
-
-            for &pr_idx in related_pr_indices {
-                if let Some(related_pr) = prs.get(pr_idx) {
-                    lines.push(Line::from(vec![
-                        Span::styled("    └─ ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(
-                            format!("PR #{}", related_pr.pr.id),
-                            Style::default().fg(Color::Cyan),
-                        ),
-                        Span::styled(
-                            format!(": {}", truncate_title(&related_pr.pr.title, 30)),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]));
-                }
-            }
-        }
-
-        // Calculate content height and check if we need to show all
-        let content_height = popup_height.saturating_sub(8) as usize;
-        let visible_lines: Vec<Line> = lines.into_iter().take(content_height).collect();
-
-        // Create the dialog block
-        let dialog = Paragraph::new(visible_lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Work Item Grouping Warning ")
-                .title_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .border_style(Style::default().fg(Color::Yellow)),
-        );
-
-        f.render_widget(dialog, popup_area);
-
-        // Render buttons
-        let button_area_y = popup_y + popup_height.saturating_sub(4);
-        let button_area = Rect::new(popup_x + 2, button_area_y, popup_width - 4, 1);
-
-        let total_related = warning.unselected_related_prs.len();
-        let button1_text = " Select This Only ";
-        let button2_text = format!(" Select All Related ({}) ", total_related + 1);
-
-        let button1_style = if self.warning_dialog_selection == 0 {
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let button2_style = if self.warning_dialog_selection == 1 {
-            Style::default()
-                .bg(Color::Cyan)
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        let buttons = Line::from(vec![
-            Span::styled("  ", Style::default()),
-            Span::styled(button1_text, button1_style),
-            Span::styled("    ", Style::default()),
-            Span::styled(button2_text, button2_style),
-        ]);
-
-        f.render_widget(
-            Paragraph::new(vec![buttons]).alignment(Alignment::Center),
-            button_area,
-        );
-
-        // Help line
-        let help_area = Rect::new(
-            popup_x,
-            popup_y + popup_height.saturating_sub(2),
-            popup_width,
-            1,
-        );
-        let key_style = Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD);
-        let help_line = Line::from(vec![
-            Span::styled("←/→", key_style),
-            Span::raw(": Switch | "),
-            Span::styled("Enter", key_style),
-            Span::raw(": Confirm | "),
-            Span::styled("Esc", key_style),
-            Span::raw(": Cancel"),
-        ]);
-        let help = Paragraph::new(vec![help_line])
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center);
-        f.render_widget(help, help_area);
-    }
 }
 
 /// Tree node representing a PR and its dependencies
@@ -1917,6 +1744,18 @@ impl ModeState for PullRequestSelectionState {
         let highlighted_relationships =
             compute_highlighted_pr_relationships(app, self.table_state.selected());
 
+        // Compute work item sharing relationships for highlighting
+        // Ensure the index is built
+        if self.work_item_pr_index.is_none() {
+            // Note: We can't mutate self here, but the render will work without it
+            // The index will be built on first hotkey use
+        }
+        let work_item_relationships = compute_work_item_relationships(
+            app,
+            self.table_state.selected(),
+            self.work_item_pr_index.as_ref(),
+        );
+
         // Create table rows
         let rows: Vec<Row> = app
             .pull_requests()
@@ -1958,12 +1797,15 @@ impl ModeState for PullRequestSelectionState {
                 // Check if this PR is an unselected dependency (missing dependency warning)
                 let is_unselected_dep = unselected_deps.contains(&pr_with_wi.pr.id);
 
-                // Check if this PR is related to the highlighted PR
+                // Check if this PR is related to the highlighted PR (dependency graph)
                 let highlighted_relationship =
                     highlighted_relationships.get(&pr_with_wi.pr.id).copied();
 
-                // Apply background highlighting for selected items, unselected deps, dependencies, and search results
-                // Priority: Selected (green) > Unselected dep (orange/amber) > Highlighted deps/dependents > Search results (blue)
+                // Check if this PR shares work items with highlighted/selected PRs
+                let work_item_relationship = work_item_relationships.get(&pr_index).copied();
+
+                // Apply background highlighting for selected items, unselected deps, dependencies, work items, and search results
+                // Priority: Selected (green) > Unselected dep (orange/amber) > Dependency highlighting > Work item highlighting > Search results (blue)
                 let row_style = if pr_with_wi.selected {
                     Style::default().bg(Color::Rgb(0, 60, 0)) // Dark green
                 } else if is_unselected_dep {
@@ -1983,6 +1825,17 @@ impl ModeState for PullRequestSelectionState {
                         }
                         HighlightedDependencyType::TransitiveDependent => {
                             Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
+                        }
+                    }
+                } else if let Some(wi_rel_type) = work_item_relationship {
+                    match wi_rel_type {
+                        // PRs sharing work items with highlighted PR - yellow/gold tint
+                        HighlightedWorkItemRelationType::SharingWithHighlighted => {
+                            Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                        }
+                        // PRs sharing work items with selected PRs - darker gold
+                        HighlightedWorkItemRelationType::SharingWithSelected => {
+                            Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
                         }
                     }
                 } else if is_current_search_result {
@@ -2143,25 +1996,21 @@ impl ModeState for PullRequestSelectionState {
         } else {
             vec![Line::from(vec![
                 Span::styled("↑/↓", key_style),
-                Span::raw(": Navigate PRs | "),
-                Span::styled("←/→", key_style),
-                Span::raw(": Navigate Work Items | "),
-                Span::styled("/", key_style),
-                Span::raw(": Search | "),
+                Span::raw(": Navigate | "),
                 Span::styled("Space", key_style),
                 Span::raw(": Toggle | "),
-                Span::styled("Enter", key_style),
-                Span::raw(": Confirm | "),
-                Span::styled("p", key_style),
-                Span::raw(": Open PR | "),
-                Span::styled("w", key_style),
-                Span::raw(": Open Work Items | "),
+                Span::styled("i", key_style),
+                Span::raw(": Select+Related | "),
+                Span::styled("I", key_style),
+                Span::raw(": All Related | "),
+                Span::styled("/", key_style),
+                Span::raw(": Search | "),
                 Span::styled("g", key_style),
                 Span::raw(": Graph | "),
                 Span::styled("s", key_style),
-                Span::raw(": Multi-select by states | "),
-                Span::styled("r", key_style),
-                Span::raw(": Refresh | "),
+                Span::raw(": Multi-select | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Confirm | "),
                 Span::styled("q", key_style),
                 Span::raw(": Quit"),
             ])]
@@ -2187,38 +2036,9 @@ impl ModeState for PullRequestSelectionState {
         if self.show_dependency_dialog {
             self.render_dependency_dialog(f, f.area(), app);
         }
-
-        // Render work item warning dialog if open
-        if self.show_work_item_warning_dialog {
-            self.render_work_item_warning_dialog(f, f.area(), app);
-        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
-        // Handle work item warning dialog first
-        if self.show_work_item_warning_dialog {
-            match code {
-                KeyCode::Esc => {
-                    self.close_work_item_warning_dialog();
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    self.warning_dialog_selection = 0;
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    self.warning_dialog_selection = 1;
-                }
-                KeyCode::Enter => {
-                    self.confirm_work_item_warning(app);
-                }
-                KeyCode::Tab => {
-                    // Toggle between buttons
-                    self.warning_dialog_selection = 1 - self.warning_dialog_selection;
-                }
-                _ => {}
-            }
-            return StateChange::Keep;
-        }
-
         // Handle dependency dialog mode first
         if self.show_dependency_dialog {
             match code {
@@ -2421,6 +2241,16 @@ impl ModeState for PullRequestSelectionState {
                         self.dependency_dialog_pr_index = Some(selected_idx);
                         self.dependency_dialog_scroll = 0;
                     }
+                    StateChange::Keep
+                }
+                KeyCode::Char('i') => {
+                    // Select highlighted PR and all related PRs sharing work items
+                    self.select_highlighted_and_related(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char('I') => {
+                    // Select all unselected PRs that share work items with selected PRs
+                    self.select_all_related_to_selected(app);
                     StateChange::Keep
                 }
                 KeyCode::Enter => {
@@ -2751,6 +2581,76 @@ fn compute_highlighted_pr_relationships(
                         .insert(dependent_id, HighlightedDependencyType::TransitiveDependent);
                     queue.push_back(dependent_id);
                     visited.insert(dependent_id);
+                }
+            }
+        }
+    }
+
+    relationships
+}
+
+/// Represents the work item sharing relationship type for row highlighting.
+/// Uses yellow/gold shades to distinguish from dependency highlighting (teal/purple).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HighlightedWorkItemRelationType {
+    /// This unselected PR shares work items with the currently highlighted PR
+    SharingWithHighlighted,
+    /// This unselected PR shares work items with a selected PR (not the highlighted one)
+    SharingWithSelected,
+}
+
+/// Computes work item sharing relationships for row highlighting.
+///
+/// Returns a HashMap mapping PR indices to their relationship type:
+/// - `SharingWithHighlighted`: Unselected PRs sharing work items with the highlighted PR
+/// - `SharingWithSelected`: Unselected PRs sharing work items with selected PRs
+///
+/// The highlighted PR takes precedence (if a PR shares work items with both highlighted
+/// and selected PRs, it shows as SharingWithHighlighted).
+fn compute_work_item_relationships(
+    app: &MergeApp,
+    highlighted_index: Option<usize>,
+    work_item_index: Option<&WorkItemPrIndex>,
+) -> HashMap<usize, HighlightedWorkItemRelationType> {
+    let mut relationships = HashMap::new();
+
+    let Some(index) = work_item_index else {
+        return relationships;
+    };
+
+    let prs = app.pull_requests();
+
+    // First pass: Find unselected PRs sharing work items with highlighted PR
+    if let Some(highlighted_idx) = highlighted_index
+        && prs.get(highlighted_idx).is_some()
+    {
+        let related_indices = index.get_related_pr_indices(highlighted_idx);
+        for pr_idx in related_indices {
+            if let Some(pr) = prs.get(pr_idx)
+                && !pr.selected
+            {
+                relationships.insert(
+                    pr_idx,
+                    HighlightedWorkItemRelationType::SharingWithHighlighted,
+                );
+            }
+        }
+    }
+
+    // Second pass: Find unselected PRs sharing work items with ANY selected PR
+    for (pr_idx, pr) in prs.iter().enumerate() {
+        if pr.selected {
+            let related_indices = index.get_related_pr_indices(pr_idx);
+            for related_idx in related_indices {
+                // Don't overwrite SharingWithHighlighted (it has higher priority)
+                if !relationships.contains_key(&related_idx)
+                    && let Some(related_pr) = prs.get(related_idx)
+                    && !related_pr.selected
+                {
+                    relationships.insert(
+                        related_idx,
+                        HighlightedWorkItemRelationType::SharingWithSelected,
+                    );
                 }
             }
         }
@@ -4785,20 +4685,19 @@ mod tests {
         ]
     }
 
-    /// # Work Item Warning Dialog - Single Shared Work Item
+    /// # Work Item Highlighting - PRs Sharing Work Items with Highlighted
     ///
-    /// Tests the warning dialog when selecting a PR that shares one work item with another PR.
+    /// Tests that PRs sharing work items with the highlighted PR are highlighted.
     ///
     /// ## Test Scenario
     /// - Creates PRs where PR 100 and PR 101 share work item 1001
-    /// - Simulates selecting PR 100
-    /// - Dialog should appear showing the shared work item and related PR
+    /// - PR 100 is highlighted (cursor on it)
+    /// - PR 101 should be highlighted in gold
     ///
     /// ## Expected Outcome
-    /// - Dialog should show work item #1001 and PR #101 as related
-    /// - Two buttons: "Select This Only" and "Select All Related (2)"
+    /// - PR 101 should have gold background (sharing with highlighted)
     #[test]
-    fn test_work_item_warning_dialog_single_shared() {
+    fn test_work_item_highlighting_with_highlighted() {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
@@ -4806,107 +4705,50 @@ mod tests {
             *harness.app.pull_requests_mut() = create_test_prs_with_shared_work_items();
 
             let mut inner_state = PullRequestSelectionState::new();
-            inner_state.table_state.select(Some(0));
-
-            // Simulate the warning dialog being shown for PR 100
+            inner_state.table_state.select(Some(0)); // Highlight PR 100
             inner_state.init_work_item_index(harness.merge_app());
-            if let Some(ref index) = inner_state.work_item_pr_index
-                && let Some(warning) =
-                    check_selection_warning(harness.app.pull_requests(), index, 0)
-            {
-                inner_state.work_item_warning = Some(warning);
-                inner_state.show_work_item_warning_dialog = true;
-                inner_state.warning_dialog_selection = 0;
-            }
 
             let mut state = MergeState::PullRequestSelection(inner_state);
             harness.render_merge_state(&mut state);
 
-            assert_snapshot!("work_item_warning_single_shared", harness.backend());
+            assert_snapshot!("work_item_highlighting_with_highlighted", harness.backend());
         });
     }
 
-    /// # Work Item Warning Dialog - Multiple Shared Work Items
+    /// # Work Item Highlighting - PRs Sharing Work Items with Selected
     ///
-    /// Tests the warning dialog when selecting a PR that shares multiple work items.
+    /// Tests that PRs sharing work items with selected PRs are highlighted.
     ///
     /// ## Test Scenario
-    /// - Creates PRs where PR 101 shares work items with both PR 100 and PR 102
-    /// - Simulates selecting PR 101
-    /// - Dialog should show both shared work items
+    /// - Creates PRs where PR 100 and PR 101 share work item 1001
+    /// - PR 100 is selected
+    /// - PR 103 is highlighted (no shared work items)
+    /// - PR 101 should be highlighted in darker gold
     ///
     /// ## Expected Outcome
-    /// - Dialog should show work item #1001 (shared with PR 100) and #1002 (shared with PR 102)
-    /// - Button should show "Select All Related (3)"
+    /// - PR 101 should have darker gold background (sharing with selected)
     #[test]
-    fn test_work_item_warning_dialog_multiple_shared() {
+    fn test_work_item_highlighting_with_selected() {
         with_settings_and_module_path(module_path!(), || {
             let config = create_test_config_default();
             let mut harness = TuiTestHarness::with_config(config);
 
-            *harness.app.pull_requests_mut() = create_test_prs_with_shared_work_items();
+            let mut prs = create_test_prs_with_shared_work_items();
+            prs[0].selected = true; // Select PR 100
+            *harness.app.pull_requests_mut() = prs;
 
             let mut inner_state = PullRequestSelectionState::new();
-            inner_state.table_state.select(Some(1));
-
-            // Simulate the warning dialog being shown for PR 101
+            inner_state.table_state.select(Some(3)); // Highlight PR 103 (independent)
             inner_state.init_work_item_index(harness.merge_app());
-            if let Some(ref index) = inner_state.work_item_pr_index
-                && let Some(warning) =
-                    check_selection_warning(harness.app.pull_requests(), index, 1)
-            {
-                inner_state.work_item_warning = Some(warning);
-                inner_state.show_work_item_warning_dialog = true;
-                inner_state.warning_dialog_selection = 0;
-            }
 
             let mut state = MergeState::PullRequestSelection(inner_state);
             harness.render_merge_state(&mut state);
 
-            assert_snapshot!("work_item_warning_multiple_shared", harness.backend());
+            assert_snapshot!("work_item_highlighting_with_selected", harness.backend());
         });
     }
 
-    /// # Work Item Warning Dialog - Right Button Selected
-    ///
-    /// Tests the warning dialog with the "Select All Related" button focused.
-    ///
-    /// ## Test Scenario
-    /// - Shows warning dialog with right button selected
-    ///
-    /// ## Expected Outcome
-    /// - Right button should be highlighted
-    /// - Left button should not be highlighted
-    #[test]
-    fn test_work_item_warning_dialog_right_button() {
-        with_settings_and_module_path(module_path!(), || {
-            let config = create_test_config_default();
-            let mut harness = TuiTestHarness::with_config(config);
-
-            *harness.app.pull_requests_mut() = create_test_prs_with_shared_work_items();
-
-            let mut inner_state = PullRequestSelectionState::new();
-            inner_state.table_state.select(Some(0));
-
-            // Simulate the warning dialog being shown with right button selected
-            inner_state.init_work_item_index(harness.merge_app());
-            if let Some(ref index) = inner_state.work_item_pr_index
-                && let Some(warning) =
-                    check_selection_warning(harness.app.pull_requests(), index, 0)
-            {
-                inner_state.work_item_warning = Some(warning);
-                inner_state.show_work_item_warning_dialog = true;
-                inner_state.warning_dialog_selection = 1; // Right button
-            }
-
-            let mut state = MergeState::PullRequestSelection(inner_state);
-            harness.render_merge_state(&mut state);
-
-            assert_snapshot!("work_item_warning_right_button", harness.backend());
-        });
-    }
-
-    /// # Work Item Warning Dialog - Keyboard Press 'g' Opens Dependency Dialog
+    /// # Keyboard Press 'g' Opens Dependency Dialog
     ///
     /// Tests that pressing 'g' opens the dependency dialog.
     ///
