@@ -163,6 +163,8 @@ pub enum SetupState {
     Error {
         error: git::RepositorySetupError,
         message: String,
+        /// Progress at the time of error (to show which step failed)
+        progress: Option<WizardProgress>,
     },
 }
 
@@ -217,6 +219,12 @@ impl SetupRepoState {
     }
 
     fn set_error(&mut self, error: git::RepositorySetupError) {
+        // Preserve the current progress to show which step failed
+        let current_progress = match &self.state {
+            SetupState::InProgress(progress) => Some(progress.clone()),
+            _ => None,
+        };
+
         let message = match &error {
             git::RepositorySetupError::BranchExists(branch) => {
                 format!(
@@ -240,6 +248,7 @@ impl SetupRepoState {
         self.state = SetupState::Error {
             error: error.clone(),
             message,
+            progress: current_progress,
         };
     }
 
@@ -599,10 +608,18 @@ impl ModeState for SetupRepoState {
                 // Current step progress
                 render_current_step_progress(f, chunks[2], progress);
             }
-            SetupState::Error { message, .. } => {
-                // Show step indicator with error state
-                let is_clone_mode = self.is_clone_mode.unwrap_or(app.local_repo().is_none());
-                let progress = WizardProgress::new(is_clone_mode);
+            SetupState::Error {
+                message, progress, ..
+            } => {
+                // Show step indicator with error state - use preserved progress if available
+                let display_progress = match progress {
+                    Some(p) => p.clone(),
+                    None => {
+                        let is_clone_mode =
+                            self.is_clone_mode.unwrap_or(app.local_repo().is_none());
+                        WizardProgress::new(is_clone_mode)
+                    }
+                };
 
                 // Step indicator
                 let step_block = Block::default()
@@ -611,7 +628,7 @@ impl ModeState for SetupRepoState {
                     .title_style(Style::default().fg(Color::Red));
                 let inner_area = step_block.inner(chunks[1]);
                 f.render_widget(step_block, chunks[1]);
-                render_step_indicator(f, inner_area, &progress);
+                render_step_indicator(f, inner_area, &display_progress);
 
                 // Error message
                 let key_style = Style::default()
@@ -906,6 +923,78 @@ mod tests {
             harness.render_merge_state(&mut state);
 
             assert_snapshot!("initializing_state", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Clone Mode All Steps Complete
+    ///
+    /// Tests the repository setup screen with all steps completed in clone mode.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with clone mode progress
+    /// - Completes all 4 steps (FetchDetails, CloneOrWorktree, CreateBranch, InitializeState)
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Should display all 4 steps with checkmarks
+    /// - All steps should be green/completed
+    #[test]
+    fn test_setup_repo_clone_mode_all_complete() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut inner_state = SetupRepoState::new();
+            let mut progress = WizardProgress::new(true); // clone mode
+            progress.complete_step(WizardStep::FetchDetails);
+            progress.complete_step(WizardStep::CloneOrWorktree);
+            progress.complete_step(WizardStep::CreateBranch);
+            progress.complete_step(WizardStep::InitializeState);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(true);
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("clone_mode_all_complete", harness.backend());
+        });
+    }
+
+    /// # Setup Repo State - Error With Progress Preserved
+    ///
+    /// Tests that error state preserves and displays the progress at time of failure.
+    ///
+    /// ## Test Scenario
+    /// - Creates a setup repo state with progress (some steps completed)
+    /// - Triggers an error state
+    /// - Renders the error display
+    ///
+    /// ## Expected Outcome
+    /// - Should show completed steps with checkmarks
+    /// - Should show the failing step (last in-progress) highlighted
+    /// - Should display error message
+    #[test]
+    fn test_setup_repo_error_with_progress() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut inner_state = SetupRepoState::new();
+            // Simulate progress: fetch completed, cloning in progress when error occurred
+            let mut progress = WizardProgress::new(true); // clone mode
+            progress.complete_step(WizardStep::FetchDetails);
+            progress.start_step(WizardStep::CloneOrWorktree);
+            inner_state.state = SetupState::InProgress(progress);
+            inner_state.is_clone_mode = Some(true);
+
+            // Now trigger an error (this preserves the progress)
+            inner_state.set_error(git::RepositorySetupError::WorktreeExists(
+                "/path/to/repo/.worktrees/v1.0.0".to_string(),
+            ));
+
+            let mut state = MergeState::SetupRepo(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("error_with_progress", harness.backend());
         });
     }
 
