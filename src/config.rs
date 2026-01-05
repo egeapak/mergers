@@ -28,7 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Temporary struct for deserializing TOML configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ConfigFile {
     pub organization: Option<String>,
     pub project: Option<String>,
@@ -43,6 +43,9 @@ struct ConfigFile {
     pub max_concurrent_processing: Option<usize>,
     pub tag_prefix: Option<String>,
     pub run_hooks: Option<bool>,
+    // UI Settings
+    pub show_dependency_highlights: Option<bool>,
+    pub show_work_item_highlights: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -60,6 +63,9 @@ pub struct Config {
     pub max_concurrent_processing: Option<ParsedProperty<usize>>,
     pub tag_prefix: Option<ParsedProperty<String>>,
     pub run_hooks: Option<ParsedProperty<bool>>,
+    // UI Settings
+    pub show_dependency_highlights: Option<ParsedProperty<bool>>,
+    pub show_work_item_highlights: Option<ParsedProperty<bool>>,
 }
 
 impl Default for Config {
@@ -78,6 +84,9 @@ impl Default for Config {
             max_concurrent_processing: Some(ParsedProperty::Default(10)),
             tag_prefix: Some(ParsedProperty::Default("merged-".to_string())),
             run_hooks: Some(ParsedProperty::Default(false)),
+            // UI Settings - both enabled by default
+            show_dependency_highlights: Some(ParsedProperty::Default(true)),
+            show_work_item_highlights: Some(ParsedProperty::Default(true)),
         }
     }
 }
@@ -137,6 +146,12 @@ impl Config {
             run_hooks: config_file
                 .run_hooks
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            show_dependency_highlights: config_file
+                .show_dependency_highlights
+                .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            show_work_item_highlights: config_file
+                .show_work_item_highlights
+                .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
         })
     }
 
@@ -185,6 +200,8 @@ impl Config {
                 max_concurrent_processing: None,
                 tag_prefix: None,
                 run_hooks: None,
+                show_dependency_highlights: None,
+                show_work_item_highlights: None,
             };
         }
 
@@ -209,6 +226,8 @@ impl Config {
                 max_concurrent_processing: None,
                 tag_prefix: None,
                 run_hooks: None,
+                show_dependency_highlights: None,
+                show_work_item_highlights: None,
             };
         }
 
@@ -259,6 +278,20 @@ impl Config {
                     .ok()
                     .map(|v| ParsedProperty::Env(v, s.clone()))
             }),
+            show_dependency_highlights: std::env::var("MERGERS_SHOW_DEPENDENCY_HIGHLIGHTS")
+                .ok()
+                .and_then(|s| {
+                    s.parse::<bool>()
+                        .ok()
+                        .map(|v| ParsedProperty::Env(v, s.clone()))
+                }),
+            show_work_item_highlights: std::env::var("MERGERS_SHOW_WORK_ITEM_HIGHLIGHTS")
+                .ok()
+                .and_then(|s| {
+                    s.parse::<bool>()
+                        .ok()
+                        .map(|v| ParsedProperty::Env(v, s.clone()))
+                }),
         }
     }
 
@@ -306,6 +339,12 @@ impl Config {
                 .or(self.max_concurrent_processing),
             tag_prefix: other.tag_prefix.or(self.tag_prefix),
             run_hooks: other.run_hooks.or(self.run_hooks),
+            show_dependency_highlights: other
+                .show_dependency_highlights
+                .or(self.show_dependency_highlights),
+            show_work_item_highlights: other
+                .show_work_item_highlights
+                .or(self.show_work_item_highlights),
         }
     }
 
@@ -354,6 +393,13 @@ max_concurrent_network = 100
 
 # Maximum number of concurrent processing operations (optional, defaults to 10)
 max_concurrent_processing = 10
+
+# UI Settings
+# Show dependency highlighting in PR selection (optional, defaults to true)
+show_dependency_highlights = true
+
+# Show work item relationship highlighting in PR selection (optional, defaults to true)
+show_work_item_highlights = true
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
@@ -364,6 +410,40 @@ max_concurrent_processing = 10
         })?;
 
         println!("Sample config created at: {}", config_path.display());
+        Ok(())
+    }
+
+    /// Save UI settings to the config file.
+    ///
+    /// This method reads the existing config file (if any), updates only the UI settings,
+    /// and writes the result back to preserve user's other settings.
+    pub fn save_ui_settings(
+        show_dependency_highlights: bool,
+        show_work_item_highlights: bool,
+    ) -> Result<()> {
+        let config_path = Self::get_config_path()?;
+
+        // Read existing config file or start with empty
+        let mut config_file: ConfigFile = if config_path.exists() {
+            let content = fs::read_to_string(&config_path).with_context(|| {
+                format!("Failed to read config file: {}", config_path.display())
+            })?;
+            toml::from_str(&content).unwrap_or_default()
+        } else {
+            ConfigFile::default()
+        };
+
+        // Update UI settings
+        config_file.show_dependency_highlights = Some(show_dependency_highlights);
+        config_file.show_work_item_highlights = Some(show_work_item_highlights);
+
+        // Serialize and write
+        let toml_string =
+            toml::to_string_pretty(&config_file).with_context(|| "Failed to serialize config")?;
+
+        fs::write(&config_path, toml_string)
+            .with_context(|| format!("Failed to write config to: {}", config_path.display()))?;
+
         Ok(())
     }
 }
@@ -700,6 +780,8 @@ mod tests {
             max_concurrent_processing: Some(ParsedProperty::Default(5)),
             tag_prefix: Some(ParsedProperty::Default("base-".to_string())),
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let other = Config {
@@ -716,6 +798,8 @@ mod tests {
             max_concurrent_processing: Some(ParsedProperty::Default(15)),
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let merged = base.merge(other);
@@ -795,6 +879,8 @@ mod tests {
             max_concurrent_processing: None,
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let empty2 = Config {
@@ -811,6 +897,8 @@ mod tests {
             max_concurrent_processing: None,
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1253,6 +1341,8 @@ invalid toml syntax here [
             max_concurrent_processing: Some(ParsedProperty::Default(20)),
             tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
             run_hooks: Some(ParsedProperty::Default(false)),
+            show_dependency_highlights: Some(ParsedProperty::Default(true)),
+            show_work_item_highlights: Some(ParsedProperty::Default(true)),
         };
 
         // Test serialization to TOML (serializes with enum variant info)

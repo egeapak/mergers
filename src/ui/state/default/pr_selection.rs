@@ -60,6 +60,9 @@ pub struct PullRequestSelectionState {
     show_details: bool,
     // Work item grouping index (for highlighting and hotkeys)
     work_item_pr_index: Option<WorkItemPrIndex>,
+    // Settings dialog
+    show_settings_dialog: bool,
+    settings_selection: usize,
 }
 
 impl Default for PullRequestSelectionState {
@@ -98,6 +101,9 @@ impl PullRequestSelectionState {
             show_details: true,
             // Work item grouping index (for highlighting and hotkeys)
             work_item_pr_index: None,
+            // Settings dialog
+            show_settings_dialog: false,
+            settings_selection: 0,
         }
     }
 
@@ -1089,6 +1095,98 @@ impl PullRequestSelectionState {
         f.render_widget(help_widget, chunks[3]);
     }
 
+    /// Render the settings overlay dialog
+    fn render_settings_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect, app: &MergeApp) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Clear;
+
+        // Create a centered popup area
+        let popup_width = 50;
+        let popup_height = 10;
+        let popup_area = ratatui::layout::Rect {
+            x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+            y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+            width: popup_width.min(area.width),
+            height: popup_height.min(area.height),
+        };
+
+        // Clear the area first to ensure no transparency
+        f.render_widget(Clear, popup_area);
+
+        // Then render a block with solid background
+        let background_block = Block::default()
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::ALL)
+            .title(" Settings ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        f.render_widget(background_block.clone(), popup_area);
+
+        // Inner area for content
+        let inner_area = background_block.inner(popup_area);
+
+        // Create layout for settings items and help
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Spacer
+                Constraint::Length(1), // Setting 1: Dependency highlights
+                Constraint::Length(1), // Setting 2: Work item highlights
+                Constraint::Min(1),    // Spacer
+                Constraint::Length(2), // Help text
+            ])
+            .split(inner_area);
+
+        // Render settings
+        let settings = [
+            (
+                "Show dependency highlights",
+                app.show_dependency_highlights(),
+            ),
+            ("Show work item highlights", app.show_work_item_highlights()),
+        ];
+
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        for (i, (label, enabled)) in settings.iter().enumerate() {
+            let checkbox = if *enabled { "[x]" } else { "[ ]" };
+            let is_selected = self.settings_selection == i;
+
+            let style = if is_selected {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("  {} ", checkbox), style),
+                Span::styled(*label, style),
+            ]);
+
+            let widget = Paragraph::new(line);
+            f.render_widget(widget, chunks[i + 1]); // +1 to skip the spacer
+        }
+
+        // Render help text
+        let help_line = Line::from(vec![
+            Span::styled("↑/↓", key_style),
+            Span::raw(": Navigate | "),
+            Span::styled("Space/Enter", key_style),
+            Span::raw(": Toggle | "),
+            Span::styled("Esc", key_style),
+            Span::raw(": Close"),
+        ]);
+        let help_widget = Paragraph::new(help_line)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        f.render_widget(help_widget, chunks[4]);
+    }
+
     /// Convert mouse y-coordinate to table row index
     fn mouse_y_to_row(&self, y: u16, pr_count: usize) -> Option<usize> {
         let area = self.table_area?;
@@ -1810,33 +1908,68 @@ impl ModeState for PullRequestSelectionState {
                     Style::default().bg(Color::Rgb(0, 60, 0)) // Dark green
                 } else if is_unselected_dep {
                     Style::default().bg(Color::Rgb(80, 40, 0)) // Orange/amber for missing deps
-                } else if let Some(rel_type) = highlighted_relationship {
-                    match rel_type {
-                        // Dependencies (PRs the highlighted PR depends on) - cyan/teal tint
-                        HighlightedDependencyType::DirectDependency => {
-                            Style::default().bg(Color::Rgb(0, 50, 60)) // Teal for direct dependency
+                } else if app.show_dependency_highlights() {
+                    if let Some(rel_type) = highlighted_relationship {
+                        match rel_type {
+                            // Dependencies (PRs the highlighted PR depends on) - cyan/teal tint
+                            HighlightedDependencyType::DirectDependency => {
+                                Style::default().bg(Color::Rgb(0, 50, 60)) // Teal for direct dependency
+                            }
+                            HighlightedDependencyType::TransitiveDependency => {
+                                Style::default().bg(Color::Rgb(0, 30, 40)) // Darker teal for transitive
+                            }
+                            // Dependents (PRs that depend on the highlighted PR) - purple/magenta tint
+                            HighlightedDependencyType::DirectDependent => {
+                                Style::default().bg(Color::Rgb(50, 0, 50)) // Purple for direct dependent
+                            }
+                            HighlightedDependencyType::TransitiveDependent => {
+                                Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
+                            }
                         }
-                        HighlightedDependencyType::TransitiveDependency => {
-                            Style::default().bg(Color::Rgb(0, 30, 40)) // Darker teal for transitive
+                    } else if app.show_work_item_highlights() {
+                        if let Some(wi_rel_type) = work_item_relationship {
+                            match wi_rel_type {
+                                // PRs sharing work items with highlighted PR - yellow/gold tint
+                                HighlightedWorkItemRelationType::SharingWithHighlighted => {
+                                    Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                                }
+                                // PRs sharing work items with selected PRs - darker gold
+                                HighlightedWorkItemRelationType::SharingWithSelected => {
+                                    Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
+                                }
+                            }
+                        } else if is_current_search_result {
+                            Style::default().bg(Color::Blue)
+                        } else if is_search_result {
+                            Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                        } else {
+                            Style::default()
                         }
-                        // Dependents (PRs that depend on the highlighted PR) - purple/magenta tint
-                        HighlightedDependencyType::DirectDependent => {
-                            Style::default().bg(Color::Rgb(50, 0, 50)) // Purple for direct dependent
-                        }
-                        HighlightedDependencyType::TransitiveDependent => {
-                            Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
-                        }
+                    } else if is_current_search_result {
+                        Style::default().bg(Color::Blue)
+                    } else if is_search_result {
+                        Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                    } else {
+                        Style::default()
                     }
-                } else if let Some(wi_rel_type) = work_item_relationship {
-                    match wi_rel_type {
-                        // PRs sharing work items with highlighted PR - yellow/gold tint
-                        HighlightedWorkItemRelationType::SharingWithHighlighted => {
-                            Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                } else if app.show_work_item_highlights() {
+                    if let Some(wi_rel_type) = work_item_relationship {
+                        match wi_rel_type {
+                            // PRs sharing work items with highlighted PR - yellow/gold tint
+                            HighlightedWorkItemRelationType::SharingWithHighlighted => {
+                                Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                            }
+                            // PRs sharing work items with selected PRs - darker gold
+                            HighlightedWorkItemRelationType::SharingWithSelected => {
+                                Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
+                            }
                         }
-                        // PRs sharing work items with selected PRs - darker gold
-                        HighlightedWorkItemRelationType::SharingWithSelected => {
-                            Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
-                        }
+                    } else if is_current_search_result {
+                        Style::default().bg(Color::Blue)
+                    } else if is_search_result {
+                        Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                    } else {
+                        Style::default()
                     }
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
@@ -2009,6 +2142,8 @@ impl ModeState for PullRequestSelectionState {
                 Span::raw(": Graph | "),
                 Span::styled("s", key_style),
                 Span::raw(": Multi-select | "),
+                Span::styled(",", key_style),
+                Span::raw(": Settings | "),
                 Span::styled("Enter", key_style),
                 Span::raw(": Confirm | "),
                 Span::styled("q", key_style),
@@ -2036,6 +2171,11 @@ impl ModeState for PullRequestSelectionState {
         if self.show_dependency_dialog {
             self.render_dependency_dialog(f, f.area(), app);
         }
+
+        // Render settings dialog if open
+        if self.show_settings_dialog {
+            self.render_settings_overlay(f, f.area(), app);
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
@@ -2052,6 +2192,42 @@ impl ModeState for PullRequestSelectionState {
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.dependency_dialog_scroll = self.dependency_dialog_scroll.saturating_add(1);
+                }
+                _ => {}
+            }
+            return StateChange::Keep;
+        }
+
+        // Handle settings dialog mode
+        if self.show_settings_dialog {
+            const NUM_SETTINGS: usize = 2;
+            match code {
+                KeyCode::Esc | KeyCode::Char(',') => {
+                    self.show_settings_dialog = false;
+                    // Save settings when closing the dialog
+                    if let Err(e) = app.save_ui_settings() {
+                        app.error_message = Some(format!("Failed to save settings: {}", e));
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.settings_selection = self.settings_selection.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.settings_selection < NUM_SETTINGS - 1 {
+                        self.settings_selection += 1;
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    // Toggle the selected setting
+                    match self.settings_selection {
+                        0 => {
+                            app.toggle_dependency_highlights();
+                        }
+                        1 => {
+                            app.toggle_work_item_highlights();
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {}
             }
@@ -2251,6 +2427,12 @@ impl ModeState for PullRequestSelectionState {
                 KeyCode::Char('I') => {
                     // Select all unselected PRs that share work items with selected PRs
                     self.select_all_related_to_selected(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char(',') => {
+                    // Open settings dialog
+                    self.show_settings_dialog = true;
+                    self.settings_selection = 0;
                     StateChange::Keep
                 }
                 KeyCode::Enter => {
