@@ -3424,6 +3424,29 @@ mod tests {
         assert_eq!(resolved_canonical, main_canonical);
     }
 
+    /// # Resolve Git Repo Path - Non-Git Directory
+    ///
+    /// Tests that resolve_git_repo_path returns original path for non-git directories.
+    ///
+    /// ## Test Scenario
+    /// - Creates a regular directory (not a git repository)
+    /// - Calls resolve_git_repo_path
+    ///
+    /// ## Expected Outcome
+    /// - Returns the original path unchanged
+    #[test]
+    fn test_resolve_git_repo_path_non_git_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let non_git_path = temp_dir.path().to_path_buf();
+
+        // Create a file to make sure the directory exists and has content
+        fs::write(non_git_path.join("test.txt"), "test").unwrap();
+
+        // Should return the original path since it's not a git repo
+        let resolved = resolve_git_repo_path(&non_git_path).unwrap();
+        assert_eq!(resolved, non_git_path);
+    }
+
     /// # Check Patch Merged (Regular Merge)
     ///
     /// Tests detection of patch branches merged via regular git merge.

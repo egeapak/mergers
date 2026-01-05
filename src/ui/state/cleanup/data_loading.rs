@@ -144,21 +144,26 @@ fn build_no_branches_error(result: &LoadBranchesResult) -> String {
             .to_string()
     } else if !result.skipped_branches.is_empty() {
         // Branches were found but they don't match the expected format
-        let skipped_list = result
+        let branch_count = result.skipped_branches.len();
+        let display_count = branch_count.min(5);
+        let skipped_list: String = result
             .skipped_branches
             .iter()
-            .take(5) // Show first 5 examples
-            .cloned()
+            .take(display_count)
+            .map(|b| format!("  • {}", b))
             .collect::<Vec<_>>()
-            .join(", ");
-        let more = if result.skipped_branches.len() > 5 {
-            format!(" (and {} more)", result.skipped_branches.len() - 5)
+            .join("\n");
+
+        let more = if branch_count > 5 {
+            format!("\n  ... and {} more", branch_count - 5)
         } else {
             String::new()
         };
+
         format!(
-            "Found {} branches matching 'patch/*', but none match the expected format \
-             'patch/<target>-<version>'. Branches found: {}{}. \
+            "Found {} branch(es) matching 'patch/*', but none match the expected \
+             format 'patch/<target>-<version>'.\n\n\
+             Branches found:\n{}{}\n\n\
              Cleanup mode only works with branches created by merge mode.",
             result.total_matching_pattern, skipped_list, more
         )
@@ -576,5 +581,196 @@ mod tests {
             harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
             assert_snapshot!("half_progress", harness.backend());
         });
+    }
+
+    /// # Cleanup Data Loading - No Branches Match Pattern
+    ///
+    /// Tests the error display when no branches match 'patch/*' pattern.
+    ///
+    /// ## Test Scenario
+    /// - Simulates result with zero branches matching pattern
+    /// - Uses `build_no_branches_error` to generate message
+    ///
+    /// ## Expected Outcome
+    /// - Should show error suggesting to check repository path
+    #[test]
+    fn test_data_loading_no_pattern_match() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate no branches matching pattern at all
+            let result = LoadBranchesResult {
+                branches: vec![],
+                skipped_branches: vec![],
+                total_matching_pattern: 0,
+            };
+
+            state.status = "No patch branches found.".to_string();
+            state.error = Some(build_no_branches_error(&result));
+            state.loaded = true;
+
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
+            assert_snapshot!("no_pattern_match", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading - Wrong Format Branches
+    ///
+    /// Tests the error display when branches match pattern but have wrong format.
+    ///
+    /// ## Test Scenario
+    /// - Simulates branches matching 'patch/*' but without hyphens
+    /// - Uses `build_no_branches_error` to generate message with list
+    ///
+    /// ## Expected Outcome
+    /// - Should show error with list of found branches
+    /// - Should explain expected format
+    #[test]
+    fn test_data_loading_wrong_format_branches() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate branches with wrong format
+            let result = LoadBranchesResult {
+                branches: vec![],
+                skipped_branches: vec![
+                    "patch/fix".to_string(),
+                    "patch/hotfix".to_string(),
+                    "patch/release".to_string(),
+                ],
+                total_matching_pattern: 3,
+            };
+
+            state.status = "No patch branches found.".to_string();
+            state.error = Some(build_no_branches_error(&result));
+            state.loaded = true;
+
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
+            assert_snapshot!("wrong_format_branches", harness.backend());
+        });
+    }
+
+    /// # Cleanup Data Loading - Many Wrong Format Branches
+    ///
+    /// Tests the error display when many branches have wrong format (truncation).
+    ///
+    /// ## Test Scenario
+    /// - Simulates more than 5 branches with wrong format
+    /// - Verifies truncation with "and X more" message
+    ///
+    /// ## Expected Outcome
+    /// - Should show first 5 branches
+    /// - Should show "and X more" for remaining branches
+    #[test]
+    fn test_data_loading_many_wrong_format_branches() {
+        use crate::ui::snapshot_testing::with_settings_and_module_path;
+
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_cleanup();
+            let mut harness = TuiTestHarness::with_config(config.clone());
+            let mut state = CleanupDataLoadingState::new(config);
+
+            // Simulate many branches with wrong format
+            let result = LoadBranchesResult {
+                branches: vec![],
+                skipped_branches: vec![
+                    "patch/fix".to_string(),
+                    "patch/hotfix".to_string(),
+                    "patch/release".to_string(),
+                    "patch/urgent".to_string(),
+                    "patch/bugfix".to_string(),
+                    "patch/security".to_string(),
+                    "patch/feature".to_string(),
+                ],
+                total_matching_pattern: 7,
+            };
+
+            state.status = "No patch branches found.".to_string();
+            state.error = Some(build_no_branches_error(&result));
+            state.loaded = true;
+
+            harness.render_cleanup_state(&mut CleanupModeState::DataLoading(state));
+            assert_snapshot!("many_wrong_format_branches", harness.backend());
+        });
+    }
+
+    /// # Build No Branches Error - No Pattern Match
+    ///
+    /// Unit test for error message when no branches match pattern.
+    ///
+    /// ## Expected Outcome
+    /// - Message should mention checking repository path
+    #[test]
+    fn test_build_no_branches_error_no_pattern_match() {
+        let result = LoadBranchesResult {
+            branches: vec![],
+            skipped_branches: vec![],
+            total_matching_pattern: 0,
+        };
+
+        let error = build_no_branches_error(&result);
+        assert!(error.contains("No branches matching 'patch/*' pattern were found"));
+        assert!(error.contains("repository path"));
+    }
+
+    /// # Build No Branches Error - Wrong Format
+    ///
+    /// Unit test for error message when branches have wrong format.
+    ///
+    /// ## Expected Outcome
+    /// - Message should list the found branches
+    /// - Message should explain expected format
+    #[test]
+    fn test_build_no_branches_error_wrong_format() {
+        let result = LoadBranchesResult {
+            branches: vec![],
+            skipped_branches: vec!["patch/fix".to_string(), "patch/hotfix".to_string()],
+            total_matching_pattern: 2,
+        };
+
+        let error = build_no_branches_error(&result);
+        assert!(error.contains("2 branch(es)"));
+        assert!(error.contains("patch/<target>-<version>"));
+        assert!(error.contains("• patch/fix"));
+        assert!(error.contains("• patch/hotfix"));
+        assert!(error.contains("merge mode"));
+    }
+
+    /// # Build No Branches Error - Truncation
+    ///
+    /// Unit test for error message truncation with many branches.
+    ///
+    /// ## Expected Outcome
+    /// - Only first 5 branches should be shown
+    /// - "and X more" should be displayed
+    #[test]
+    fn test_build_no_branches_error_truncation() {
+        let result = LoadBranchesResult {
+            branches: vec![],
+            skipped_branches: vec![
+                "patch/a".to_string(),
+                "patch/b".to_string(),
+                "patch/c".to_string(),
+                "patch/d".to_string(),
+                "patch/e".to_string(),
+                "patch/f".to_string(),
+                "patch/g".to_string(),
+            ],
+            total_matching_pattern: 7,
+        };
+
+        let error = build_no_branches_error(&result);
+        assert!(error.contains("• patch/a"));
+        assert!(error.contains("• patch/e"));
+        assert!(!error.contains("• patch/f")); // Should be truncated
+        assert!(error.contains("and 2 more"));
     }
 }
