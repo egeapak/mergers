@@ -1043,11 +1043,35 @@ fn parse_patch_branch(branch_name: &str) -> Option<(String, String)> {
     }
 }
 
+/// Result of listing patch branches with detailed information
+#[derive(Debug)]
+pub struct PatchBranchListResult {
+    /// Successfully parsed patch branches
+    pub branches: Vec<crate::models::CleanupBranch>,
+    /// Branches matching 'patch/*' pattern but not in expected format
+    pub skipped_branches: Vec<String>,
+    /// Total branches matching the pattern (before format filtering)
+    pub total_matching_pattern: usize,
+}
+
 /// List all patch branches with parsed metadata
 pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::CleanupBranch>> {
-    let branches = list_local_branches(repo_path, "patch/*")?;
+    let result = list_patch_branches_detailed(repo_path)?;
+    Ok(result.branches)
+}
+
+/// List all patch branches with detailed information about what was found.
+/// This is useful for debugging when branches are found but not parsed correctly.
+pub fn list_patch_branches_detailed(repo_path: &Path) -> Result<PatchBranchListResult> {
+    // First, resolve to the main git directory if we're in a worktree
+    let resolved_path = resolve_git_repo_path(repo_path)?;
+
+    let branches = list_local_branches(&resolved_path, "patch/*")?;
+    let total_matching_pattern = branches.len();
 
     let mut patch_branches = Vec::new();
+    let mut skipped_branches = Vec::new();
+
     for branch in branches {
         if let Some((target, version)) = parse_patch_branch(&branch) {
             patch_branches.push(crate::models::CleanupBranch {
@@ -1058,10 +1082,53 @@ pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::Cleanu
                 selected: false,
                 status: crate::models::CleanupStatus::Pending,
             });
+        } else {
+            skipped_branches.push(branch);
         }
     }
 
-    Ok(patch_branches)
+    Ok(PatchBranchListResult {
+        branches: patch_branches,
+        skipped_branches,
+        total_matching_pattern,
+    })
+}
+
+/// Resolve a path to the main git repository path.
+/// If the path is inside a worktree, this returns the main repository path.
+/// Otherwise, returns the original path.
+fn resolve_git_repo_path(repo_path: &Path) -> Result<PathBuf> {
+    // Use git rev-parse to find the git directory
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args(["rev-parse", "--git-common-dir"])
+        .output()
+        .context("Failed to resolve git directory")?;
+
+    if !output.status.success() {
+        // Not a git repository, return original path
+        return Ok(repo_path.to_path_buf());
+    }
+
+    let git_common_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // If it's ".git", we're in the main repo, use the original path
+    if git_common_dir == ".git" {
+        return Ok(repo_path.to_path_buf());
+    }
+
+    // Otherwise, resolve the common dir to get the main repo path
+    let common_path = PathBuf::from(&git_common_dir);
+    if common_path.is_absolute() {
+        // The common dir is usually like /path/to/repo/.git
+        // We want /path/to/repo
+        if let Some(parent) = common_path.parent() {
+            return Ok(parent.to_path_buf());
+        }
+    }
+
+    // Fall back to original path
+    Ok(repo_path.to_path_buf())
 }
 
 /// Get all commit hashes from a specific branch (excluding those already on the base branch)
@@ -3151,6 +3218,210 @@ mod tests {
             .unwrap();
         assert_eq!(prod_1_2_3.target, "production");
         assert_eq!(prod_1_2_3.version, "1.2.3");
+    }
+
+    /// # List Patch Branches Detailed - With Skipped Branches
+    ///
+    /// Tests that branches matching 'patch/*' but not in expected format are reported.
+    ///
+    /// ## Test Scenario
+    /// - Creates patch branches with valid format
+    /// - Creates patch branches WITHOUT hyphens (invalid format)
+    /// - Tests that invalid branches are tracked in skipped_branches
+    ///
+    /// ## Expected Outcome
+    /// - Valid branches are returned in branches vec
+    /// - Invalid branches are reported in skipped_branches
+    /// - total_matching_pattern reflects all matching branches
+    #[test]
+    fn test_list_patch_branches_detailed_with_skipped() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create valid patch branches
+        for branch in &["patch/next-1.0.0", "patch/main-2.0.0"] {
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["branch", branch])
+                .output()
+                .unwrap();
+        }
+
+        // Create INVALID patch branches (no hyphen)
+        for branch in &["patch/fix", "patch/hotfix", "patch/release"] {
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["branch", branch])
+                .output()
+                .unwrap();
+        }
+
+        let result = list_patch_branches_detailed(&repo_path).unwrap();
+
+        // Should have 2 valid branches
+        assert_eq!(result.branches.len(), 2);
+
+        // Should have 3 skipped branches
+        assert_eq!(result.skipped_branches.len(), 3);
+        assert!(result.skipped_branches.contains(&"patch/fix".to_string()));
+        assert!(
+            result
+                .skipped_branches
+                .contains(&"patch/hotfix".to_string())
+        );
+        assert!(
+            result
+                .skipped_branches
+                .contains(&"patch/release".to_string())
+        );
+
+        // Total should be 5
+        assert_eq!(result.total_matching_pattern, 5);
+    }
+
+    /// # List Patch Branches Detailed - No Branches
+    ///
+    /// Tests the detailed function when no branches match the pattern.
+    ///
+    /// ## Test Scenario
+    /// - Creates a repo with no patch branches
+    ///
+    /// ## Expected Outcome
+    /// - branches is empty
+    /// - skipped_branches is empty
+    /// - total_matching_pattern is 0
+    #[test]
+    fn test_list_patch_branches_detailed_no_branches() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        // Create only non-patch branches
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "feature/test"])
+            .output()
+            .unwrap();
+
+        let result = list_patch_branches_detailed(&repo_path).unwrap();
+
+        assert!(result.branches.is_empty());
+        assert!(result.skipped_branches.is_empty());
+        assert_eq!(result.total_matching_pattern, 0);
+    }
+
+    /// # Resolve Git Repo Path - Main Repository
+    ///
+    /// Tests that resolve_git_repo_path returns the same path for main repos.
+    ///
+    /// ## Test Scenario
+    /// - Creates a normal git repository
+    /// - Calls resolve_git_repo_path
+    ///
+    /// ## Expected Outcome
+    /// - Returns the same path (not modified)
+    #[test]
+    fn test_resolve_git_repo_path_main_repo() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        fs::write(repo_path.join("test.txt"), "initial").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Initial commit"])
+            .output()
+            .unwrap();
+
+        let resolved = resolve_git_repo_path(&repo_path).unwrap();
+        assert_eq!(resolved, repo_path);
+    }
+
+    /// # Resolve Git Repo Path - Worktree
+    ///
+    /// Tests that resolve_git_repo_path resolves worktree paths to main repo.
+    ///
+    /// ## Test Scenario
+    /// - Creates a main repo with a worktree
+    /// - Calls resolve_git_repo_path from the worktree path
+    ///
+    /// ## Expected Outcome
+    /// - Returns the main repository path
+    #[test]
+    fn test_resolve_git_repo_path_worktree() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        fs::write(repo_path.join("target.txt"), "target content").unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["commit", "-m", "Target commit"])
+            .output()
+            .unwrap();
+
+        // Push to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "-u", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        // Go back to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create worktree
+        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
+
+        // Resolve from worktree should return main repo
+        let resolved = resolve_git_repo_path(&worktree_path).unwrap();
+
+        // The resolved path should be the main repo path
+        // Note: We compare canonicalized paths to handle symlinks
+        let main_canonical = repo_path.canonicalize().unwrap();
+        let resolved_canonical = resolved.canonicalize().unwrap();
+        assert_eq!(resolved_canonical, main_canonical);
     }
 
     /// # Check Patch Merged (Regular Merge)

@@ -1,6 +1,6 @@
 use super::CleanupModeState;
 use crate::{
-    git::{check_patch_merged, list_patch_branches},
+    git::{check_patch_merged, list_patch_branches_detailed},
     models::AppConfig,
     ui::apps::CleanupApp,
     ui::state::CleanupBranchSelectionState,
@@ -18,6 +18,13 @@ use ratatui::{
 };
 use std::path::Path;
 
+/// Result of loading patch branches with detailed information for error reporting
+struct LoadBranchesResult {
+    branches: Vec<crate::models::CleanupBranch>,
+    skipped_branches: Vec<String>,
+    total_matching_pattern: usize,
+}
+
 type AsyncTaskHandle<T> = tokio::task::JoinHandle<Result<T>>;
 
 pub struct CleanupDataLoadingState {
@@ -25,7 +32,7 @@ pub struct CleanupDataLoadingState {
     status: String,
     progress: f64,
     error: Option<String>,
-    loading_task: Option<AsyncTaskHandle<Vec<crate::models::CleanupBranch>>>,
+    loading_task: Option<AsyncTaskHandle<LoadBranchesResult>>,
 }
 
 impl Default for CleanupDataLoadingState {
@@ -99,14 +106,12 @@ impl CleanupDataLoadingState {
             && task.is_finished()
         {
             match task.await {
-                Ok(Ok(branches)) => {
-                    if branches.is_empty() {
+                Ok(Ok(result)) => {
+                    if result.branches.is_empty() {
                         self.status = "No patch branches found.".to_string();
-                        self.error = Some(
-                            "No patch branches matching 'patch/*' pattern were found.".to_string(),
-                        );
+                        self.error = Some(build_no_branches_error(&result));
                     } else {
-                        self.status = format!("Found {} patch branches.", branches.len());
+                        self.status = format!("Found {} patch branches.", result.branches.len());
                     }
                     self.progress = 1.0;
                     self.loaded = true;
@@ -130,22 +135,60 @@ impl CleanupDataLoadingState {
     }
 }
 
+/// Build a detailed error message based on what was found during branch listing
+fn build_no_branches_error(result: &LoadBranchesResult) -> String {
+    if result.total_matching_pattern == 0 {
+        // No branches matched the pattern at all
+        "No branches matching 'patch/*' pattern were found. \
+         Make sure you're pointing to the correct repository path."
+            .to_string()
+    } else if !result.skipped_branches.is_empty() {
+        // Branches were found but they don't match the expected format
+        let skipped_list = result
+            .skipped_branches
+            .iter()
+            .take(5) // Show first 5 examples
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = if result.skipped_branches.len() > 5 {
+            format!(" (and {} more)", result.skipped_branches.len() - 5)
+        } else {
+            String::new()
+        };
+        format!(
+            "Found {} branches matching 'patch/*', but none match the expected format \
+             'patch/<target>-<version>'. Branches found: {}{}. \
+             Cleanup mode only works with branches created by merge mode.",
+            result.total_matching_pattern, skipped_list, more
+        )
+    } else {
+        // Should not happen, but fallback message
+        "No patch branches matching 'patch/*' pattern were found.".to_string()
+    }
+}
+
 async fn load_and_analyze_branches(
     repo_path: &str,
     target_branch: &str,
-) -> Result<Vec<crate::models::CleanupBranch>> {
+) -> Result<LoadBranchesResult> {
     let path = Path::new(repo_path);
 
-    // List all patch branches
-    let mut branches = list_patch_branches(path)?;
+    // List all patch branches with detailed information
+    let result = list_patch_branches_detailed(path)?;
 
     // Check which branches are merged
+    let mut branches = result.branches;
     for branch in &mut branches {
         let is_merged = check_patch_merged(path, &branch.name, target_branch)?;
         branch.is_merged = is_merged;
     }
 
-    Ok(branches)
+    Ok(LoadBranchesResult {
+        branches,
+        skipped_branches: result.skipped_branches,
+        total_matching_pattern: result.total_matching_pattern,
+    })
 }
 
 // ============================================================================
@@ -261,10 +304,10 @@ impl ModeState for CleanupDataLoadingState {
                             // Stay in this state to show the error
                             return StateChange::Keep;
                         } else if let Some(task) = self.loading_task.take()
-                            && let Ok(Ok(branches)) = task.await
+                            && let Ok(Ok(result)) = task.await
                         {
                             // Update app state with loaded branches
-                            *app.cleanup_branches_mut() = branches;
+                            *app.cleanup_branches_mut() = result.branches;
 
                             // Check if we have a local_repo path set
                             let repo_path = app.local_repo().map(std::path::PathBuf::from);
