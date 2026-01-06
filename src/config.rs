@@ -28,7 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Temporary struct for deserializing TOML configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct ConfigFile {
     pub organization: Option<String>,
     pub project: Option<String>,
@@ -43,6 +43,9 @@ struct ConfigFile {
     pub max_concurrent_processing: Option<usize>,
     pub tag_prefix: Option<String>,
     pub run_hooks: Option<bool>,
+    // UI Settings
+    pub show_dependency_highlights: Option<bool>,
+    pub show_work_item_highlights: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -60,6 +63,9 @@ pub struct Config {
     pub max_concurrent_processing: Option<ParsedProperty<usize>>,
     pub tag_prefix: Option<ParsedProperty<String>>,
     pub run_hooks: Option<ParsedProperty<bool>>,
+    // UI Settings
+    pub show_dependency_highlights: Option<ParsedProperty<bool>>,
+    pub show_work_item_highlights: Option<ParsedProperty<bool>>,
 }
 
 impl Default for Config {
@@ -78,6 +84,9 @@ impl Default for Config {
             max_concurrent_processing: Some(ParsedProperty::Default(10)),
             tag_prefix: Some(ParsedProperty::Default("merged-".to_string())),
             run_hooks: Some(ParsedProperty::Default(false)),
+            // UI Settings - both enabled by default
+            show_dependency_highlights: Some(ParsedProperty::Default(true)),
+            show_work_item_highlights: Some(ParsedProperty::Default(true)),
         }
     }
 }
@@ -137,6 +146,12 @@ impl Config {
             run_hooks: config_file
                 .run_hooks
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            show_dependency_highlights: config_file
+                .show_dependency_highlights
+                .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            show_work_item_highlights: config_file
+                .show_work_item_highlights
+                .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
         })
     }
 
@@ -185,6 +200,8 @@ impl Config {
                 max_concurrent_processing: None,
                 tag_prefix: None,
                 run_hooks: None,
+                show_dependency_highlights: None,
+                show_work_item_highlights: None,
             };
         }
 
@@ -209,6 +226,8 @@ impl Config {
                 max_concurrent_processing: None,
                 tag_prefix: None,
                 run_hooks: None,
+                show_dependency_highlights: None,
+                show_work_item_highlights: None,
             };
         }
 
@@ -259,6 +278,20 @@ impl Config {
                     .ok()
                     .map(|v| ParsedProperty::Env(v, s.clone()))
             }),
+            show_dependency_highlights: std::env::var("MERGERS_SHOW_DEPENDENCY_HIGHLIGHTS")
+                .ok()
+                .and_then(|s| {
+                    s.parse::<bool>()
+                        .ok()
+                        .map(|v| ParsedProperty::Env(v, s.clone()))
+                }),
+            show_work_item_highlights: std::env::var("MERGERS_SHOW_WORK_ITEM_HIGHLIGHTS")
+                .ok()
+                .and_then(|s| {
+                    s.parse::<bool>()
+                        .ok()
+                        .map(|v| ParsedProperty::Env(v, s.clone()))
+                }),
         }
     }
 
@@ -306,6 +339,12 @@ impl Config {
                 .or(self.max_concurrent_processing),
             tag_prefix: other.tag_prefix.or(self.tag_prefix),
             run_hooks: other.run_hooks.or(self.run_hooks),
+            show_dependency_highlights: other
+                .show_dependency_highlights
+                .or(self.show_dependency_highlights),
+            show_work_item_highlights: other
+                .show_work_item_highlights
+                .or(self.show_work_item_highlights),
         }
     }
 
@@ -354,6 +393,13 @@ max_concurrent_network = 100
 
 # Maximum number of concurrent processing operations (optional, defaults to 10)
 max_concurrent_processing = 10
+
+# UI Settings
+# Show dependency highlighting in PR selection (optional, defaults to true)
+show_dependency_highlights = true
+
+# Show work item relationship highlighting in PR selection (optional, defaults to true)
+show_work_item_highlights = true
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
@@ -364,6 +410,40 @@ max_concurrent_processing = 10
         })?;
 
         println!("Sample config created at: {}", config_path.display());
+        Ok(())
+    }
+
+    /// Save UI settings to the config file.
+    ///
+    /// This method reads the existing config file (if any), updates only the UI settings,
+    /// and writes the result back to preserve user's other settings.
+    pub fn save_ui_settings(
+        show_dependency_highlights: bool,
+        show_work_item_highlights: bool,
+    ) -> Result<()> {
+        let config_path = Self::get_config_path()?;
+
+        // Read existing config file or start with empty
+        let mut config_file: ConfigFile = if config_path.exists() {
+            let content = fs::read_to_string(&config_path).with_context(|| {
+                format!("Failed to read config file: {}", config_path.display())
+            })?;
+            toml::from_str(&content).unwrap_or_default()
+        } else {
+            ConfigFile::default()
+        };
+
+        // Update UI settings
+        config_file.show_dependency_highlights = Some(show_dependency_highlights);
+        config_file.show_work_item_highlights = Some(show_work_item_highlights);
+
+        // Serialize and write
+        let toml_string =
+            toml::to_string_pretty(&config_file).with_context(|| "Failed to serialize config")?;
+
+        fs::write(&config_path, toml_string)
+            .with_context(|| format!("Failed to write config to: {}", config_path.display()))?;
+
         Ok(())
     }
 }
@@ -700,6 +780,8 @@ mod tests {
             max_concurrent_processing: Some(ParsedProperty::Default(5)),
             tag_prefix: Some(ParsedProperty::Default("base-".to_string())),
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let other = Config {
@@ -716,6 +798,8 @@ mod tests {
             max_concurrent_processing: Some(ParsedProperty::Default(15)),
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let merged = base.merge(other);
@@ -795,6 +879,8 @@ mod tests {
             max_concurrent_processing: None,
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let empty2 = Config {
@@ -811,6 +897,8 @@ mod tests {
             max_concurrent_processing: None,
             tag_prefix: None,
             run_hooks: None,
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1253,6 +1341,8 @@ invalid toml syntax here [
             max_concurrent_processing: Some(ParsedProperty::Default(20)),
             tag_prefix: Some(ParsedProperty::Default("release-".to_string())),
             run_hooks: Some(ParsedProperty::Default(false)),
+            show_dependency_highlights: Some(ParsedProperty::Default(true)),
+            show_work_item_highlights: Some(ParsedProperty::Default(true)),
         };
 
         // Test serialization to TOML (serializes with enum variant info)
@@ -1264,5 +1354,381 @@ invalid toml syntax here [
         let deserialized: Config = toml::from_str(&toml_string).unwrap();
         assert_eq!(deserialized.organization, config.organization);
         assert_eq!(deserialized.parallel_limit, config.parallel_limit);
+    }
+
+    /// # UI Settings Default Values
+    ///
+    /// Tests that UI settings have correct default values.
+    ///
+    /// ## Test Scenario
+    /// - Creates a default Config instance
+    /// - Validates UI settings fields have expected defaults
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_highlights defaults to true
+    /// - show_work_item_highlights defaults to true
+    #[test]
+    fn test_ui_settings_defaults() {
+        let config = Config::default();
+
+        // Both highlight settings should default to true
+        assert_eq!(
+            config.show_dependency_highlights,
+            Some(ParsedProperty::Default(true))
+        );
+        assert_eq!(
+            config.show_work_item_highlights,
+            Some(ParsedProperty::Default(true))
+        );
+    }
+
+    /// # Save UI Settings Creates Config File
+    ///
+    /// Tests that save_ui_settings creates a config file with correct values.
+    ///
+    /// ## Test Scenario
+    /// - Sets XDG_CONFIG_HOME to a temp directory
+    /// - Saves UI settings with specific values
+    /// - Reads back the config file and verifies content
+    ///
+    /// ## Expected Outcome
+    /// - Config file is created in correct location
+    /// - UI settings are correctly serialized
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_save_ui_settings_creates_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        // Save settings with specific values
+        let result = Config::save_ui_settings(false, true);
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(result.is_ok());
+
+        // Verify the config file was created
+        let config_path = temp_dir.path().join("mergers").join("config.toml");
+        assert!(config_path.exists());
+
+        // Read and verify content
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("show_dependency_highlights = false"));
+        assert!(content.contains("show_work_item_highlights = true"));
+    }
+
+    /// # Save UI Settings Preserves Other Settings
+    ///
+    /// Tests that saving UI settings doesn't overwrite other config values.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with existing settings
+    /// - Saves UI settings
+    /// - Verifies original settings are preserved
+    ///
+    /// ## Expected Outcome
+    /// - Existing settings remain unchanged
+    /// - UI settings are added/updated
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_save_ui_settings_preserves_existing_settings() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create the config directory
+        let config_dir = temp_dir.path().join("mergers");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        // Create an existing config with some settings
+        let config_path = config_dir.join("config.toml");
+        let existing_content = r#"
+organization = "my-org"
+project = "my-project"
+dev_branch = "develop"
+"#;
+        fs::write(&config_path, existing_content).unwrap();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        // Save UI settings
+        let result = Config::save_ui_settings(true, false);
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(result.is_ok());
+
+        // Read and verify content
+        let content = fs::read_to_string(&config_path).unwrap();
+
+        // Original settings should be preserved
+        assert!(content.contains("organization"));
+        assert!(content.contains("my-org"));
+        assert!(content.contains("project"));
+        assert!(content.contains("my-project"));
+        assert!(content.contains("dev_branch"));
+        assert!(content.contains("develop"));
+
+        // UI settings should be present
+        assert!(content.contains("show_dependency_highlights = true"));
+        assert!(content.contains("show_work_item_highlights = false"));
+    }
+
+    /// # Load UI Settings From File
+    ///
+    /// Tests that UI settings are correctly loaded from config file.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with UI settings
+    /// - Loads the config
+    /// - Verifies UI settings are correctly parsed
+    ///
+    /// ## Expected Outcome
+    /// - UI settings match values in config file
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_load_ui_settings_from_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Create the config directory
+        let config_dir = temp_dir.path().join("mergers");
+        fs::create_dir_all(&config_dir).unwrap();
+
+        // Create config with UI settings
+        let config_path = config_dir.join("config.toml");
+        let content = r#"
+show_dependency_highlights = false
+show_work_item_highlights = true
+"#;
+        fs::write(&config_path, content).unwrap();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        // Load config
+        let config = Config::load_from_file().unwrap();
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        // Verify UI settings
+        assert!(config.show_dependency_highlights.is_some());
+        assert!(!*config.show_dependency_highlights.unwrap().value());
+
+        assert!(config.show_work_item_highlights.is_some());
+        assert!(*config.show_work_item_highlights.unwrap().value());
+    }
+
+    /// # UI Settings Round Trip
+    ///
+    /// Tests saving and loading UI settings preserves values.
+    ///
+    /// ## Test Scenario
+    /// - Saves UI settings with specific values
+    /// - Loads the config back
+    /// - Verifies values match what was saved
+    ///
+    /// ## Expected Outcome
+    /// - Loaded values match saved values exactly
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_ui_settings_round_trip() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        // Save settings
+        Config::save_ui_settings(false, false).unwrap();
+
+        // Load and verify
+        let config = Config::load_from_file().unwrap();
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(!*config.show_dependency_highlights.unwrap().value());
+        assert!(!*config.show_work_item_highlights.unwrap().value());
+    }
+
+    /// # Config Path Structure
+    ///
+    /// Tests that the config path follows correct structure.
+    ///
+    /// ## Test Scenario
+    /// - Gets config path with known XDG_CONFIG_HOME
+    /// - Verifies path structure
+    ///
+    /// ## Expected Outcome
+    /// - Path is XDG_CONFIG_HOME/mergers/config.toml
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_config_path_structure() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let path = Config::get_config_path().unwrap();
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        // Verify path structure
+        assert!(path.ends_with("config.toml"));
+        assert!(path.to_string_lossy().contains("mergers"));
+        assert_eq!(path.file_name().unwrap(), "config.toml");
+        assert_eq!(path.parent().unwrap().file_name().unwrap(), "mergers");
+    }
+
+    /// # UI Settings Merge Precedence
+    ///
+    /// Tests that UI settings follow correct merge precedence.
+    ///
+    /// ## Test Scenario
+    /// - Creates configs with UI settings from different sources
+    /// - Merges them in order
+    /// - Verifies precedence is correct
+    ///
+    /// ## Expected Outcome
+    /// - Later (higher priority) values override earlier ones
+    #[test]
+    fn test_ui_settings_merge_precedence() {
+        let base = Config {
+            organization: None,
+            project: None,
+            repository: None,
+            pat: None,
+            dev_branch: None,
+            target_branch: None,
+            local_repo: None,
+            work_item_state: None,
+            parallel_limit: None,
+            max_concurrent_network: None,
+            max_concurrent_processing: None,
+            tag_prefix: None,
+            run_hooks: None,
+            show_dependency_highlights: Some(ParsedProperty::Default(true)),
+            show_work_item_highlights: Some(ParsedProperty::Default(true)),
+        };
+
+        let override_config = Config {
+            organization: None,
+            project: None,
+            repository: None,
+            pat: None,
+            dev_branch: None,
+            target_branch: None,
+            local_repo: None,
+            work_item_state: None,
+            parallel_limit: None,
+            max_concurrent_network: None,
+            max_concurrent_processing: None,
+            tag_prefix: None,
+            run_hooks: None,
+            show_dependency_highlights: Some(ParsedProperty::Default(false)),
+            show_work_item_highlights: None, // Should keep base value
+        };
+
+        let merged = base.merge(override_config);
+
+        // Override takes precedence
+        assert!(!*merged.show_dependency_highlights.unwrap().value());
+        // Base value is kept when override is None
+        assert!(*merged.show_work_item_highlights.unwrap().value());
+    }
+
+    /// # Save UI Settings Creates Directory
+    ///
+    /// Tests that save_ui_settings creates the config directory if needed.
+    ///
+    /// ## Test Scenario
+    /// - Sets XDG_CONFIG_HOME to a temp directory without mergers subdirectory
+    /// - Saves UI settings
+    /// - Verifies directory and file are created
+    ///
+    /// ## Expected Outcome
+    /// - mergers directory is created
+    /// - config.toml is created inside it
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_save_ui_settings_creates_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+
+        // Verify mergers directory doesn't exist yet
+        let mergers_dir = temp_dir.path().join("mergers");
+        assert!(!mergers_dir.exists());
+
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        // Save settings
+        let result = Config::save_ui_settings(true, true);
+
+        // Restore original XDG_CONFIG_HOME
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(result.is_ok());
+
+        // Verify directory and file were created
+        assert!(mergers_dir.exists());
+        assert!(mergers_dir.join("config.toml").exists());
     }
 }

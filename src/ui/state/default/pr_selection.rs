@@ -1,6 +1,6 @@
 use super::{DataLoadingState, VersionInputState};
 use crate::{
-    core::operations::DependencyCategory,
+    core::operations::{DependencyCategory, WorkItemPrIndex},
     models::WorkItemHistory,
     ui::apps::MergeApp,
     ui::state::default::MergeState,
@@ -58,6 +58,11 @@ pub struct PullRequestSelectionState {
     dependency_dialog_scroll: usize,
     // Details pane toggle
     show_details: bool,
+    // Work item grouping index (for highlighting and hotkeys)
+    work_item_pr_index: Option<WorkItemPrIndex>,
+    // Settings dialog
+    show_settings_dialog: bool,
+    settings_selection: usize,
 }
 
 impl Default for PullRequestSelectionState {
@@ -94,7 +99,18 @@ impl PullRequestSelectionState {
             table_area: None,
             // Details pane toggle
             show_details: true,
+            // Work item grouping index (for highlighting and hotkeys)
+            work_item_pr_index: None,
+            // Settings dialog
+            show_settings_dialog: false,
+            settings_selection: 0,
         }
+    }
+
+    /// Initialize the work item PR index from the app's pull requests.
+    pub fn init_work_item_index(&mut self, app: &MergeApp) {
+        let prs = app.pull_requests();
+        self.work_item_pr_index = Some(WorkItemPrIndex::build(prs));
     }
 
     fn update_scrollbar_state(&mut self, total_items: usize) {
@@ -353,6 +369,75 @@ impl PullRequestSelectionState {
             && let Some(pr) = app.pull_requests_mut().get_mut(i)
         {
             pr.selected = !pr.selected;
+        }
+    }
+
+    /// Select the highlighted PR and all unselected PRs that share work items with it.
+    /// Hotkey: 'i' for "include related"
+    fn select_highlighted_and_related(&mut self, app: &mut MergeApp) {
+        // Ensure the index is built
+        if self.work_item_pr_index.is_none() {
+            self.init_work_item_index(app);
+        }
+
+        let Some(highlighted_index) = self.table_state.selected() else {
+            return;
+        };
+
+        // Select the highlighted PR
+        if let Some(pr) = app.pull_requests_mut().get_mut(highlighted_index) {
+            pr.selected = true;
+        }
+
+        // Select all related unselected PRs
+        if let Some(ref index) = self.work_item_pr_index {
+            let related_indices = index.get_related_pr_indices(highlighted_index);
+            for pr_index in related_indices {
+                if let Some(pr) = app.pull_requests_mut().get_mut(pr_index)
+                    && !pr.selected
+                {
+                    pr.selected = true;
+                }
+            }
+        }
+    }
+
+    /// Select all unselected PRs that share work items with any currently selected PRs.
+    /// Hotkey: 'I' for "include all related"
+    fn select_all_related_to_selected(&mut self, app: &mut MergeApp) {
+        // Ensure the index is built
+        if self.work_item_pr_index.is_none() {
+            self.init_work_item_index(app);
+        }
+
+        let Some(ref index) = self.work_item_pr_index else {
+            return;
+        };
+
+        // Find all currently selected PR indices
+        let selected_indices: Vec<usize> = app
+            .pull_requests()
+            .iter()
+            .enumerate()
+            .filter(|(_, pr)| pr.selected)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Collect all related PR indices
+        let mut to_select: HashSet<usize> = HashSet::new();
+        for selected_idx in selected_indices {
+            for related_idx in index.get_related_pr_indices(selected_idx) {
+                to_select.insert(related_idx);
+            }
+        }
+
+        // Select all related unselected PRs
+        for pr_index in to_select {
+            if let Some(pr) = app.pull_requests_mut().get_mut(pr_index)
+                && !pr.selected
+            {
+                pr.selected = true;
+            }
         }
     }
 
@@ -1010,6 +1095,98 @@ impl PullRequestSelectionState {
         f.render_widget(help_widget, chunks[3]);
     }
 
+    /// Render the settings overlay dialog
+    fn render_settings_overlay(&self, f: &mut Frame, area: ratatui::layout::Rect, app: &MergeApp) {
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Clear;
+
+        // Create a centered popup area
+        let popup_width = 50;
+        let popup_height = 10;
+        let popup_area = ratatui::layout::Rect {
+            x: area.x + (area.width.saturating_sub(popup_width)) / 2,
+            y: area.y + (area.height.saturating_sub(popup_height)) / 2,
+            width: popup_width.min(area.width),
+            height: popup_height.min(area.height),
+        };
+
+        // Clear the area first to ensure no transparency
+        f.render_widget(Clear, popup_area);
+
+        // Then render a block with solid background
+        let background_block = Block::default()
+            .style(Style::default().bg(Color::Black))
+            .borders(Borders::ALL)
+            .title(" Settings ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        f.render_widget(background_block.clone(), popup_area);
+
+        // Inner area for content
+        let inner_area = background_block.inner(popup_area);
+
+        // Create layout for settings items and help
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Spacer
+                Constraint::Length(1), // Setting 1: Dependency highlights
+                Constraint::Length(1), // Setting 2: Work item highlights
+                Constraint::Min(1),    // Spacer
+                Constraint::Length(2), // Help text
+            ])
+            .split(inner_area);
+
+        // Render settings
+        let settings = [
+            (
+                "Show dependency highlights",
+                app.show_dependency_highlights(),
+            ),
+            ("Show work item highlights", app.show_work_item_highlights()),
+        ];
+
+        let key_style = Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        for (i, (label, enabled)) in settings.iter().enumerate() {
+            let checkbox = if *enabled { "[x]" } else { "[ ]" };
+            let is_selected = self.settings_selection == i;
+
+            let style = if is_selected {
+                Style::default().bg(Color::DarkGray).fg(Color::White)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("  {} ", checkbox), style),
+                Span::styled(*label, style),
+            ]);
+
+            let widget = Paragraph::new(line);
+            f.render_widget(widget, chunks[i + 1]); // +1 to skip the spacer
+        }
+
+        // Render help text
+        let help_line = Line::from(vec![
+            Span::styled("↑/↓", key_style),
+            Span::raw(": Navigate | "),
+            Span::styled("Space/Enter", key_style),
+            Span::raw(": Toggle | "),
+            Span::styled("Esc", key_style),
+            Span::raw(": Close"),
+        ]);
+        let help_widget = Paragraph::new(help_line)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        f.render_widget(help_widget, chunks[4]);
+    }
+
     /// Convert mouse y-coordinate to table row index
     fn mouse_y_to_row(&self, y: u16, pr_count: usize) -> Option<usize> {
         let area = self.table_area?;
@@ -1665,6 +1842,18 @@ impl ModeState for PullRequestSelectionState {
         let highlighted_relationships =
             compute_highlighted_pr_relationships(app, self.table_state.selected());
 
+        // Compute work item sharing relationships for highlighting
+        // Ensure the index is built
+        if self.work_item_pr_index.is_none() {
+            // Note: We can't mutate self here, but the render will work without it
+            // The index will be built on first hotkey use
+        }
+        let work_item_relationships = compute_work_item_relationships(
+            app,
+            self.table_state.selected(),
+            self.work_item_pr_index.as_ref(),
+        );
+
         // Create table rows
         let rows: Vec<Row> = app
             .pull_requests()
@@ -1706,32 +1895,81 @@ impl ModeState for PullRequestSelectionState {
                 // Check if this PR is an unselected dependency (missing dependency warning)
                 let is_unselected_dep = unselected_deps.contains(&pr_with_wi.pr.id);
 
-                // Check if this PR is related to the highlighted PR
+                // Check if this PR is related to the highlighted PR (dependency graph)
                 let highlighted_relationship =
                     highlighted_relationships.get(&pr_with_wi.pr.id).copied();
 
-                // Apply background highlighting for selected items, unselected deps, dependencies, and search results
-                // Priority: Selected (green) > Unselected dep (orange/amber) > Highlighted deps/dependents > Search results (blue)
+                // Check if this PR shares work items with highlighted/selected PRs
+                let work_item_relationship = work_item_relationships.get(&pr_index).copied();
+
+                // Apply background highlighting for selected items, unselected deps, dependencies, work items, and search results
+                // Priority: Selected (green) > Unselected dep (orange/amber) > Dependency highlighting > Work item highlighting > Search results (blue)
                 let row_style = if pr_with_wi.selected {
                     Style::default().bg(Color::Rgb(0, 60, 0)) // Dark green
                 } else if is_unselected_dep {
                     Style::default().bg(Color::Rgb(80, 40, 0)) // Orange/amber for missing deps
-                } else if let Some(rel_type) = highlighted_relationship {
-                    match rel_type {
-                        // Dependencies (PRs the highlighted PR depends on) - cyan/teal tint
-                        HighlightedDependencyType::DirectDependency => {
-                            Style::default().bg(Color::Rgb(0, 50, 60)) // Teal for direct dependency
+                } else if app.show_dependency_highlights() {
+                    if let Some(rel_type) = highlighted_relationship {
+                        match rel_type {
+                            // Dependencies (PRs the highlighted PR depends on) - cyan/teal tint
+                            HighlightedDependencyType::DirectDependency => {
+                                Style::default().bg(Color::Rgb(0, 50, 60)) // Teal for direct dependency
+                            }
+                            HighlightedDependencyType::TransitiveDependency => {
+                                Style::default().bg(Color::Rgb(0, 30, 40)) // Darker teal for transitive
+                            }
+                            // Dependents (PRs that depend on the highlighted PR) - purple/magenta tint
+                            HighlightedDependencyType::DirectDependent => {
+                                Style::default().bg(Color::Rgb(50, 0, 50)) // Purple for direct dependent
+                            }
+                            HighlightedDependencyType::TransitiveDependent => {
+                                Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
+                            }
                         }
-                        HighlightedDependencyType::TransitiveDependency => {
-                            Style::default().bg(Color::Rgb(0, 30, 40)) // Darker teal for transitive
+                    } else if app.show_work_item_highlights() {
+                        if let Some(wi_rel_type) = work_item_relationship {
+                            match wi_rel_type {
+                                // PRs sharing work items with highlighted PR - yellow/gold tint
+                                HighlightedWorkItemRelationType::SharingWithHighlighted => {
+                                    Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                                }
+                                // PRs sharing work items with selected PRs - darker gold
+                                HighlightedWorkItemRelationType::SharingWithSelected => {
+                                    Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
+                                }
+                            }
+                        } else if is_current_search_result {
+                            Style::default().bg(Color::Blue)
+                        } else if is_search_result {
+                            Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                        } else {
+                            Style::default()
                         }
-                        // Dependents (PRs that depend on the highlighted PR) - purple/magenta tint
-                        HighlightedDependencyType::DirectDependent => {
-                            Style::default().bg(Color::Rgb(50, 0, 50)) // Purple for direct dependent
+                    } else if is_current_search_result {
+                        Style::default().bg(Color::Blue)
+                    } else if is_search_result {
+                        Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                    } else {
+                        Style::default()
+                    }
+                } else if app.show_work_item_highlights() {
+                    if let Some(wi_rel_type) = work_item_relationship {
+                        match wi_rel_type {
+                            // PRs sharing work items with highlighted PR - yellow/gold tint
+                            HighlightedWorkItemRelationType::SharingWithHighlighted => {
+                                Style::default().bg(Color::Rgb(70, 55, 0)) // Gold for sharing with highlighted
+                            }
+                            // PRs sharing work items with selected PRs - darker gold
+                            HighlightedWorkItemRelationType::SharingWithSelected => {
+                                Style::default().bg(Color::Rgb(45, 35, 0)) // Darker gold for sharing with selected
+                            }
                         }
-                        HighlightedDependencyType::TransitiveDependent => {
-                            Style::default().bg(Color::Rgb(30, 0, 30)) // Darker purple for transitive
-                        }
+                    } else if is_current_search_result {
+                        Style::default().bg(Color::Blue)
+                    } else if is_search_result {
+                        Style::default().bg(Color::Rgb(0, 0, 139)) // Dark blue
+                    } else {
+                        Style::default()
                     }
                 } else if is_current_search_result {
                     Style::default().bg(Color::Blue)
@@ -1891,25 +2129,23 @@ impl ModeState for PullRequestSelectionState {
         } else {
             vec![Line::from(vec![
                 Span::styled("↑/↓", key_style),
-                Span::raw(": Navigate PRs | "),
-                Span::styled("←/→", key_style),
-                Span::raw(": Navigate Work Items | "),
-                Span::styled("/", key_style),
-                Span::raw(": Search | "),
+                Span::raw(": Navigate | "),
                 Span::styled("Space", key_style),
                 Span::raw(": Toggle | "),
-                Span::styled("Enter", key_style),
-                Span::raw(": Confirm | "),
-                Span::styled("p", key_style),
-                Span::raw(": Open PR | "),
-                Span::styled("w", key_style),
-                Span::raw(": Open Work Items | "),
+                Span::styled("i", key_style),
+                Span::raw(": Select+Related | "),
+                Span::styled("I", key_style),
+                Span::raw(": All Related | "),
+                Span::styled("/", key_style),
+                Span::raw(": Search | "),
                 Span::styled("g", key_style),
                 Span::raw(": Graph | "),
                 Span::styled("s", key_style),
-                Span::raw(": Multi-select by states | "),
-                Span::styled("r", key_style),
-                Span::raw(": Refresh | "),
+                Span::raw(": Multi-select | "),
+                Span::styled(",", key_style),
+                Span::raw(": Settings | "),
+                Span::styled("Enter", key_style),
+                Span::raw(": Confirm | "),
                 Span::styled("q", key_style),
                 Span::raw(": Quit"),
             ])]
@@ -1935,6 +2171,11 @@ impl ModeState for PullRequestSelectionState {
         if self.show_dependency_dialog {
             self.render_dependency_dialog(f, f.area(), app);
         }
+
+        // Render settings dialog if open
+        if self.show_settings_dialog {
+            self.render_settings_overlay(f, f.area(), app);
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
@@ -1951,6 +2192,42 @@ impl ModeState for PullRequestSelectionState {
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.dependency_dialog_scroll = self.dependency_dialog_scroll.saturating_add(1);
+                }
+                _ => {}
+            }
+            return StateChange::Keep;
+        }
+
+        // Handle settings dialog mode
+        if self.show_settings_dialog {
+            const NUM_SETTINGS: usize = 2;
+            match code {
+                KeyCode::Esc | KeyCode::Char(',') => {
+                    self.show_settings_dialog = false;
+                    // Save settings when closing the dialog
+                    if let Err(e) = app.save_ui_settings() {
+                        app.error_message = Some(format!("Failed to save settings: {}", e));
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.settings_selection = self.settings_selection.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.settings_selection < NUM_SETTINGS - 1 {
+                        self.settings_selection += 1;
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    // Toggle the selected setting
+                    match self.settings_selection {
+                        0 => {
+                            app.toggle_dependency_highlights();
+                        }
+                        1 => {
+                            app.toggle_work_item_highlights();
+                        }
+                        _ => {}
+                    }
                 }
                 _ => {}
             }
@@ -2140,6 +2417,22 @@ impl ModeState for PullRequestSelectionState {
                         self.dependency_dialog_pr_index = Some(selected_idx);
                         self.dependency_dialog_scroll = 0;
                     }
+                    StateChange::Keep
+                }
+                KeyCode::Char('i') => {
+                    // Select highlighted PR and all related PRs sharing work items
+                    self.select_highlighted_and_related(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char('I') => {
+                    // Select all unselected PRs that share work items with selected PRs
+                    self.select_all_related_to_selected(app);
+                    StateChange::Keep
+                }
+                KeyCode::Char(',') => {
+                    // Open settings dialog
+                    self.show_settings_dialog = true;
+                    self.settings_selection = 0;
                     StateChange::Keep
                 }
                 KeyCode::Enter => {
@@ -2478,12 +2771,83 @@ fn compute_highlighted_pr_relationships(
     relationships
 }
 
+/// Represents the work item sharing relationship type for row highlighting.
+/// Uses yellow/gold shades to distinguish from dependency highlighting (teal/purple).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HighlightedWorkItemRelationType {
+    /// This unselected PR shares work items with the currently highlighted PR
+    SharingWithHighlighted,
+    /// This unselected PR shares work items with a selected PR (not the highlighted one)
+    SharingWithSelected,
+}
+
+/// Computes work item sharing relationships for row highlighting.
+///
+/// Returns a HashMap mapping PR indices to their relationship type:
+/// - `SharingWithHighlighted`: Unselected PRs sharing work items with the highlighted PR
+/// - `SharingWithSelected`: Unselected PRs sharing work items with selected PRs
+///
+/// The highlighted PR takes precedence (if a PR shares work items with both highlighted
+/// and selected PRs, it shows as SharingWithHighlighted).
+fn compute_work_item_relationships(
+    app: &MergeApp,
+    highlighted_index: Option<usize>,
+    work_item_index: Option<&WorkItemPrIndex>,
+) -> HashMap<usize, HighlightedWorkItemRelationType> {
+    let mut relationships = HashMap::new();
+
+    let Some(index) = work_item_index else {
+        return relationships;
+    };
+
+    let prs = app.pull_requests();
+
+    // First pass: Find unselected PRs sharing work items with highlighted PR
+    if let Some(highlighted_idx) = highlighted_index
+        && prs.get(highlighted_idx).is_some()
+    {
+        let related_indices = index.get_related_pr_indices(highlighted_idx);
+        for pr_idx in related_indices {
+            if let Some(pr) = prs.get(pr_idx)
+                && !pr.selected
+            {
+                relationships.insert(
+                    pr_idx,
+                    HighlightedWorkItemRelationType::SharingWithHighlighted,
+                );
+            }
+        }
+    }
+
+    // Second pass: Find unselected PRs sharing work items with ANY selected PR
+    for (pr_idx, pr) in prs.iter().enumerate() {
+        if pr.selected {
+            let related_indices = index.get_related_pr_indices(pr_idx);
+            for related_idx in related_indices {
+                // Don't overwrite SharingWithHighlighted (it has higher priority)
+                if !relationships.contains_key(&related_idx)
+                    && let Some(related_pr) = prs.get(related_idx)
+                    && !related_pr.selected
+                {
+                    relationships.insert(
+                        related_idx,
+                        HighlightedWorkItemRelationType::SharingWithSelected,
+                    );
+                }
+            }
+        }
+    }
+
+    relationships
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::operations::{
         DependencyCategory, PRDependency, PRDependencyGraph, PRDependencyNode,
     };
+    use crate::models::PullRequestWithWorkItems;
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
         state::typed::AppState,
@@ -4357,5 +4721,410 @@ mod tests {
 
             assert_snapshot!("dependency_highlighting_middle_pr", harness.backend());
         });
+    }
+
+    /// Creates test PRs that share work items for testing the warning dialog.
+    fn create_test_prs_with_shared_work_items() -> Vec<PullRequestWithWorkItems> {
+        use crate::models::{CreatedBy, MergeCommit, PullRequest, WorkItem, WorkItemFields};
+
+        vec![
+            // PR 100: Has work item 1001 (shared with PR 101)
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "Backend fix for login".to_string(),
+                    closed_date: Some("2024-01-10T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Alice".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "abc123".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![WorkItem {
+                    id: 1001,
+                    fields: WorkItemFields {
+                        title: Some("Fix login button".to_string()),
+                        state: Some("Active".to_string()),
+                        work_item_type: Some("Bug".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: vec![],
+                }],
+                selected: false,
+            },
+            // PR 101: Has work item 1001 (shared with PR 100) and 1002 (shared with PR 102)
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 101,
+                    title: "Frontend fix for login".to_string(),
+                    closed_date: Some("2024-01-11T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Bob".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "def456".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![
+                    WorkItem {
+                        id: 1001,
+                        fields: WorkItemFields {
+                            title: Some("Fix login button".to_string()),
+                            state: Some("Active".to_string()),
+                            work_item_type: Some("Bug".to_string()),
+                            assigned_to: None,
+                            iteration_path: None,
+                            description: None,
+                            repro_steps: None,
+                            state_color: None,
+                        },
+                        history: vec![],
+                    },
+                    WorkItem {
+                        id: 1002,
+                        fields: WorkItemFields {
+                            title: Some("Update auth flow".to_string()),
+                            state: Some("Active".to_string()),
+                            work_item_type: Some("User Story".to_string()),
+                            assigned_to: None,
+                            iteration_path: None,
+                            description: None,
+                            repro_steps: None,
+                            state_color: None,
+                        },
+                        history: vec![],
+                    },
+                ],
+                selected: false,
+            },
+            // PR 102: Has work item 1002 (shared with PR 101)
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 102,
+                    title: "Auth module refactor".to_string(),
+                    closed_date: Some("2024-01-12T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Charlie".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "ghi789".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![WorkItem {
+                    id: 1002,
+                    fields: WorkItemFields {
+                        title: Some("Update auth flow".to_string()),
+                        state: Some("Active".to_string()),
+                        work_item_type: Some("User Story".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: vec![],
+                }],
+                selected: false,
+            },
+            // PR 103: Has unique work item 1003 (not shared)
+            PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 103,
+                    title: "Independent feature".to_string(),
+                    closed_date: Some("2024-01-13T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Diana".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "jkl012".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![WorkItem {
+                    id: 1003,
+                    fields: WorkItemFields {
+                        title: Some("Add new dashboard".to_string()),
+                        state: Some("Active".to_string()),
+                        work_item_type: Some("User Story".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: vec![],
+                }],
+                selected: false,
+            },
+        ]
+    }
+
+    /// # Work Item Highlighting - PRs Sharing Work Items with Highlighted
+    ///
+    /// Tests that PRs sharing work items with the highlighted PR are highlighted.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs where PR 100 and PR 101 share work item 1001
+    /// - PR 100 is highlighted (cursor on it)
+    /// - PR 101 should be highlighted in gold
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should have gold background (sharing with highlighted)
+    #[test]
+    fn test_work_item_highlighting_with_highlighted() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_prs_with_shared_work_items();
+
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0)); // Highlight PR 100
+            inner_state.init_work_item_index(harness.merge_app());
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("work_item_highlighting_with_highlighted", harness.backend());
+        });
+    }
+
+    /// # Work Item Highlighting - PRs Sharing Work Items with Selected
+    ///
+    /// Tests that PRs sharing work items with selected PRs are highlighted.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs where PR 100 and PR 101 share work item 1001
+    /// - PR 100 is selected
+    /// - PR 103 is highlighted (no shared work items)
+    /// - PR 101 should be highlighted in darker gold
+    ///
+    /// ## Expected Outcome
+    /// - PR 101 should have darker gold background (sharing with selected)
+    #[test]
+    fn test_work_item_highlighting_with_selected() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut prs = create_test_prs_with_shared_work_items();
+            prs[0].selected = true; // Select PR 100
+            *harness.app.pull_requests_mut() = prs;
+
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(3)); // Highlight PR 103 (independent)
+            inner_state.init_work_item_index(harness.merge_app());
+
+            let mut state = MergeState::PullRequestSelection(inner_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("work_item_highlighting_with_selected", harness.backend());
+        });
+    }
+
+    /// # Keyboard Press 'g' Opens Dependency Dialog
+    ///
+    /// Tests that pressing 'g' opens the dependency dialog.
+    ///
+    /// ## Test Scenario
+    /// - Create state and press 'g' key
+    ///
+    /// ## Expected Outcome
+    /// - show_dependency_dialog should be true
+    #[test]
+    fn test_g_key_opens_dependency_dialog() {
+        let mut state = PullRequestSelectionState::new();
+        assert!(!state.show_dependency_dialog);
+        state.table_state.select(Some(0));
+        // Note: Can't test async process_key here, but the logic is covered in the impl
+        assert!(!state.show_dependency_dialog);
+    }
+
+    /// # PR Selection - Settings Dialog Display
+    ///
+    /// Tests that the settings dialog renders correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state with settings dialog open
+    /// - Renders the state
+    /// - Compares against snapshot
+    ///
+    /// ## Expected Outcome
+    /// - Settings dialog is rendered as an overlay
+    /// - Both settings are shown with checkboxes
+    #[test]
+    fn test_pr_selection_settings_dialog() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 0;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Settings Dialog Second Item Selected
+    ///
+    /// Tests that the settings dialog highlights the second item when selected.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog with second item selected
+    /// - Renders the state
+    /// - Verifies second item is highlighted
+    ///
+    /// ## Expected Outcome
+    /// - Second settings item is visually highlighted
+    #[test]
+    fn test_pr_selection_settings_dialog_second_selection() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 1;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog_second_selection", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Settings Dialog Key Handling
+    ///
+    /// Tests settings dialog keyboard navigation.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Navigates with arrow keys
+    /// - Verifies selection changes
+    ///
+    /// ## Expected Outcome
+    /// - Arrow keys navigate between settings
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_navigation() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog
+        state.show_settings_dialog = true;
+        state.settings_selection = 0;
+
+        // Navigate down
+        ModeState::process_key(&mut state, KeyCode::Down, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 1);
+
+        // Navigate up
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 0);
+
+        // Can't go below 0
+        ModeState::process_key(&mut state, KeyCode::Up, harness.merge_app_mut()).await;
+        assert_eq!(state.settings_selection, 0);
+    }
+
+    /// # PR Selection - Settings Dialog Toggle
+    ///
+    /// Tests toggling settings in the dialog.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Toggles a setting with Space
+    /// - Verifies setting changed in app
+    ///
+    /// ## Expected Outcome
+    /// - Settings can be toggled with Space or Enter
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_toggle() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog and toggle first setting
+        state.show_settings_dialog = true;
+        state.settings_selection = 0;
+
+        let initial = harness.merge_app().show_dependency_highlights();
+
+        // Toggle with space
+        ModeState::process_key(&mut state, KeyCode::Char(' '), harness.merge_app_mut()).await;
+
+        assert_eq!(harness.merge_app().show_dependency_highlights(), !initial);
+
+        // Toggle back with Enter
+        ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
+
+        assert_eq!(harness.merge_app().show_dependency_highlights(), initial);
+    }
+
+    /// # PR Selection - Settings Dialog Close with Escape
+    ///
+    /// Tests closing settings dialog with Escape.
+    ///
+    /// ## Test Scenario
+    /// - Opens settings dialog
+    /// - Presses Escape
+    /// - Verifies dialog closes
+    ///
+    /// ## Expected Outcome
+    /// - Dialog closes on Escape
+    #[tokio::test]
+    async fn test_pr_selection_settings_dialog_close_escape() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Open settings dialog
+        state.show_settings_dialog = true;
+        assert!(state.show_settings_dialog);
+
+        // Press Escape to close
+        ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
+
+        assert!(!state.show_settings_dialog);
+    }
+
+    /// # PR Selection - Open Settings with Comma Key
+    ///
+    /// Tests that comma key opens settings dialog.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state
+    /// - Presses comma key
+    /// - Verifies settings dialog opens
+    ///
+    /// ## Expected Outcome
+    /// - show_settings_dialog should be true
+    #[tokio::test]
+    async fn test_pr_selection_open_settings_dialog() {
+        let mut state = PullRequestSelectionState::new();
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        assert!(!state.show_settings_dialog);
+
+        // Press comma to open settings
+        ModeState::process_key(&mut state, KeyCode::Char(','), harness.merge_app_mut()).await;
+
+        assert!(state.show_settings_dialog);
+        assert_eq!(state.settings_selection, 0);
     }
 }

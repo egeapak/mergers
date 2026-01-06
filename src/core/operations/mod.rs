@@ -8,6 +8,7 @@
 //!
 //! - [`data_loading`] - Fetching PRs and work items from Azure DevOps
 //! - [`pr_selection`] - Filtering and selecting PRs by work item state
+//! - [`work_item_grouping`] - Grouping PRs that share work items
 //! - [`dependency_analysis`] - Analyzing file-level dependencies between PRs
 //! - [`cherry_pick`] - Cherry-picking commits with conflict handling
 //! - [`post_merge`] - Tagging PRs and updating work items
@@ -17,6 +18,7 @@ pub mod data_loading;
 pub mod dependency_analysis;
 pub mod post_merge;
 pub mod pr_selection;
+pub mod work_item_grouping;
 
 // Re-export commonly used types
 pub use cherry_pick::{
@@ -35,4 +37,7 @@ pub use post_merge::{
 };
 pub use pr_selection::{
     filter_prs_by_work_item_states, parse_work_item_states, select_prs_by_work_item_states,
+};
+pub use work_item_grouping::{
+    SelectionWarning, WorkItemPrIndex, check_selection_warning, get_work_item_title,
 };

@@ -23,8 +23,8 @@ pub const TEST_TERMINAL_HEIGHT: u16 = 50;
 /// This enum allows the harness to store a typed initial state
 /// for any mode while maintaining compile-time type safety.
 pub enum TypedInitialState {
-    /// Merge mode state
-    Merge(MergeState),
+    /// Merge mode state (boxed due to large size)
+    Merge(Box<MergeState>),
     /// Migration mode state
     Migration(MigrationModeState),
     /// Cleanup mode state
@@ -233,7 +233,7 @@ impl TuiTestHarness {
     ///
     /// This method should only be called when the harness is in merge mode.
     pub fn with_merge_state(mut self, state: MergeState) -> Self {
-        self.typed_initial_state = Some(TypedInitialState::Merge(state));
+        self.typed_initial_state = Some(TypedInitialState::Merge(Box::new(state)));
         self
     }
 
@@ -278,7 +278,7 @@ impl TuiTestHarness {
 
         match (&mut self.app, self.typed_initial_state.take()) {
             (App::Merge(app), Some(TypedInitialState::Merge(state))) => {
-                crate::ui::run_merge_app_with_state(&mut self.terminal, app, event_source, state)
+                crate::ui::run_merge_app_with_state(&mut self.terminal, app, event_source, *state)
                     .await
             }
             (App::Merge(app), None) => {

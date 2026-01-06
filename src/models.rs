@@ -1052,6 +1052,9 @@ impl Args {
                 .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
             // run_hooks is handled separately per command (MergeArgs has it, not SharedArgs)
             run_hooks: None,
+            // UI settings are not set via CLI, only via config file
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
         };
 
         // Merge configs: file < git_remote < env < cli

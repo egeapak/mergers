@@ -4,6 +4,7 @@
 //! the default merge mode (cherry-picking PRs from dev to target branch).
 
 use crate::{
+    Config,
     api::AzureDevOpsClient,
     core::operations::PRDependencyGraph,
     core::state::{LockGuard, MergePhase, MergeStateFile, StateCherryPickItem, StateItemStatus},
@@ -65,14 +66,59 @@ pub struct MergeApp {
     /// Cached dependency analysis result.
     /// Populated during data loading, before PR selection.
     dependency_graph: Option<PRDependencyGraph>,
+
+    // ==========================================================================
+    // UI Settings (runtime-modifiable, persisted to config file)
+    // ==========================================================================
+    /// Whether to show dependency highlighting in PR selection.
+    show_dependency_highlights: bool,
+
+    /// Whether to show work item relationship highlighting in PR selection.
+    show_work_item_highlights: bool,
 }
 
 impl MergeApp {
     /// Creates a new MergeApp with the given configuration, client, and browser opener.
+    ///
+    /// UI settings (show_dependency_highlights, show_work_item_highlights) are loaded
+    /// from the config file. If the config file doesn't exist or can't be read,
+    /// defaults to true for both settings.
     pub fn new(
         config: Arc<MergeConfig>,
         client: AzureDevOpsClient,
         browser: Box<dyn BrowserOpener>,
+    ) -> Self {
+        // Load UI settings from config file
+        let file_config = Config::load_from_file().unwrap_or_default();
+
+        let show_dependency_highlights = file_config
+            .show_dependency_highlights
+            .map(|p| *p.value())
+            .unwrap_or(true);
+
+        let show_work_item_highlights = file_config
+            .show_work_item_highlights
+            .map(|p| *p.value())
+            .unwrap_or(true);
+
+        Self::with_ui_settings(
+            config,
+            client,
+            browser,
+            show_dependency_highlights,
+            show_work_item_highlights,
+        )
+    }
+
+    /// Creates a new MergeApp with explicit UI settings.
+    ///
+    /// This is primarily used for testing where you want to control the settings directly.
+    pub fn with_ui_settings(
+        config: Arc<MergeConfig>,
+        client: AzureDevOpsClient,
+        browser: Box<dyn BrowserOpener>,
+        show_dependency_highlights: bool,
+        show_work_item_highlights: bool,
     ) -> Self {
         Self {
             base: AppBase::new(config, client, browser),
@@ -81,6 +127,8 @@ impl MergeApp {
             state_file: None,
             lock_guard: None,
             dependency_graph: None,
+            show_dependency_highlights,
+            show_work_item_highlights,
         }
     }
 
@@ -348,6 +396,52 @@ impl MergeApp {
     #[allow(dead_code)]
     pub fn clear_dependency_graph(&mut self) {
         self.dependency_graph = None;
+    }
+
+    // ==========================================================================
+    // UI Settings Management
+    // ==========================================================================
+
+    /// Returns whether dependency highlighting is enabled.
+    pub fn show_dependency_highlights(&self) -> bool {
+        self.show_dependency_highlights
+    }
+
+    /// Returns whether work item highlighting is enabled.
+    pub fn show_work_item_highlights(&self) -> bool {
+        self.show_work_item_highlights
+    }
+
+    /// Sets whether dependency highlighting is enabled.
+    pub fn set_show_dependency_highlights(&mut self, value: bool) {
+        self.show_dependency_highlights = value;
+    }
+
+    /// Sets whether work item highlighting is enabled.
+    pub fn set_show_work_item_highlights(&mut self, value: bool) {
+        self.show_work_item_highlights = value;
+    }
+
+    /// Toggles dependency highlighting and returns the new state.
+    pub fn toggle_dependency_highlights(&mut self) -> bool {
+        self.show_dependency_highlights = !self.show_dependency_highlights;
+        self.show_dependency_highlights
+    }
+
+    /// Toggles work item highlighting and returns the new state.
+    pub fn toggle_work_item_highlights(&mut self) -> bool {
+        self.show_work_item_highlights = !self.show_work_item_highlights;
+        self.show_work_item_highlights
+    }
+
+    /// Saves the current UI settings to the config file.
+    ///
+    /// This persists the highlight settings so they are restored on next run.
+    pub fn save_ui_settings(&self) -> Result<()> {
+        Config::save_ui_settings(
+            self.show_dependency_highlights,
+            self.show_work_item_highlights,
+        )
     }
 }
 
@@ -634,5 +728,107 @@ mod tests {
         // Test base_mut()
         app.base_mut().version = Some("2.0.0".to_string());
         assert_eq!(app.version, Some("2.0.0".to_string()));
+    }
+
+    /// # MergeApp UI Settings Defaults
+    ///
+    /// Tests that UI settings have correct defaults when created with explicit settings.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp with explicit UI settings
+    /// - Verifies settings match what was passed
+    ///
+    /// ## Expected Outcome
+    /// - Settings match constructor arguments
+    #[test]
+    fn test_ui_settings_with_explicit_values() {
+        let app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            false,
+            true,
+        );
+
+        assert!(!app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
+    }
+
+    /// # MergeApp UI Settings Toggle
+    ///
+    /// Tests that UI settings can be toggled correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp with known settings
+    /// - Toggles each setting
+    /// - Verifies settings changed
+    ///
+    /// ## Expected Outcome
+    /// - Toggle inverts the value
+    /// - Returns the new value
+    #[test]
+    fn test_ui_settings_toggle() {
+        let mut app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            true,
+            true,
+        );
+
+        // Initially both true
+        assert!(app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
+
+        // Toggle dependency highlights
+        let new_value = app.toggle_dependency_highlights();
+        assert!(!new_value);
+        assert!(!app.show_dependency_highlights());
+
+        // Toggle work item highlights
+        let new_value = app.toggle_work_item_highlights();
+        assert!(!new_value);
+        assert!(!app.show_work_item_highlights());
+
+        // Toggle again - should be back to true
+        let new_value = app.toggle_dependency_highlights();
+        assert!(new_value);
+        assert!(app.show_dependency_highlights());
+    }
+
+    /// # MergeApp UI Settings Setters
+    ///
+    /// Tests that UI settings can be set directly.
+    ///
+    /// ## Test Scenario
+    /// - Creates MergeApp
+    /// - Sets each setting to specific values
+    /// - Verifies settings were updated
+    ///
+    /// ## Expected Outcome
+    /// - Setters update the values correctly
+    #[test]
+    fn test_ui_settings_setters() {
+        let mut app = MergeApp::with_ui_settings(
+            create_test_config(),
+            create_test_client(),
+            Box::new(MockBrowserOpener::new()),
+            true,
+            true,
+        );
+
+        // Set to false
+        app.set_show_dependency_highlights(false);
+        app.set_show_work_item_highlights(false);
+
+        assert!(!app.show_dependency_highlights());
+        assert!(!app.show_work_item_highlights());
+
+        // Set back to true
+        app.set_show_dependency_highlights(true);
+        app.set_show_work_item_highlights(true);
+
+        assert!(app.show_dependency_highlights());
+        assert!(app.show_work_item_highlights());
     }
 }
