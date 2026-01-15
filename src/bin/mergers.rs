@@ -14,6 +14,7 @@ use mergers::{
     Args, AzureDevOpsClient, Commands, Config,
     config::Config as RawConfig,
     core::runner::{MergeRunnerConfig, NonInteractiveRunner, OutputFormat, RunResult},
+    logging::{init_logging, parse_early_log_config},
     models::{
         MergeAbortArgs, MergeCompleteArgs, MergeContinueArgs, MergeRunArgs, MergeStatusArgs,
         MergeSubcommand,
@@ -24,6 +25,14 @@ use mergers::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize logging early (before any other operations)
+    // Parse logging config from raw args and environment
+    let raw_args: Vec<String> = std::env::args().collect();
+    let log_config = parse_early_log_config(&raw_args);
+    let _log_guard = init_logging(log_config);
+
+    tracing::debug!("Mergers starting up");
+
     let args = Args::parse_with_default_mode();
 
     // Handle --create-config flag

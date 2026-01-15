@@ -167,6 +167,8 @@ impl AzureDevOpsClient {
     ///
     /// This method implements pagination to ensure all pull requests are retrieved.
     /// If `since` is provided, stops fetching when encountering PRs older than the specified date.
+    #[must_use = "this returns the fetched pull requests which should be used"]
+    #[tracing::instrument(skip(self), fields(dev_branch = %dev_branch))]
     pub async fn fetch_pull_requests(
         &self,
         dev_branch: &str,
@@ -239,6 +241,7 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches work items linked to a pull request.
+    #[must_use = "this returns the fetched work items which should be used"]
     pub async fn fetch_work_items_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
         // Get work item refs linked to the PR
         let refs = self
@@ -298,6 +301,7 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches the merge commit for a pull request.
+    #[must_use = "this returns the merge commit which should be used"]
     pub async fn fetch_pr_commit(&self, pr_id: i32) -> Result<MergeCommit> {
         let pr = self
             .git_client
@@ -314,6 +318,8 @@ impl AzureDevOpsClient {
     }
 
     /// Adds a label to a pull request.
+    #[must_use = "this operation can fail and the result should be checked"]
+    #[tracing::instrument(skip(self))]
     pub async fn add_label_to_pr(&self, pr_id: i32, label: &str) -> Result<()> {
         let label_data = git::models::WebApiCreateTagRequestData {
             name: label.to_string(),
@@ -335,6 +341,7 @@ impl AzureDevOpsClient {
     }
 
     /// Updates the state of a work item.
+    #[must_use = "this operation can fail and the result should be checked"]
     pub async fn update_work_item_state(&self, work_item_id: i32, new_state: &str) -> Result<()> {
         let patch = vec![wit::models::JsonPatchOperation {
             op: Some(wit::models::json_patch_operation::Op::Add),
@@ -353,6 +360,7 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches the revision history for a work item.
+    #[must_use = "this returns the work item history which should be used"]
     pub async fn fetch_work_item_history(&self, work_item_id: i32) -> Result<Vec<WorkItemHistory>> {
         let updates = self
             .wit_client
@@ -371,6 +379,7 @@ impl AzureDevOpsClient {
     /// Fetches state colors for a specific work item type.
     ///
     /// Returns a map of state name to hex color string (e.g., "007acc").
+    #[must_use = "this returns the state colors which should be used"]
     pub async fn fetch_work_item_type_state_colors(
         &self,
         work_item_type: &str,
@@ -439,6 +448,7 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches work items with their history for a PR, using parallel fetching.
+    #[must_use = "this returns work items with history which should be used"]
     pub async fn fetch_work_items_with_history_for_pr_parallel(
         &self,
         pr_id: i32,
@@ -470,6 +480,7 @@ impl AzureDevOpsClient {
     }
 
     /// Fetches work items with history for a PR (sequential, for backward compatibility).
+    #[must_use = "this returns work items with history which should be used"]
     pub async fn fetch_work_items_with_history_for_pr(&self, pr_id: i32) -> Result<Vec<WorkItem>> {
         self.fetch_work_items_with_history_for_pr_parallel(pr_id, 10)
             .await
@@ -556,6 +567,7 @@ impl AzureDevOpsClient {
     ///
     /// Returns the RGB color tuple if available in cache, None otherwise.
     /// State colors are consistent across work item types.
+    #[must_use]
     pub fn get_cached_state_color(&self, state: &str) -> Option<(u8, u8, u8)> {
         self.state_color_cache
             .read()
@@ -623,6 +635,7 @@ fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
 ///
 /// This is used to prevent re-processing PRs that have already been tagged
 /// after a successful merge operation.
+#[must_use]
 pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> {
     prs.into_iter()
         .filter(|pr| {

@@ -37,6 +37,7 @@ pub mod core;
 pub mod error;
 pub mod git;
 pub mod git_config;
+pub mod logging;
 pub mod migration;
 pub mod models;
 pub mod parsed_property;

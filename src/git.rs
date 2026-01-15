@@ -349,6 +349,7 @@ pub fn create_worktree(
     Ok(worktree_path)
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn force_remove_worktree(base_repo_path: &Path, version: &str) -> Result<()> {
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
@@ -374,6 +375,7 @@ pub fn force_remove_worktree(base_repo_path: &Path, version: &str) -> Result<()>
     Ok(())
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn force_delete_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     // Delete local branch if it exists
     let _delete_output = Command::new("git")
@@ -480,6 +482,8 @@ pub enum CherryPickResult {
     Failed(String),
 }
 
+#[must_use = "this returns the cherry-pick result which must be handled"]
+#[tracing::instrument(skip(repo_path), fields(repo = ?repo_path))]
 pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPickResult> {
     // Always use -m 1 to handle both regular and merge commits:
     // - For merge commits: selects the first parent (the branch that was merged into)
@@ -514,6 +518,7 @@ pub fn cherry_pick_commit(repo_path: &Path, commit_id: &str) -> Result<CherryPic
     }
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     let output = Command::new("git")
         .current_dir(repo_path)
@@ -531,6 +536,7 @@ pub fn create_branch(repo_path: &Path, branch_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn fetch_commits(repo_path: &Path, commits: &[String]) -> Result<()> {
     for commit_id in commits {
         let output = Command::new("git")
@@ -545,6 +551,7 @@ pub fn fetch_commits(repo_path: &Path, commits: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[must_use = "this returns whether conflicts are resolved"]
 pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
     let output = Command::new("git")
         .current_dir(repo_path)
@@ -554,6 +561,7 @@ pub fn check_conflicts_resolved(repo_path: &Path) -> Result<bool> {
     Ok(output.stdout.is_empty())
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
     // Check if the commit would be empty by checking staged changes
     // git diff --cached --quiet exits with 1 if there are changes, 0 if empty
@@ -586,6 +594,7 @@ pub fn continue_cherry_pick(repo_path: &Path) -> Result<()> {
     anyhow::bail!("Failed to continue cherry-pick: {}", stderr);
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn abort_cherry_pick(repo_path: &Path) -> Result<()> {
     Command::new("git")
         .current_dir(repo_path)
@@ -603,6 +612,7 @@ pub struct CommitInfo {
     pub author: String,
 }
 
+#[must_use = "this returns commit information which should be used"]
 pub fn get_commit_info(repo_path: &Path, commit_id: &str) -> Result<CommitInfo> {
     let output = Command::new("git")
         .current_dir(repo_path)
@@ -640,6 +650,7 @@ pub struct CommitHistory {
 }
 
 /// Get complete commit history for target branch once to avoid repeated git calls
+#[must_use = "this returns the commit history which should be used"]
 pub fn get_target_branch_history(repo_path: &Path, target_branch: &str) -> Result<CommitHistory> {
     // Get all commit hashes in target branch
     let hash_output = Command::new("git")
@@ -706,11 +717,13 @@ pub fn get_target_branch_history(repo_path: &Path, target_branch: &str) -> Resul
 }
 
 /// Check if a commit exists in the pre-fetched commit history
+#[must_use]
 pub fn check_commit_in_history(commit_id: &str, history: &CommitHistory) -> bool {
     history.commit_hashes.contains(commit_id)
 }
 
 /// Check if a PR is merged using pre-fetched commit history
+#[must_use]
 pub fn check_pr_merged_in_history(pr_id: i32, pr_title: &str, history: &CommitHistory) -> bool {
     // Strategy 1: Check for Azure DevOps merge pattern (most common)
     if check_azure_devops_merge_pattern_in_history(pr_id, pr_title, history) {
@@ -956,6 +969,7 @@ fn normalize_title(title: &str) -> String {
         .to_string()
 }
 
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     // List all worktrees
     let list_output = Command::new("git")
@@ -1001,6 +1015,7 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
 }
 
 /// List all local branches matching a pattern
+#[must_use = "this returns the list of branches which should be used"]
 pub fn list_local_branches(repo_path: &Path, pattern: &str) -> Result<Vec<String>> {
     let output = Command::new("git")
         .current_dir(repo_path)
@@ -1055,6 +1070,7 @@ pub struct PatchBranchListResult {
 }
 
 /// List all patch branches with parsed metadata
+#[must_use = "this returns the list of patch branches which should be used"]
 pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::CleanupBranch>> {
     let result = list_patch_branches_detailed(repo_path)?;
     Ok(result.branches)
@@ -1062,6 +1078,7 @@ pub fn list_patch_branches(repo_path: &Path) -> Result<Vec<crate::models::Cleanu
 
 /// List all patch branches with detailed information about what was found.
 /// This is useful for debugging when branches are found but not parsed correctly.
+#[must_use = "this returns detailed branch information which should be used"]
 pub fn list_patch_branches_detailed(repo_path: &Path) -> Result<PatchBranchListResult> {
     // First, resolve to the main git directory if we're in a worktree
     let resolved_path = resolve_git_repo_path(repo_path)?;
@@ -1267,6 +1284,7 @@ use crate::core::operations::dependency_analysis::{ChangeType, FileChange, LineR
 ///
 /// Returns a list of file changes without line range information.
 /// Use `get_commit_changes_with_ranges` if line-level detail is needed.
+#[must_use = "this returns file changes which should be used"]
 pub fn get_commit_file_changes(repo_path: &Path, commit_id: &str) -> Result<Vec<FileChange>> {
     validate_git_ref(commit_id)?;
 
@@ -1339,6 +1357,7 @@ pub fn get_commit_file_changes(repo_path: &Path, commit_id: &str) -> Result<Vec<
 /// This parses the unified diff output to extract which lines were modified.
 /// For added files, returns a single range covering all new lines.
 /// For deleted files, returns empty line ranges (the file no longer exists).
+#[must_use = "this returns file changes with ranges which should be used"]
 pub fn get_commit_changes_with_ranges(
     repo_path: &Path,
     commit_id: &str,
@@ -1456,6 +1475,7 @@ fn parse_hunk_header(header: &str) -> Option<LineRange> {
 /// Fetches commits from origin for the given commit IDs.
 ///
 /// This is useful for fetching PR merge commits before analyzing their changes.
+#[must_use = "this operation can fail and the result should be checked"]
 pub fn fetch_commits_for_analysis(repo_path: &Path, commit_ids: &[String]) -> Result<()> {
     for commit_id in commit_ids {
         // Try to fetch the commit - if it already exists locally, this is a no-op
@@ -1492,6 +1512,7 @@ pub fn fetch_commits_for_analysis(repo_path: &Path, commit_ids: &[String]) -> Re
 }
 
 /// Checks if a commit exists in the local repository.
+#[must_use]
 pub fn commit_exists(repo_path: &Path, commit_id: &str) -> bool {
     Command::new("git")
         .current_dir(repo_path)
