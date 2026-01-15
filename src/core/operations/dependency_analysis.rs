@@ -79,6 +79,7 @@ pub enum ChangeType {
 
 impl ChangeType {
     /// Parses a change type from git's single-letter status code.
+    #[must_use]
     pub fn from_git_status(status: &str) -> Option<Self> {
         match status.chars().next() {
             Some('A') => Some(ChangeType::Add),
@@ -316,11 +317,13 @@ impl PRDependencyGraph {
     }
 
     /// Gets a node by PR ID.
+    #[must_use]
     pub fn get_node(&self, pr_id: i32) -> Option<&PRDependencyNode> {
         self.nodes.get(&pr_id)
     }
 
     /// Gets a mutable node by PR ID.
+    #[must_use]
     pub fn get_node_mut(&mut self, pr_id: i32) -> Option<&mut PRDependencyNode> {
         self.nodes.get_mut(&pr_id)
     }
@@ -640,21 +643,25 @@ impl PRBitmapIndex {
     }
 
     /// Returns the file bitmap for a PR, if it exists.
+    #[must_use]
     pub fn get_file_bitmap(&self, pr_id: i32) -> Option<&RoaringBitmap> {
         self.pr_file_bitmaps.get(&pr_id)
     }
 
     /// Returns the line bitmap for a PR and file, if it exists.
+    #[must_use]
     pub fn get_line_bitmap(&self, pr_id: i32, file_id: u32) -> Option<&RoaringBitmap> {
         self.pr_line_bitmaps.get(&(pr_id, file_id))
     }
 
     /// Returns the file path for a file ID.
+    #[must_use]
     pub fn get_file_path(&self, file_id: u32) -> Option<&String> {
         self.file_dict_reverse.get(&file_id)
     }
 
     /// Returns the file ID for a file path.
+    #[must_use]
     pub fn get_file_id(&self, path: &str) -> Option<u32> {
         self.file_dict.get(path).copied()
     }
@@ -701,6 +708,7 @@ impl DependencyAnalyzer {
     }
 
     /// Creates a new analyzer with custom configuration.
+    #[must_use]
     pub fn with_config(config: DependencyAnalysisConfig) -> Self {
         Self { config }
     }

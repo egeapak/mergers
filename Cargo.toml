@@ -47,6 +47,11 @@ roaring = "0.10"
 # Azure DevOps API client
 azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
 
+# Logging/tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
 [dev-dependencies]
 tokio-test = "=0.4.4"
 tempfile = "=3.24.0"

@@ -268,6 +268,19 @@ pub struct SharedArgs {
     /// Skip the settings confirmation screen and proceed directly
     #[arg(long, help_heading = "Behavior")]
     pub skip_confirmation: bool,
+
+    // Logging
+    /// Log level (trace, debug, info, warn, error)
+    #[arg(long, help_heading = "Logging")]
+    pub log_level: Option<String>,
+
+    /// Log file path (logs to file instead of stderr)
+    #[arg(long, help_heading = "Logging")]
+    pub log_file: Option<String>,
+
+    /// Log format (text, json) [default: text]
+    #[arg(long, help_heading = "Logging", value_parser = ["text", "json"])]
+    pub log_format: Option<String>,
 }
 
 /// Arguments specific to merge mode
@@ -1346,6 +1359,9 @@ mod tests {
                     max_concurrent_processing: Some(5),
                     since: Some("1w".to_string()),
                     skip_confirmation: true,
+                    log_level: None,
+                    log_file: None,
+                    log_format: None,
                 },
                 work_item_state: Some("Done".to_string()),
                 run_hooks: false,
@@ -1373,6 +1389,9 @@ mod tests {
                     max_concurrent_processing: Some(5),
                     since: Some("1w".to_string()),
                     skip_confirmation: true,
+                    log_level: None,
+                    log_file: None,
+                    log_format: None,
                 },
                 terminal_states: "Closed,Done".to_string(),
             })),

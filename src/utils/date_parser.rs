@@ -15,6 +15,7 @@ fn get_relative_date_regex() -> &'static Regex {
 /// Parse a date string that can be either:
 /// - A relative date like "1mo", "2w", "3d", "4h" (month, week, day, hour)
 /// - A specific date like "2025-07-01" or "2025-07-01T12:00:00Z"
+#[must_use = "this returns the parsed date which should be used"]
 pub fn parse_since_date(since_str: &str) -> Result<DateTime<Utc>> {
     // Try to parse as a relative date first
     if let Ok(date) = parse_relative_date(since_str) {

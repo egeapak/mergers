@@ -139,6 +139,7 @@ impl From<git_models::GitRepository> for RepoDetails {
 /// `https://dev.azure.com/org/project/_apis/wit/workItems/12345`
 ///
 /// This function extracts the numeric ID from such URLs.
+#[must_use]
 pub fn extract_work_item_id(url: &str) -> Option<i32> {
     url.rsplit('/').next().and_then(|s| s.parse().ok())
 }

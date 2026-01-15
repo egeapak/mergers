@@ -115,6 +115,7 @@ impl DataLoadingOperation {
     }
 
     /// Returns the since date filter.
+    #[must_use]
     pub fn since(&self) -> Option<DateTime<Utc>> {
         self.config.since
     }

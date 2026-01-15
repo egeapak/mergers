@@ -215,6 +215,7 @@ impl CherryPickOperation {
     /// # Returns
     ///
     /// Ok(true) if ready to continue, Ok(false) if conflicts remain.
+    #[must_use = "this returns whether conflicts are resolved"]
     pub fn continue_after_conflict(&self, repo_path: &Path) -> Result<bool> {
         // Delegate to the git module's implementation which uses `git ls-files -u`
         git::check_conflicts_resolved(repo_path)
@@ -237,6 +238,7 @@ fn is_conflict_status_line(line: &str) -> bool {
 }
 
 /// Gets the list of conflicted files in a repository.
+#[must_use = "this returns the list of conflicted files which should be used"]
 pub fn get_conflicted_files(repo_path: &Path) -> Result<Vec<String>> {
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])

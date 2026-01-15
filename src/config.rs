@@ -93,6 +93,7 @@ impl Default for Config {
 
 impl Config {
     /// Load configuration from XDG config directory
+    #[must_use = "this returns the loaded configuration which should be used"]
     pub fn load_from_file() -> Result<Self> {
         let config_path = Self::get_config_path()?;
 
@@ -349,6 +350,7 @@ impl Config {
     }
 
     /// Create a sample config file for user reference
+    #[must_use = "this operation can fail and the result should be checked"]
     pub fn create_sample_config() -> Result<()> {
         let config_path = Self::get_config_path()?;
 
