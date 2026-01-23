@@ -8,6 +8,7 @@ use super::events::{
     SummaryResult,
 };
 use crate::models::OutputFormat;
+use crate::utils::truncate_str;
 use std::io::{self, Write};
 
 /// Trait for formatting and writing output events.
@@ -439,7 +440,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else if max_len <= 3 {
         "...".to_string()
     } else {
-        format!("{}...", &s[..max_len - 3])
+        format!("{}...", truncate_str(s, max_len - 3))
     }
 }
 

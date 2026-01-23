@@ -5,7 +5,7 @@ use crate::{
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{ModeState, StateChange},
-    utils::html_to_lines,
+    utils::{html_to_lines, truncate_str},
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -1721,7 +1721,7 @@ fn truncate_title(title: &str, max_len: usize) -> String {
     if title.len() <= max_len {
         title.to_string()
     } else {
-        format!("{}...", &title[..max_len.saturating_sub(3)])
+        format!("{}...", truncate_str(title, max_len.saturating_sub(3)))
     }
 }
 
