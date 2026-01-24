@@ -17,6 +17,8 @@ use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use serde::{Deserialize, Serialize};
 
+use crate::utils::truncate_str;
+
 /// A range of lines in a file.
 ///
 /// Represents a contiguous range of lines that were modified.
@@ -494,7 +496,7 @@ fn truncate_title(title: &str, max_len: usize) -> String {
     if title.len() <= max_len {
         title.to_string()
     } else {
-        format!("{}...", &title[..max_len.saturating_sub(3)])
+        format!("{}...", truncate_str(title, max_len.saturating_sub(3)))
     }
 }
 

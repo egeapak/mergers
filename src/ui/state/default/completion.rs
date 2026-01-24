@@ -4,6 +4,7 @@ use crate::{
     ui::apps::MergeApp,
     ui::state::default::MergeState,
     ui::state::typed::{ModeState, StateChange},
+    utils::truncate_str,
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -155,7 +156,10 @@ impl ModeState for CompletionState {
                 // Truncate title if needed to fit available space
                 let title = if item.pr_title.len() > title_space {
                     if title_space > 3 {
-                        format!("{}...", &item.pr_title[..title_space.saturating_sub(3)])
+                        format!(
+                            "{}...",
+                            truncate_str(&item.pr_title, title_space.saturating_sub(3))
+                        )
                     } else {
                         "...".to_string()
                     }
@@ -175,7 +179,10 @@ impl ModeState for CompletionState {
                     let max_error_len = (available_width as usize)
                         .saturating_sub(used_space + item.pr_title.len() + 3);
                     let error_text = if msg.len() > max_error_len && max_error_len > 3 {
-                        format!(" - {}...", &msg[..max_error_len.saturating_sub(6)])
+                        format!(
+                            " - {}...",
+                            truncate_str(msg, max_error_len.saturating_sub(6))
+                        )
                     } else if max_error_len > 0 {
                         format!(" - {}", msg)
                     } else {

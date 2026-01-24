@@ -6,6 +6,7 @@ use crate::{
     ui::apps::MergeApp,
     ui::state::typed::{ModeState, StateChange},
     ui::state::{CompletionState, ConflictResolutionState, ErrorState},
+    utils::truncate_str,
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -104,7 +105,7 @@ impl ModeState for CherryPickState {
 
                 // Truncate title if too long
                 let title = if item.pr_title.len() > 40 {
-                    format!("{}...", &item.pr_title[..37])
+                    format!("{}...", truncate_str(&item.pr_title, 37))
                 } else {
                     item.pr_title.clone()
                 };
