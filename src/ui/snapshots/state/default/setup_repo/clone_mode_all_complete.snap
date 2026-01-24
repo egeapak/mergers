@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/setup_repo.rs
-assertion_line: 957
+assertion_line: 1351
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -9,7 +9,7 @@ expression: harness.backend()
 "  │                                                 Repository Setup                                                 │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Steps─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
-"  │             1 ✓ Fetch Details  →  2 ✓ Clone Repository  →  3 ✓ Create Branch  →  4 ✓ Initialize State            │  "
+"  │1 ✓ Fetch Details  →  2 ✓ Check Prerequisites  →  3 ✓ Clone Repository  →  4 ✓ Configure  →  5 ✓ Create Branch  → │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Current Step──────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
 "  │                                                                                                                  │  "
