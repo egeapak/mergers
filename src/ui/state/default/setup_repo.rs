@@ -3,6 +3,7 @@
 
 use super::MergeState;
 use crate::{
+    api::AzureDevOpsClient,
     core::state::MergePhase,
     git,
     models::CherryPickItem,
@@ -19,6 +20,142 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
+use std::path::PathBuf;
+use tokio::sync::mpsc;
+
+// ============================================================================
+// Channel-Based Message Types
+// ============================================================================
+
+/// Messages sent from the background setup task to the UI.
+#[derive(Debug, Clone)]
+pub enum ProgressMessage {
+    /// A step has started executing
+    StepStarted(WizardStep),
+    /// A step completed successfully with optional result data
+    StepCompleted(WizardStep, StepResult),
+    /// All steps completed successfully
+    AllComplete,
+    /// An error occurred during setup
+    Error(SetupError),
+}
+
+/// Result data from completing a wizard step.
+#[derive(Debug, Clone, Default)]
+pub struct StepResult {
+    /// SSH URL fetched from Azure DevOps (FetchDetails step)
+    pub ssh_url: Option<String>,
+    /// Repository path after clone/worktree creation
+    pub repo_path: Option<PathBuf>,
+    /// Whether this is a worktree (vs clone)
+    pub is_worktree: bool,
+    /// Base repo path for worktree cleanup
+    pub base_repo_path: Option<PathBuf>,
+    /// Branch name created
+    pub branch_name: Option<String>,
+    /// Cherry-pick items prepared
+    pub cherry_pick_items: Option<Vec<CherryPickItem>>,
+}
+
+/// Error types that can occur during setup.
+#[derive(Debug, Clone)]
+pub enum SetupError {
+    /// A branch already exists
+    BranchExists(String),
+    /// A worktree already exists at the given path
+    WorktreeExists(String),
+    /// A generic error with message
+    Other(String),
+}
+
+impl From<git::RepositorySetupError> for SetupError {
+    fn from(err: git::RepositorySetupError) -> Self {
+        match err {
+            git::RepositorySetupError::BranchExists(b) => SetupError::BranchExists(b),
+            git::RepositorySetupError::WorktreeExists(p) => SetupError::WorktreeExists(p),
+            git::RepositorySetupError::Other(m) => SetupError::Other(m),
+        }
+    }
+}
+
+impl From<SetupError> for git::RepositorySetupError {
+    fn from(err: SetupError) -> Self {
+        match err {
+            SetupError::BranchExists(b) => git::RepositorySetupError::BranchExists(b),
+            SetupError::WorktreeExists(p) => git::RepositorySetupError::WorktreeExists(p),
+            SetupError::Other(m) => git::RepositorySetupError::Other(m),
+        }
+    }
+}
+
+// ============================================================================
+// Setup Context (extracted from MergeApp for background task)
+// ============================================================================
+
+/// Context extracted from MergeApp for use in the background setup task.
+///
+/// This struct contains all the data needed to run the setup steps without
+/// requiring mutable access to MergeApp. It's extracted once at the start
+/// of the setup process.
+#[derive(Clone)]
+pub struct SetupContext {
+    /// API client for Azure DevOps operations
+    pub client: AzureDevOpsClient,
+    /// Whether we're in clone mode (no local_repo) or worktree mode
+    pub is_clone_mode: bool,
+    /// Local repository path (worktree mode only)
+    pub local_repo: Option<String>,
+    /// Target branch name
+    pub target_branch: String,
+    /// Version string for branch naming
+    pub version: String,
+    /// Whether to run git hooks
+    pub run_hooks: bool,
+    /// Selected PRs with their merge commits for cherry-picking
+    pub selected_prs: Vec<SelectedPrInfo>,
+}
+
+/// Minimal PR info needed for cherry-pick preparation.
+#[derive(Clone, Debug)]
+pub struct SelectedPrInfo {
+    pub pr_id: i32,
+    pub pr_title: String,
+    pub merge_commit_id: Option<String>,
+}
+
+impl SetupContext {
+    /// Extracts setup context from a MergeApp instance.
+    pub fn from_app(app: &MergeApp) -> Option<Self> {
+        let version = app.version()?.to_string();
+        let selected_prs = app
+            .get_selected_prs()
+            .iter()
+            .map(|pr| SelectedPrInfo {
+                pr_id: pr.pr.id,
+                pr_title: pr.pr.title.clone(),
+                merge_commit_id: pr
+                    .pr
+                    .last_merge_commit
+                    .as_ref()
+                    .map(|c| c.commit_id.clone()),
+            })
+            .collect();
+
+        Some(Self {
+            client: app.client().clone(),
+            is_clone_mode: app.local_repo().is_none(),
+            local_repo: app.local_repo().map(String::from),
+            target_branch: app.target_branch().to_string(),
+            version,
+            run_hooks: app.run_hooks(),
+            selected_prs,
+        })
+    }
+}
+
+// ============================================================================
+// Wizard Step Definitions
+// ============================================================================
 
 /// Represents the individual steps in the repository setup wizard.
 /// Steps are split into granular sub-steps for better visual progress feedback.
@@ -207,31 +344,61 @@ impl WizardProgress {
     }
 }
 
-/// Intermediate data stored between wizard steps
+/// Intermediate data stored between wizard steps (accumulated from StepResults)
 #[derive(Debug, Clone, Default)]
 pub struct StepData {
     /// SSH URL fetched from Azure DevOps (clone mode)
     pub ssh_url: Option<String>,
     /// Repository path after clone/worktree creation
-    pub repo_path: Option<std::path::PathBuf>,
+    pub repo_path: Option<PathBuf>,
     /// Whether this is a worktree (vs clone)
     pub is_worktree: bool,
     /// Base repo path for worktree cleanup
-    pub base_repo_path: Option<std::path::PathBuf>,
+    pub base_repo_path: Option<PathBuf>,
     /// Branch name to create
     pub branch_name: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+impl StepData {
+    /// Merge a StepResult into this StepData, updating any fields that are set.
+    pub fn merge_result(&mut self, result: &StepResult) {
+        if result.ssh_url.is_some() {
+            self.ssh_url = result.ssh_url.clone();
+        }
+        if result.repo_path.is_some() {
+            self.repo_path = result.repo_path.clone();
+        }
+        if result.is_worktree {
+            self.is_worktree = true;
+        }
+        if result.base_repo_path.is_some() {
+            self.base_repo_path = result.base_repo_path.clone();
+        }
+        if result.branch_name.is_some() {
+            self.branch_name = result.branch_name.clone();
+        }
+    }
+}
+
+/// Internal state of the setup wizard
+#[derive(Debug)]
 pub enum SetupState {
+    /// Initial state before starting
     Initializing,
-    InProgress {
+    /// Background task is running, receiving progress updates via channel
+    Running {
         progress: WizardProgress,
-        /// The next step to execute (None if waiting for first tick)
-        next_step: Option<WizardStep>,
-        /// Intermediate data stored between steps
+        /// Accumulated step data from completed steps
         step_data: StepData,
     },
+    /// All steps completed successfully
+    Complete {
+        /// Final step data with all accumulated results
+        step_data: StepData,
+        /// Cherry-pick items prepared during setup
+        cherry_pick_items: Vec<CherryPickItem>,
+    },
+    /// An error occurred during setup
     Error {
         error: git::RepositorySetupError,
         message: String,
@@ -240,11 +407,31 @@ pub enum SetupState {
     },
 }
 
+/// Channel receiver wrapper that allows Debug implementation
+struct ProgressReceiver(mpsc::Receiver<ProgressMessage>);
+
+impl std::fmt::Debug for ProgressReceiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProgressReceiver").finish_non_exhaustive()
+    }
+}
+
+/// The setup repository state machine
 pub struct SetupRepoState {
     state: SetupState,
-    started: bool,
+    /// Channel receiver for progress messages from background task
+    receiver: Option<ProgressReceiver>,
     /// Cached mode detection (None until first run)
     is_clone_mode: Option<bool>,
+}
+
+impl std::fmt::Debug for SetupRepoState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetupRepoState")
+            .field("state", &self.state)
+            .field("is_clone_mode", &self.is_clone_mode)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for SetupRepoState {
@@ -257,46 +444,16 @@ impl SetupRepoState {
     pub fn new() -> Self {
         Self {
             state: SetupState::Initializing,
-            started: false,
+            receiver: None,
             is_clone_mode: None,
         }
     }
 
-    /// Initialize the wizard progress tracker and set the first step
-    fn init_progress(&mut self, is_clone_mode: bool) {
-        self.is_clone_mode = Some(is_clone_mode);
-        let first_step = if is_clone_mode {
-            WizardStep::FetchDetails
-        } else {
-            WizardStep::CheckPrerequisites
-        };
-        self.state = SetupState::InProgress {
-            progress: WizardProgress::new(is_clone_mode),
-            next_step: Some(first_step),
-            step_data: StepData::default(),
-        };
-    }
-
-    /// Get mutable reference to progress if in progress state
+    /// Get mutable reference to progress if in running state
     fn progress_mut(&mut self) -> Option<&mut WizardProgress> {
         match &mut self.state {
-            SetupState::InProgress { progress, .. } => Some(progress),
+            SetupState::Running { progress, .. } => Some(progress),
             _ => None,
-        }
-    }
-
-    /// Get mutable reference to step data if in progress state
-    fn step_data_mut(&mut self) -> Option<&mut StepData> {
-        match &mut self.state {
-            SetupState::InProgress { step_data, .. } => Some(step_data),
-            _ => None,
-        }
-    }
-
-    /// Set the next step to execute
-    fn set_next_step(&mut self, step: Option<WizardStep>) {
-        if let SetupState::InProgress { next_step, .. } = &mut self.state {
-            *next_step = step;
         }
     }
 
@@ -314,27 +471,34 @@ impl SetupRepoState {
         }
     }
 
-    fn set_error(&mut self, error: git::RepositorySetupError) {
+    /// Merge a step result into the accumulated step data
+    fn merge_step_result(&mut self, result: &StepResult) {
+        if let SetupState::Running { step_data, .. } = &mut self.state {
+            step_data.merge_result(result);
+        }
+    }
+
+    fn set_error(&mut self, error: SetupError) {
         // Preserve the current progress to show which step failed
         let current_progress = match &self.state {
-            SetupState::InProgress { progress, .. } => Some(progress.clone()),
+            SetupState::Running { progress, .. } => Some(progress.clone()),
             _ => None,
         };
 
         let message = match &error {
-            git::RepositorySetupError::BranchExists(branch) => {
+            SetupError::BranchExists(branch) => {
                 format!(
                     "Branch '{}' already exists.\n\nThis can happen if you've run this tool before or if the branch was created elsewhere.\n\nOptions:\n  • Press 'r' to retry\n  • Press 'f' to force delete the branch and continue\n  • Press 'Esc' to go back",
                     branch
                 )
             }
-            git::RepositorySetupError::WorktreeExists(path) => {
+            SetupError::WorktreeExists(path) => {
                 format!(
                     "Worktree already exists at:\n{}\n\nThis can happen if you've run this tool before or if the worktree was created elsewhere.\n\nOptions:\n  • Press 'r' to retry\n  • Press 'f' to force remove the worktree and continue\n  • Press 'Esc' to go back",
                     path
                 )
             }
-            git::RepositorySetupError::Other(msg) => {
+            SetupError::Other(msg) => {
                 format!(
                     "Setup failed: {}\n\nOptions:\n  • Press 'r' to retry\n  • Press 'Esc' to go back",
                     msg
@@ -342,290 +506,90 @@ impl SetupRepoState {
             }
         };
         self.state = SetupState::Error {
-            error: error.clone(),
+            error: error.into(),
             message,
             progress: current_progress,
         };
     }
 
-    /// Execute a single wizard step and return the next step to execute.
-    /// Returns None when all steps are complete (transition to CherryPick state).
-    async fn execute_step(
-        &mut self,
-        step: WizardStep,
-        app: &mut MergeApp,
-    ) -> Result<Option<WizardStep>, StateChange<MergeState>> {
-        self.start_step(step);
+    /// Start the background setup task and return the progress receiver
+    fn start_background_task(&mut self, ctx: SetupContext) {
+        let (tx, rx) = mpsc::channel::<ProgressMessage>(32);
+        self.receiver = Some(ProgressReceiver(rx));
+        self.is_clone_mode = Some(ctx.is_clone_mode);
 
-        match step {
-            WizardStep::FetchDetails => {
-                // Clone mode: fetch SSH URL from Azure DevOps
-                match app.client().fetch_repo_details().await {
-                    Ok(details) => {
-                        if let Some(step_data) = self.step_data_mut() {
-                            step_data.ssh_url = Some(details.ssh_url);
-                        }
-                        self.complete_step(step);
-                        Ok(Some(WizardStep::CheckPrerequisites))
-                    }
-                    Err(e) => {
-                        app.set_error_message(Some(format!(
-                            "Failed to fetch repository details: {}",
-                            e
-                        )));
-                        Err(StateChange::Change(MergeState::Error(ErrorState::new())))
-                    }
-                }
+        // Initialize the Running state
+        self.state = SetupState::Running {
+            progress: WizardProgress::new(ctx.is_clone_mode),
+            step_data: StepData::default(),
+        };
+
+        // Spawn the background task
+        tokio::spawn(run_setup_task(ctx, tx));
+    }
+
+    /// Process a message received from the background task
+    fn handle_progress_message(&mut self, msg: ProgressMessage) {
+        match msg {
+            ProgressMessage::StepStarted(step) => {
+                self.start_step(step);
             }
-
-            WizardStep::CheckPrerequisites => {
-                // Verify the local repo exists and is valid (worktree mode)
-                // For clone mode, just validate we have the SSH URL
-                let is_clone_mode = self.is_clone_mode.unwrap_or(false);
-
-                if is_clone_mode {
-                    // For clone mode, verify we have the SSH URL
-                    let has_url = match &self.state {
-                        SetupState::InProgress { step_data, .. } => step_data.ssh_url.is_some(),
-                        _ => false,
+            ProgressMessage::StepCompleted(step, result) => {
+                self.complete_step(step);
+                self.merge_step_result(&result);
+            }
+            ProgressMessage::AllComplete => {
+                // Extract the accumulated data and transition to Complete state
+                if let SetupState::Running { step_data, .. } = &self.state {
+                    // Prepare cherry-pick items from context (already done in background task)
+                    // The cherry_pick_items will be applied to MergeApp in process_key
+                    self.state = SetupState::Complete {
+                        step_data: step_data.clone(),
+                        cherry_pick_items: Vec::new(), // Will be set from last StepResult
                     };
-                    if !has_url {
-                        self.set_error(git::RepositorySetupError::Other(
-                            "SSH URL not available".to_string(),
-                        ));
-                        return Ok(None);
-                    }
-                } else {
-                    // For worktree mode, verify local repo
-                    if let Some(repo_path) = app.local_repo() {
-                        let path = std::path::Path::new(repo_path);
-                        if !path.exists() {
-                            self.set_error(git::RepositorySetupError::Other(format!(
-                                "Local repository path does not exist: {:?}",
-                                path
-                            )));
-                            return Ok(None);
-                        }
-                    }
-                }
-
-                self.complete_step(step);
-                if is_clone_mode {
-                    Ok(Some(WizardStep::CloneOrWorktree))
-                } else {
-                    Ok(Some(WizardStep::FetchTargetBranch))
                 }
             }
+            ProgressMessage::Error(err) => {
+                self.set_error(err);
+            }
+        }
+    }
 
-            WizardStep::FetchTargetBranch => {
-                // Worktree mode: fetch target branch from remote
-                let target_branch = app.target_branch().to_string();
-                if let Some(repo_path) = app.local_repo() {
-                    let output = std::process::Command::new("git")
-                        .current_dir(repo_path)
-                        .args(["fetch", "origin", &target_branch])
-                        .output();
-
-                    match output {
-                        Ok(result) if result.status.success() => {
-                            self.complete_step(step);
-                            Ok(Some(WizardStep::CloneOrWorktree))
-                        }
-                        Ok(result) => {
-                            self.set_error(git::RepositorySetupError::Other(format!(
-                                "Failed to fetch target branch: {}",
-                                String::from_utf8_lossy(&result.stderr)
-                            )));
-                            Ok(None)
-                        }
-                        Err(e) => {
-                            self.set_error(git::RepositorySetupError::Other(format!(
-                                "Failed to fetch target branch: {}",
-                                e
-                            )));
-                            Ok(None)
-                        }
-                    }
-                } else {
-                    self.set_error(git::RepositorySetupError::Other(
-                        "Local repository path not set".to_string(),
-                    ));
-                    Ok(None)
-                }
+    /// Apply the completed setup results to the MergeApp
+    fn apply_results_to_app(&self, app: &mut MergeApp, cherry_pick_items: Vec<CherryPickItem>) {
+        if let SetupState::Complete { step_data, .. } = &self.state {
+            // Set repo path
+            if let Some(repo_path) = &step_data.repo_path {
+                app.set_repo_path(Some(repo_path.clone()));
             }
 
-            WizardStep::CloneOrWorktree => {
-                let is_clone_mode = self.is_clone_mode.unwrap_or(false);
-                let version = app.version().as_ref().unwrap().to_string();
-                let target_branch = app.target_branch().to_string();
-                let run_hooks = app.run_hooks();
-
-                if is_clone_mode {
-                    // Clone mode
-                    let ssh_url = match &self.state {
-                        SetupState::InProgress { step_data, .. } => {
-                            step_data.ssh_url.clone().unwrap_or_default()
-                        }
-                        _ => String::new(),
-                    };
-
-                    match git::shallow_clone_repo(&ssh_url, &target_branch, run_hooks) {
-                        Ok((path, temp_dir)) => {
-                            app.set_repo_path(Some(path.clone()));
-                            app.worktree.set_temp_dir(Some(temp_dir));
-                            if let Some(step_data) = self.step_data_mut() {
-                                step_data.repo_path = Some(path);
-                                step_data.is_worktree = false;
-                            }
-                            self.complete_step(step);
-                            // Skip ConfigureRepository for clone mode (already configured)
-                            Ok(Some(WizardStep::CreateBranch))
-                        }
-                        Err(e) => {
-                            self.set_error(git::RepositorySetupError::Other(e.to_string()));
-                            Ok(None)
-                        }
-                    }
-                } else {
-                    // Worktree mode
-                    let local_repo = app.local_repo().map(std::path::PathBuf::from);
-                    if let Some(base_path) = &local_repo {
-                        match git::create_worktree(base_path, &target_branch, &version, run_hooks) {
-                            Ok(worktree_path) => {
-                                app.worktree.base_repo_path = Some(base_path.clone());
-                                app.set_repo_path(Some(worktree_path.clone()));
-                                if let Some(step_data) = self.step_data_mut() {
-                                    step_data.repo_path = Some(worktree_path);
-                                    step_data.is_worktree = true;
-                                    step_data.base_repo_path = Some(base_path.clone());
-                                }
-                                self.complete_step(step);
-                                // Skip ConfigureRepository (already done in create_worktree)
-                                Ok(Some(WizardStep::CreateBranch))
-                            }
-                            Err(e) => {
-                                self.set_error(e);
-                                Ok(None)
-                            }
-                        }
-                    } else {
-                        self.set_error(git::RepositorySetupError::Other(
-                            "Local repository path not set".to_string(),
-                        ));
-                        Ok(None)
-                    }
-                }
+            // Set base repo path for worktree mode
+            if let Some(base_path) = &step_data.base_repo_path {
+                app.worktree.base_repo_path = Some(base_path.clone());
             }
 
-            WizardStep::ConfigureRepository => {
-                // This step is currently handled within clone/worktree creation
-                // but we keep it for visual feedback
-                self.complete_step(step);
-                Ok(Some(WizardStep::CreateBranch))
-            }
+            // Set cherry-pick items
+            *app.cherry_pick_items_mut() = cherry_pick_items;
 
-            WizardStep::CreateBranch => {
-                let version = app.version().as_ref().unwrap().to_string();
-                let target_branch = app.target_branch().to_string();
-                let branch_name = format!("patch/{}-{}", target_branch, version);
-
-                if let Some(repo_path) = app.repo_path() {
-                    match git::create_branch(repo_path, &branch_name) {
-                        Ok(()) => {
-                            if let Some(step_data) = self.step_data_mut() {
-                                step_data.branch_name = Some(branch_name);
-                            }
-                            self.complete_step(step);
-                            Ok(Some(WizardStep::PrepareCherryPicks))
-                        }
-                        Err(e) => {
-                            // Check if it's a branch exists error
-                            let err_msg = e.to_string();
-                            if err_msg.contains("already exists") {
-                                self.set_error(git::RepositorySetupError::BranchExists(
-                                    branch_name,
-                                ));
-                            } else {
-                                app.set_error_message(Some(format!(
-                                    "Failed to create branch: {}",
-                                    e
-                                )));
-                                return Err(StateChange::Change(MergeState::Error(
-                                    ErrorState::new(),
-                                )));
-                            }
-                            Ok(None)
-                        }
-                    }
-                } else {
-                    self.set_error(git::RepositorySetupError::Other(
-                        "Repository path not set".to_string(),
-                    ));
-                    Ok(None)
-                }
-            }
-
-            WizardStep::PrepareCherryPicks => {
-                // Prepare cherry-pick items from selected PRs
-                let selected_prs = app.get_selected_prs();
-                let cherry_pick_items: Vec<CherryPickItem> = selected_prs
-                    .iter()
-                    .filter_map(|pr| {
-                        pr.pr
-                            .last_merge_commit
-                            .as_ref()
-                            .map(|commit| CherryPickItem {
-                                commit_id: commit.commit_id.clone(),
-                                pr_id: pr.pr.id,
-                                pr_title: pr.pr.title.clone(),
-                                status: crate::models::CherryPickStatus::Pending,
-                            })
-                    })
-                    .collect();
-
-                if cherry_pick_items.is_empty() {
-                    app.set_error_message(Some("No commits found to cherry-pick".to_string()));
-                    return Err(StateChange::Change(MergeState::Error(ErrorState::new())));
-                }
-
-                *app.cherry_pick_items_mut() = cherry_pick_items;
-                self.complete_step(step);
-                Ok(Some(WizardStep::InitializeState))
-            }
-
-            WizardStep::InitializeState => {
-                // Create state file for cross-mode resume support
-                if let Some(repo_path) = app.repo_path() {
-                    let version = app.version().as_ref().unwrap().to_string();
-                    let base_repo_path = app.worktree.base_repo_path.clone();
-                    let is_worktree = base_repo_path.is_some();
+            // Create state file for cross-mode resume support
+            if let Some(repo_path) = &step_data.repo_path {
+                // Clone version first to avoid borrow conflict
+                let version = app.version().map(|v| v.to_string());
+                if let Some(version) = version {
+                    let base_repo_path = step_data.base_repo_path.clone();
+                    let is_worktree = step_data.is_worktree;
 
                     // State file creation is optional for TUI - silently ignore errors
                     if app
-                        .create_state_file(
-                            repo_path.to_path_buf(),
-                            base_repo_path,
-                            is_worktree,
-                            &version,
-                        )
+                        .create_state_file(repo_path.clone(), base_repo_path, is_worktree, &version)
                         .is_ok()
                     {
                         // Set initial phase to CherryPicking
                         let _ = app.update_state_phase(MergePhase::CherryPicking);
                     }
                 }
-
-                self.complete_step(step);
-                // All steps complete - transition to CherryPick state
-                Ok(None)
             }
         }
-    }
-
-    /// Initialize the wizard and prepare for step-by-step execution
-    fn setup_repository_init(&mut self, app: &MergeApp) {
-        let is_clone_mode = app.local_repo().is_none();
-        self.init_progress(is_clone_mode);
     }
 
     async fn force_resolve_error(
@@ -646,10 +610,7 @@ impl SetupRepoState {
                 if let Some(repo_path) = delete_path
                     && let Err(e) = git::force_delete_branch(repo_path, &branch_name)
                 {
-                    app.set_error_message(Some(format!(
-                        "Failed to force delete branch: {}",
-                        e
-                    )));
+                    app.set_error_message(Some(format!("Failed to force delete branch: {}", e)));
                     return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
@@ -659,10 +620,7 @@ impl SetupRepoState {
                     && let Err(e) =
                         git::force_remove_worktree(std::path::Path::new(repo_path), version)
                 {
-                    app.set_error_message(Some(format!(
-                        "Failed to force remove worktree: {}",
-                        e
-                    )));
+                    app.set_error_message(Some(format!("Failed to force remove worktree: {}", e)));
                     return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
             }
@@ -673,8 +631,277 @@ impl SetupRepoState {
 
         // After force operation, reset and restart the setup
         self.state = SetupState::Initializing;
-        self.started = false;
+        self.receiver = None;
         StateChange::Keep
+    }
+}
+
+// ============================================================================
+// Background Task Implementation
+// ============================================================================
+
+/// Runs the setup steps in a background task, sending progress updates via channel.
+///
+/// This function executes all wizard steps sequentially, sending progress messages
+/// to the UI through the provided channel. The UI can then update the display
+/// as each step starts and completes.
+async fn run_setup_task(ctx: SetupContext, tx: mpsc::Sender<ProgressMessage>) {
+    // Accumulated data passed between steps
+    let mut ssh_url: Option<String> = None;
+    let mut repo_path: Option<PathBuf> = None;
+    let mut base_repo_path: Option<PathBuf> = None;
+    let mut is_worktree = false;
+    let mut branch_name: Option<String> = None;
+
+    // Determine the sequence of steps based on mode
+    let steps: Vec<WizardStep> = if ctx.is_clone_mode {
+        vec![
+            WizardStep::FetchDetails,
+            WizardStep::CheckPrerequisites,
+            WizardStep::CloneOrWorktree,
+            WizardStep::CreateBranch,
+            WizardStep::PrepareCherryPicks,
+            WizardStep::InitializeState,
+        ]
+    } else {
+        vec![
+            WizardStep::CheckPrerequisites,
+            WizardStep::FetchTargetBranch,
+            WizardStep::CloneOrWorktree,
+            WizardStep::CreateBranch,
+            WizardStep::PrepareCherryPicks,
+            WizardStep::InitializeState,
+        ]
+    };
+
+    for step in steps {
+        // Send step started message
+        if tx.send(ProgressMessage::StepStarted(step)).await.is_err() {
+            return; // Channel closed, UI no longer listening
+        }
+
+        // Execute the step
+        let result = execute_step_impl(
+            step,
+            &ctx,
+            &mut ssh_url,
+            &mut repo_path,
+            &mut base_repo_path,
+            &mut is_worktree,
+            &mut branch_name,
+        )
+        .await;
+
+        match result {
+            Ok(step_result) => {
+                // Send step completed message
+                if tx
+                    .send(ProgressMessage::StepCompleted(step, step_result))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(err) => {
+                // Send error message and stop
+                let _ = tx.send(ProgressMessage::Error(err)).await;
+                return;
+            }
+        }
+    }
+
+    // All steps completed successfully
+    let _ = tx.send(ProgressMessage::AllComplete).await;
+}
+
+/// Execute a single setup step and return the result.
+async fn execute_step_impl(
+    step: WizardStep,
+    ctx: &SetupContext,
+    ssh_url: &mut Option<String>,
+    repo_path: &mut Option<PathBuf>,
+    base_repo_path: &mut Option<PathBuf>,
+    is_worktree: &mut bool,
+    branch_name: &mut Option<String>,
+) -> Result<StepResult, SetupError> {
+    match step {
+        WizardStep::FetchDetails => {
+            // Clone mode: fetch SSH URL from Azure DevOps
+            match ctx.client.fetch_repo_details().await {
+                Ok(details) => {
+                    *ssh_url = Some(details.ssh_url.clone());
+                    Ok(StepResult {
+                        ssh_url: Some(details.ssh_url),
+                        ..Default::default()
+                    })
+                }
+                Err(e) => Err(SetupError::Other(format!(
+                    "Failed to fetch repository details: {}",
+                    e
+                ))),
+            }
+        }
+
+        WizardStep::CheckPrerequisites => {
+            if ctx.is_clone_mode {
+                // For clone mode, verify we have the SSH URL
+                if ssh_url.is_none() {
+                    return Err(SetupError::Other("SSH URL not available".to_string()));
+                }
+            } else {
+                // For worktree mode, verify local repo exists
+                if let Some(local_repo) = &ctx.local_repo {
+                    let path = std::path::Path::new(local_repo);
+                    if !path.exists() {
+                        return Err(SetupError::Other(format!(
+                            "Local repository path does not exist: {:?}",
+                            path
+                        )));
+                    }
+                }
+            }
+            Ok(StepResult::default())
+        }
+
+        WizardStep::FetchTargetBranch => {
+            // Worktree mode: fetch target branch from remote
+            if let Some(local_repo) = &ctx.local_repo {
+                let output = std::process::Command::new("git")
+                    .current_dir(local_repo)
+                    .args(["fetch", "origin", &ctx.target_branch])
+                    .output();
+
+                match output {
+                    Ok(result) if result.status.success() => Ok(StepResult::default()),
+                    Ok(result) => Err(SetupError::Other(format!(
+                        "Failed to fetch target branch: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                    ))),
+                    Err(e) => Err(SetupError::Other(format!(
+                        "Failed to fetch target branch: {}",
+                        e
+                    ))),
+                }
+            } else {
+                Err(SetupError::Other(
+                    "Local repository path not set".to_string(),
+                ))
+            }
+        }
+
+        WizardStep::CloneOrWorktree => {
+            if ctx.is_clone_mode {
+                // Clone mode
+                let url = ssh_url.clone().unwrap_or_default();
+                match git::shallow_clone_repo(&url, &ctx.target_branch, ctx.run_hooks) {
+                    Ok((path, _temp_dir)) => {
+                        // Note: temp_dir ownership is tricky across threads
+                        // For now, we leak it (it will be cleaned up on process exit)
+                        // A better solution would be to pass it back through the channel
+                        *repo_path = Some(path.clone());
+                        *is_worktree = false;
+                        Ok(StepResult {
+                            repo_path: Some(path),
+                            is_worktree: false,
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => Err(SetupError::Other(e.to_string())),
+                }
+            } else {
+                // Worktree mode
+                if let Some(local_repo) = &ctx.local_repo {
+                    let base_path = PathBuf::from(local_repo);
+                    match git::create_worktree(
+                        &base_path,
+                        &ctx.target_branch,
+                        &ctx.version,
+                        ctx.run_hooks,
+                    ) {
+                        Ok(worktree_path) => {
+                            *repo_path = Some(worktree_path.clone());
+                            *base_repo_path = Some(base_path.clone());
+                            *is_worktree = true;
+                            Ok(StepResult {
+                                repo_path: Some(worktree_path),
+                                is_worktree: true,
+                                base_repo_path: Some(base_path),
+                                ..Default::default()
+                            })
+                        }
+                        Err(e) => Err(e.into()),
+                    }
+                } else {
+                    Err(SetupError::Other(
+                        "Local repository path not set".to_string(),
+                    ))
+                }
+            }
+        }
+
+        WizardStep::ConfigureRepository => {
+            // This step is handled within clone/worktree creation
+            Ok(StepResult::default())
+        }
+
+        WizardStep::CreateBranch => {
+            let name = format!("patch/{}-{}", ctx.target_branch, ctx.version);
+            if let Some(path) = repo_path {
+                match git::create_branch(path, &name) {
+                    Ok(()) => {
+                        *branch_name = Some(name.clone());
+                        Ok(StepResult {
+                            branch_name: Some(name),
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        if err_msg.contains("already exists") {
+                            Err(SetupError::BranchExists(name))
+                        } else {
+                            Err(SetupError::Other(format!("Failed to create branch: {}", e)))
+                        }
+                    }
+                }
+            } else {
+                Err(SetupError::Other("Repository path not set".to_string()))
+            }
+        }
+
+        WizardStep::PrepareCherryPicks => {
+            // Prepare cherry-pick items from selected PRs
+            let cherry_pick_items: Vec<CherryPickItem> = ctx
+                .selected_prs
+                .iter()
+                .filter_map(|pr| {
+                    pr.merge_commit_id.as_ref().map(|commit_id| CherryPickItem {
+                        commit_id: commit_id.clone(),
+                        pr_id: pr.pr_id,
+                        pr_title: pr.pr_title.clone(),
+                        status: crate::models::CherryPickStatus::Pending,
+                    })
+                })
+                .collect();
+
+            if cherry_pick_items.is_empty() {
+                return Err(SetupError::Other(
+                    "No commits found to cherry-pick".to_string(),
+                ));
+            }
+
+            Ok(StepResult {
+                cherry_pick_items: Some(cherry_pick_items),
+                ..Default::default()
+            })
+        }
+
+        WizardStep::InitializeState => {
+            // State file creation is handled by apply_results_to_app
+            // because it requires mutable access to MergeApp
+            Ok(StepResult::default())
+        }
     }
 }
 
@@ -850,7 +1077,7 @@ impl ModeState for SetupRepoState {
                 );
                 f.render_widget(status, chunks[2]);
             }
-            SetupState::InProgress { progress, .. } => {
+            SetupState::Running { progress, .. } => {
                 // Step indicator
                 let step_block = Block::default()
                     .borders(Borders::ALL)
@@ -862,6 +1089,38 @@ impl ModeState for SetupRepoState {
 
                 // Current step progress
                 render_current_step_progress(f, chunks[2], progress);
+            }
+            SetupState::Complete { .. } => {
+                // This state is transient - we transition to CherryPick immediately
+                // But render a completion message just in case
+                let is_clone_mode = self.is_clone_mode.unwrap_or(app.local_repo().is_none());
+                let progress = WizardProgress::new(is_clone_mode);
+
+                let step_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title("Steps")
+                    .title_style(Style::default().fg(Color::Green));
+                let inner_area = step_block.inner(chunks[1]);
+                f.render_widget(step_block, chunks[1]);
+                render_step_indicator(f, inner_area, &progress);
+
+                let status = Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Setup complete!",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                ])
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Current Step")
+                        .title_style(Style::default().fg(Color::Green)),
+                );
+                f.render_widget(status, chunks[2]);
             }
             SetupState::Error {
                 message, progress, ..
@@ -956,13 +1215,49 @@ impl ModeState for SetupRepoState {
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
+        // First, collect any pending messages from the background task
+        // We collect them first to avoid borrowing issues with self
+        let messages: Vec<ProgressMessage> =
+            if let Some(ProgressReceiver(ref mut rx)) = self.receiver {
+                let mut msgs = Vec::new();
+                while let Ok(msg) = rx.try_recv() {
+                    msgs.push(msg);
+                }
+                msgs
+            } else {
+                Vec::new()
+            };
+
+        // Track cherry-pick items to store after processing
+        let mut pending_cherry_pick_items: Option<Vec<CherryPickItem>> = None;
+
+        // Process collected messages
+        for msg in messages {
+            // Check if this is the final message with cherry-pick items
+            if let ProgressMessage::StepCompleted(WizardStep::PrepareCherryPicks, ref result) = msg
+            {
+                pending_cherry_pick_items = result.cherry_pick_items.clone();
+            }
+
+            self.handle_progress_message(msg);
+        }
+
+        // Store cherry-pick items if we got them and transitioned to Complete
+        if let Some(items) = pending_cherry_pick_items
+            && let SetupState::Complete {
+                cherry_pick_items, ..
+            } = &mut self.state
+        {
+            *cherry_pick_items = items;
+        }
+
         match &self.state {
             SetupState::Error { error, .. } => {
                 match code {
                     KeyCode::Char('r' | 'R') => {
                         // Retry - reset state and try again
                         self.state = SetupState::Initializing;
-                        self.started = false;
+                        self.receiver = None;
                         StateChange::Keep
                     }
                     KeyCode::Char('f' | 'F') => {
@@ -978,31 +1273,29 @@ impl ModeState for SetupRepoState {
                 }
             }
             SetupState::Initializing => {
-                // Initialize the wizard on first tick
-                if !self.started {
-                    self.started = true;
-                    self.setup_repository_init(app);
+                // Extract context and start background task
+                if let Some(ctx) = SetupContext::from_app(app) {
+                    self.start_background_task(ctx);
+                } else {
+                    app.set_error_message(Some(
+                        "Failed to extract setup context (missing version?)".to_string(),
+                    ));
+                    return StateChange::Change(MergeState::Error(ErrorState::new()));
                 }
                 StateChange::Keep
             }
-            SetupState::InProgress { next_step, .. } => {
-                // Execute the next step on each tick (KeyCode::Null or any key)
-                if let Some(step) = *next_step {
-                    match self.execute_step(step, app).await {
-                        Ok(Some(next)) => {
-                            // Set the next step and keep state for re-render
-                            self.set_next_step(Some(next));
-                            StateChange::Keep
-                        }
-                        Ok(None) => {
-                            // All steps complete - transition to CherryPick
-                            StateChange::Change(MergeState::CherryPick(CherryPickState::new()))
-                        }
-                        Err(state_change) => state_change,
-                    }
-                } else {
-                    StateChange::Keep
-                }
+            SetupState::Running { .. } => {
+                // Background task is running, just keep state for re-render
+                // Messages are processed at the start of process_key
+                StateChange::Keep
+            }
+            SetupState::Complete {
+                cherry_pick_items, ..
+            } => {
+                // Apply results to app and transition to CherryPick state
+                let items = cherry_pick_items.clone();
+                self.apply_results_to_app(app, items);
+                StateChange::Change(MergeState::CherryPick(CherryPickState::new()))
             }
         }
     }
@@ -1046,11 +1339,10 @@ mod tests {
         });
     }
 
-    /// Helper to create an InProgress state with given progress
-    fn make_in_progress(progress: WizardProgress) -> SetupState {
-        SetupState::InProgress {
+    /// Helper to create a Running state with given progress
+    fn make_running(progress: WizardProgress) -> SetupState {
+        SetupState::Running {
             progress,
-            next_step: None,
             step_data: StepData::default(),
         }
     }
@@ -1076,7 +1368,7 @@ mod tests {
             let mut inner_state = SetupRepoState::new();
             let mut progress = WizardProgress::new(true); // clone mode
             progress.start_step(WizardStep::FetchDetails);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(true);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1107,7 +1399,7 @@ mod tests {
             let mut progress = WizardProgress::new(true); // clone mode
             progress.complete_step(WizardStep::FetchDetails);
             progress.start_step(WizardStep::CheckPrerequisites);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(true);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1139,7 +1431,7 @@ mod tests {
             progress.complete_step(WizardStep::FetchDetails);
             progress.complete_step(WizardStep::CheckPrerequisites);
             progress.start_step(WizardStep::CloneOrWorktree);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(true);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1170,7 +1462,7 @@ mod tests {
             let mut progress = WizardProgress::new(false); // worktree mode
             progress.complete_step(WizardStep::CheckPrerequisites);
             progress.start_step(WizardStep::FetchTargetBranch);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1202,7 +1494,7 @@ mod tests {
             progress.complete_step(WizardStep::CheckPrerequisites);
             progress.complete_step(WizardStep::FetchTargetBranch);
             progress.start_step(WizardStep::CloneOrWorktree);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1236,7 +1528,7 @@ mod tests {
             progress.complete_step(WizardStep::CloneOrWorktree);
             progress.complete_step(WizardStep::ConfigureRepository);
             progress.start_step(WizardStep::CreateBranch);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1271,7 +1563,7 @@ mod tests {
             progress.complete_step(WizardStep::ConfigureRepository);
             progress.complete_step(WizardStep::CreateBranch);
             progress.start_step(WizardStep::PrepareCherryPicks);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1307,7 +1599,7 @@ mod tests {
             progress.complete_step(WizardStep::CreateBranch);
             progress.complete_step(WizardStep::PrepareCherryPicks);
             progress.start_step(WizardStep::InitializeState);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(false);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1343,7 +1635,7 @@ mod tests {
             progress.complete_step(WizardStep::CreateBranch);
             progress.complete_step(WizardStep::PrepareCherryPicks);
             progress.complete_step(WizardStep::InitializeState);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(true);
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1377,13 +1669,13 @@ mod tests {
             progress.complete_step(WizardStep::FetchDetails);
             progress.complete_step(WizardStep::CheckPrerequisites);
             progress.start_step(WizardStep::CloneOrWorktree);
-            inner_state.state = make_in_progress(progress);
+            inner_state.state = make_running(progress);
             inner_state.is_clone_mode = Some(true);
 
             // Now trigger an error (this preserves the progress)
-            inner_state.set_error(git::RepositorySetupError::WorktreeExists(
+            inner_state.set_error(SetupError::from(git::RepositorySetupError::WorktreeExists(
                 "/path/to/repo/.worktrees/v1.0.0".to_string(),
-            ));
+            )));
 
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
@@ -1413,9 +1705,9 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut inner_state = SetupRepoState::new();
-            inner_state.set_error(git::RepositorySetupError::BranchExists(
+            inner_state.set_error(SetupError::from(git::RepositorySetupError::BranchExists(
                 "patch/main-v1.0.0".to_string(),
-            ));
+            )));
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
 
@@ -1442,9 +1734,9 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut inner_state = SetupRepoState::new();
-            inner_state.set_error(git::RepositorySetupError::WorktreeExists(
+            inner_state.set_error(SetupError::from(git::RepositorySetupError::WorktreeExists(
                 "/path/to/repo/.worktrees/v1.0.0".to_string(),
-            ));
+            )));
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
 
@@ -1471,9 +1763,9 @@ mod tests {
             let mut harness = TuiTestHarness::with_config(config);
 
             let mut inner_state = SetupRepoState::new();
-            inner_state.set_error(git::RepositorySetupError::Other(
+            inner_state.set_error(SetupError::from(git::RepositorySetupError::Other(
                 "Failed to fetch repository details from Azure DevOps".to_string(),
-            ));
+            )));
             let mut state = MergeState::SetupRepo(inner_state);
             harness.render_merge_state(&mut state);
 
@@ -1489,11 +1781,11 @@ mod tests {
     /// - Creates SetupRepoState using Default::default()
     ///
     /// ## Expected Outcome
-    /// - Should initialize with Initializing state and started=false
+    /// - Should initialize with Initializing state and receiver=None
     #[test]
     fn test_setup_repo_default() {
         let state = SetupRepoState::default();
-        assert!(!state.started);
+        assert!(state.receiver.is_none());
         assert!(matches!(state.state, SetupState::Initializing));
     }
 
@@ -1513,7 +1805,7 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         let mut state = SetupRepoState::new();
-        state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
+        state.set_error(SetupError::Other("Test error".to_string()));
 
         let result =
             ModeState::process_key(&mut state, KeyCode::Esc, harness.merge_app_mut()).await;
@@ -1536,7 +1828,7 @@ mod tests {
         let mut harness = TuiTestHarness::with_config(config);
 
         let mut state = SetupRepoState::new();
-        state.set_error(git::RepositorySetupError::Other("Test error".to_string()));
+        state.set_error(SetupError::Other("Test error".to_string()));
 
         for key in [KeyCode::Up, KeyCode::Down, KeyCode::Char('x')] {
             let result = ModeState::process_key(&mut state, key, harness.merge_app_mut()).await;
@@ -1544,27 +1836,257 @@ mod tests {
         }
     }
 
-    /// # Setup Repo State - Key in Normal State When Started
+    /// # Setup Repo State - Key in Running State
     ///
-    /// Tests key handling when setup has already started.
+    /// Tests key handling when setup is running (background task active).
     ///
     /// ## Test Scenario
-    /// - Creates a setup repo state
-    /// - Sets started=true
+    /// - Creates a setup repo state in Running state
     /// - Processes a key
     ///
     /// ## Expected Outcome
-    /// - Should return StateChange::Keep (already started)
+    /// - Should return StateChange::Keep (background task running)
     #[tokio::test]
-    async fn test_setup_repo_key_when_started() {
+    async fn test_setup_repo_key_when_running() {
         let config = create_test_config_default();
         let mut harness = TuiTestHarness::with_config(config);
 
         let mut state = SetupRepoState::new();
-        state.started = true;
+        state.state = SetupState::Running {
+            progress: WizardProgress::new(true),
+            step_data: StepData::default(),
+        };
 
         let result =
             ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, StateChange::Keep));
+    }
+
+    // =========================================================================
+    // Unit Tests for Message Types
+    // =========================================================================
+
+    /// # ProgressMessage - StepStarted
+    ///
+    /// Tests that StepStarted messages can be created and matched.
+    #[test]
+    fn test_progress_message_step_started() {
+        let msg = ProgressMessage::StepStarted(WizardStep::FetchDetails);
+        assert!(matches!(
+            msg,
+            ProgressMessage::StepStarted(WizardStep::FetchDetails)
+        ));
+    }
+
+    /// # ProgressMessage - StepCompleted
+    ///
+    /// Tests that StepCompleted messages carry step result data.
+    #[test]
+    fn test_progress_message_step_completed() {
+        let result = StepResult {
+            ssh_url: Some("git@example.com:repo.git".to_string()),
+            ..Default::default()
+        };
+        let msg = ProgressMessage::StepCompleted(WizardStep::FetchDetails, result);
+        if let ProgressMessage::StepCompleted(step, res) = msg {
+            assert_eq!(step, WizardStep::FetchDetails);
+            assert_eq!(res.ssh_url, Some("git@example.com:repo.git".to_string()));
+        } else {
+            panic!("Expected StepCompleted");
+        }
+    }
+
+    /// # ProgressMessage - AllComplete
+    ///
+    /// Tests the AllComplete message variant.
+    #[test]
+    fn test_progress_message_all_complete() {
+        let msg = ProgressMessage::AllComplete;
+        assert!(matches!(msg, ProgressMessage::AllComplete));
+    }
+
+    /// # ProgressMessage - Error
+    ///
+    /// Tests error messages with different error types.
+    #[test]
+    fn test_progress_message_error() {
+        let msg = ProgressMessage::Error(SetupError::BranchExists("main".to_string()));
+        if let ProgressMessage::Error(SetupError::BranchExists(branch)) = msg {
+            assert_eq!(branch, "main");
+        } else {
+            panic!("Expected Error with BranchExists");
+        }
+    }
+
+    /// # StepResult - Default
+    ///
+    /// Tests that StepResult::default() creates empty result.
+    #[test]
+    fn test_step_result_default() {
+        let result = StepResult::default();
+        assert!(result.ssh_url.is_none());
+        assert!(result.repo_path.is_none());
+        assert!(!result.is_worktree);
+        assert!(result.base_repo_path.is_none());
+        assert!(result.branch_name.is_none());
+        assert!(result.cherry_pick_items.is_none());
+    }
+
+    /// # StepData - Merge Result
+    ///
+    /// Tests that StepData correctly merges StepResult fields.
+    #[test]
+    fn test_step_data_merge_result() {
+        let mut data = StepData::default();
+
+        // First merge: set ssh_url
+        let result1 = StepResult {
+            ssh_url: Some("git@example.com:repo.git".to_string()),
+            ..Default::default()
+        };
+        data.merge_result(&result1);
+        assert_eq!(data.ssh_url, Some("git@example.com:repo.git".to_string()));
+
+        // Second merge: set repo_path, preserving ssh_url
+        let result2 = StepResult {
+            repo_path: Some(PathBuf::from("/tmp/repo")),
+            is_worktree: true,
+            ..Default::default()
+        };
+        data.merge_result(&result2);
+        assert_eq!(data.ssh_url, Some("git@example.com:repo.git".to_string()));
+        assert_eq!(data.repo_path, Some(PathBuf::from("/tmp/repo")));
+        assert!(data.is_worktree);
+    }
+
+    /// # SetupError - From RepositorySetupError
+    ///
+    /// Tests conversion from git::RepositorySetupError to SetupError.
+    #[test]
+    fn test_setup_error_from_repository_setup_error() {
+        let branch_err = git::RepositorySetupError::BranchExists("main".to_string());
+        let setup_err: SetupError = branch_err.into();
+        assert!(matches!(setup_err, SetupError::BranchExists(ref b) if b == "main"));
+
+        let worktree_err = git::RepositorySetupError::WorktreeExists("/path".to_string());
+        let setup_err: SetupError = worktree_err.into();
+        assert!(matches!(setup_err, SetupError::WorktreeExists(ref p) if p == "/path"));
+
+        let other_err = git::RepositorySetupError::Other("error".to_string());
+        let setup_err: SetupError = other_err.into();
+        assert!(matches!(setup_err, SetupError::Other(ref m) if m == "error"));
+    }
+
+    /// # SetupError - Into RepositorySetupError
+    ///
+    /// Tests conversion from SetupError back to git::RepositorySetupError.
+    #[test]
+    fn test_setup_error_into_repository_setup_error() {
+        let setup_err = SetupError::BranchExists("main".to_string());
+        let repo_err: git::RepositorySetupError = setup_err.into();
+        assert!(matches!(
+            repo_err,
+            git::RepositorySetupError::BranchExists(ref b) if b == "main"
+        ));
+    }
+
+    // =========================================================================
+    // Unit Tests for State Transitions
+    // =========================================================================
+
+    /// # State Transition - Handle StepStarted Message
+    ///
+    /// Tests that handling StepStarted updates the progress.
+    #[test]
+    fn test_handle_step_started_message() {
+        let mut state = SetupRepoState::new();
+        state.state = SetupState::Running {
+            progress: WizardProgress::new(true),
+            step_data: StepData::default(),
+        };
+
+        state.handle_progress_message(ProgressMessage::StepStarted(WizardStep::FetchDetails));
+
+        if let SetupState::Running { progress, .. } = &state.state {
+            assert_eq!(progress.current_step, Some(WizardStep::FetchDetails));
+        } else {
+            panic!("Expected Running state");
+        }
+    }
+
+    /// # State Transition - Handle StepCompleted Message
+    ///
+    /// Tests that handling StepCompleted updates progress and merges result.
+    #[test]
+    fn test_handle_step_completed_message() {
+        let mut state = SetupRepoState::new();
+        state.state = SetupState::Running {
+            progress: WizardProgress::new(true),
+            step_data: StepData::default(),
+        };
+
+        // Start the step first
+        state.handle_progress_message(ProgressMessage::StepStarted(WizardStep::FetchDetails));
+
+        // Complete the step with result
+        let result = StepResult {
+            ssh_url: Some("git@example.com:repo.git".to_string()),
+            ..Default::default()
+        };
+        state.handle_progress_message(ProgressMessage::StepCompleted(
+            WizardStep::FetchDetails,
+            result,
+        ));
+
+        if let SetupState::Running {
+            progress,
+            step_data,
+        } = &state.state
+        {
+            assert_eq!(progress.fetch_details, StepStatus::Completed);
+            assert_eq!(
+                step_data.ssh_url,
+                Some("git@example.com:repo.git".to_string())
+            );
+        } else {
+            panic!("Expected Running state");
+        }
+    }
+
+    /// # State Transition - Handle Error Message
+    ///
+    /// Tests that handling Error transitions to Error state.
+    #[test]
+    fn test_handle_error_message() {
+        let mut state = SetupRepoState::new();
+        state.state = SetupState::Running {
+            progress: WizardProgress::new(true),
+            step_data: StepData::default(),
+        };
+
+        state.handle_progress_message(ProgressMessage::Error(SetupError::BranchExists(
+            "main".to_string(),
+        )));
+
+        assert!(matches!(state.state, SetupState::Error { .. }));
+    }
+
+    /// # State Transition - Handle AllComplete Message
+    ///
+    /// Tests that handling AllComplete transitions to Complete state.
+    #[test]
+    fn test_handle_all_complete_message() {
+        let mut state = SetupRepoState::new();
+        state.state = SetupState::Running {
+            progress: WizardProgress::new(true),
+            step_data: StepData {
+                repo_path: Some(PathBuf::from("/tmp/repo")),
+                ..Default::default()
+            },
+        };
+
+        state.handle_progress_message(ProgressMessage::AllComplete);
+
+        assert!(matches!(state.state, SetupState::Complete { .. }));
     }
 }
