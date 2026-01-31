@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 
 use crate::core::ExitCode;
+use crate::core::operations::HooksConfig;
 use crate::models::OutputFormat;
 
 /// Configuration for a merge runner.
@@ -39,6 +40,8 @@ pub struct MergeRunnerConfig {
     pub output_format: OutputFormat,
     /// Whether to suppress progress output.
     pub quiet: bool,
+    /// User-defined hooks configuration.
+    pub hooks_config: Option<HooksConfig>,
 }
 
 /// Result of a merge operation.

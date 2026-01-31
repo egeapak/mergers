@@ -21,6 +21,7 @@
 //! let merged = config.merge(env_config);
 //! ```
 
+use crate::core::operations::HooksConfig;
 use crate::{git_config, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,9 @@ struct ConfigFile {
     // UI Settings
     pub show_dependency_highlights: Option<bool>,
     pub show_work_item_highlights: Option<bool>,
+    // Hooks - user-defined commands at various points in the merge workflow
+    #[serde(default)]
+    pub hooks: Option<HooksConfig>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +70,8 @@ pub struct Config {
     // UI Settings
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
+    // Hooks - user-defined commands at various points in the merge workflow
+    pub hooks: Option<HooksConfig>,
 }
 
 impl Default for Config {
@@ -87,6 +93,8 @@ impl Default for Config {
             // UI Settings - both enabled by default
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            // Hooks - empty by default
+            hooks: None,
         }
     }
 }
@@ -153,6 +161,7 @@ impl Config {
             show_work_item_highlights: config_file
                 .show_work_item_highlights
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            hooks: config_file.hooks,
         })
     }
 
@@ -203,6 +212,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                hooks: None,
             };
         }
 
@@ -229,6 +239,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                hooks: None,
             };
         }
 
@@ -237,6 +248,29 @@ impl Config {
 
     /// Load configuration from environment variables
     pub fn load_from_env() -> Self {
+        // Helper to parse semicolon-separated commands from env var
+        fn parse_hook_commands(var_name: &str) -> Vec<String> {
+            std::env::var(var_name)
+                .ok()
+                .map(|v| {
+                    v.split(';')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        // Build hooks from environment variables
+        let hooks_config = HooksConfig {
+            post_checkout: parse_hook_commands("MERGERS_HOOKS_POST_CHECKOUT"),
+            pre_cherry_pick: parse_hook_commands("MERGERS_HOOKS_PRE_CHERRY_PICK"),
+            post_cherry_pick: parse_hook_commands("MERGERS_HOOKS_POST_CHERRY_PICK"),
+            post_merge: parse_hook_commands("MERGERS_HOOKS_POST_MERGE"),
+            on_conflict: parse_hook_commands("MERGERS_HOOKS_ON_CONFLICT"),
+            post_complete: parse_hook_commands("MERGERS_HOOKS_POST_COMPLETE"),
+        };
+
         Self {
             organization: std::env::var("MERGERS_ORGANIZATION")
                 .ok()
@@ -293,6 +327,11 @@ impl Config {
                         .ok()
                         .map(|v| ParsedProperty::Env(v, s.clone()))
                 }),
+            hooks: if hooks_config.has_hooks() {
+                Some(hooks_config)
+            } else {
+                None
+            },
         }
     }
 
@@ -324,6 +363,14 @@ impl Config {
 
     /// Merge this config with another, preferring values from other when they exist
     pub fn merge(self, other: Self) -> Self {
+        // Merge hooks configs - if both exist, merge them; otherwise take whichever exists
+        let merged_hooks = match (self.hooks, other.hooks) {
+            (Some(base), Some(override_hooks)) => Some(base.merge(override_hooks)),
+            (None, Some(hooks)) => Some(hooks),
+            (Some(hooks), None) => Some(hooks),
+            (None, None) => None,
+        };
+
         Self {
             organization: other.organization.or(self.organization),
             project: other.project.or(self.project),
@@ -346,6 +393,7 @@ impl Config {
             show_work_item_highlights: other
                 .show_work_item_highlights
                 .or(self.show_work_item_highlights),
+            hooks: merged_hooks,
         }
     }
 
@@ -402,6 +450,23 @@ show_dependency_highlights = true
 
 # Show work item relationship highlighting in PR selection (optional, defaults to true)
 show_work_item_highlights = true
+
+# Hooks - user-defined shell commands at various points in the merge workflow
+# Commands receive environment variables: MERGERS_VERSION, MERGERS_TARGET_BRANCH,
+# MERGERS_DEV_BRANCH, MERGERS_REPO_PATH, MERGERS_PR_ID, MERGERS_COMMIT_ID
+# [hooks]
+# Commands to run after repository checkout/setup
+# post_checkout = ["npm install", "cargo build"]
+# Commands to run before starting cherry-picks
+# pre_cherry_pick = []
+# Commands to run after each successful cherry-pick
+# post_cherry_pick = ["cargo fmt", "cargo clippy --fix --allow-dirty"]
+# Commands to run after all cherry-picks complete
+# post_merge = ["cargo test"]
+# Commands to run when a conflict is detected
+# on_conflict = ["git status"]
+# Commands to run after 'complete' command finishes (tagging, work item updates)
+# post_complete = ["./scripts/notify-slack.sh"]
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
@@ -784,6 +849,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
         };
 
         let other = Config {
@@ -802,6 +868,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
         };
 
         let merged = base.merge(other);
@@ -883,6 +950,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
         };
 
         let empty2 = Config {
@@ -901,6 +969,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1345,6 +1414,7 @@ invalid toml syntax here [
             run_hooks: Some(ParsedProperty::Default(false)),
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            hooks: None,
         };
 
         // Test serialization to TOML (serializes with enum variant info)
@@ -1660,6 +1730,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            hooks: None,
         };
 
         let override_config = Config {
@@ -1678,6 +1749,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(false)),
             show_work_item_highlights: None, // Should keep base value
+            hooks: None,
         };
 
         let merged = base.merge(override_config);

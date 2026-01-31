@@ -992,6 +992,7 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Text,
         quiet: false,
+        hooks_config: None,
     };
 
     let mut buffer1 = Vec::new();
@@ -1013,6 +1014,7 @@ fn test_runner_configuration() {
         run_hooks: true,
         output_format: OutputFormat::Json,
         quiet: true,
+        hooks_config: None,
     };
 
     let mut buffer2 = Vec::new();
@@ -1034,6 +1036,7 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Ndjson,
         quiet: false,
+        hooks_config: None,
     };
 
     let mut buffer3 = Vec::new();

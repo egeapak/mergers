@@ -12,6 +12,9 @@ use crate::api::AzureDevOpsClient;
 use crate::core::operations::cherry_pick::{
     CherryPickConfig, CherryPickOperation, CherryPickOutcome,
 };
+use crate::core::operations::hooks::{
+    HookContext, HookExecutor, HookProgress, HookTrigger, HooksConfig,
+};
 use crate::core::operations::post_merge::{
     CompletedPRInfo, PostMergeConfig, PostMergeOperation, WorkItemInfo,
 };
@@ -41,6 +44,7 @@ pub struct MergeEngine {
     work_item_state: String,
     run_hooks: bool,
     local_repo: Option<PathBuf>,
+    hooks_config: HooksConfig,
 }
 
 impl MergeEngine {
@@ -58,6 +62,7 @@ impl MergeEngine {
         work_item_state: String,
         run_hooks: bool,
         local_repo: Option<PathBuf>,
+        hooks_config: Option<HooksConfig>,
     ) -> Self {
         Self {
             client,
@@ -71,7 +76,59 @@ impl MergeEngine {
             work_item_state,
             run_hooks,
             local_repo,
+            hooks_config: hooks_config.unwrap_or_default(),
         }
+    }
+
+    /// Returns the hooks configuration.
+    pub fn hooks_config(&self) -> &HooksConfig {
+        &self.hooks_config
+    }
+
+    /// Creates a base hook context with common fields populated.
+    fn create_hook_context(&self, repo_path: &Path) -> HookContext {
+        HookContext::new()
+            .with_version(&self.version)
+            .with_target_branch(&self.target_branch)
+            .with_dev_branch(&self.dev_branch)
+            .with_repo_path(repo_path.to_string_lossy())
+    }
+
+    /// Runs hooks for a given trigger point.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger` - The hook trigger point
+    /// * `repo_path` - Path to the repository (used as working directory)
+    /// * `context` - Hook context with environment variables
+    /// * `progress_callback` - Optional callback for progress updates
+    ///
+    /// # Returns
+    ///
+    /// True if all hooks succeeded or no hooks were configured, false otherwise.
+    pub fn run_hooks<F>(
+        &self,
+        trigger: HookTrigger,
+        repo_path: &Path,
+        context: &HookContext,
+        progress_callback: Option<F>,
+    ) -> bool
+    where
+        F: FnMut(HookProgress),
+    {
+        if !self.hooks_config.has_hooks_for(trigger) {
+            return true;
+        }
+
+        let executor = HookExecutor::new(self.hooks_config.clone());
+        let result = executor.run_hooks(trigger, repo_path, context, progress_callback);
+        result.all_succeeded
+    }
+
+    /// Runs hooks for a given trigger without progress callbacks.
+    pub fn run_hooks_simple(&self, trigger: HookTrigger, repo_path: &Path) -> bool {
+        let context = self.create_hook_context(repo_path);
+        self.run_hooks::<fn(HookProgress)>(trigger, repo_path, &context, None)
     }
 
     /// Loads pull requests from Azure DevOps.
@@ -544,6 +601,7 @@ mod tests {
             "Done".to_string(),
             false,
             None,
+            None,
         )
     }
 
@@ -788,6 +846,7 @@ mod tests {
             "Done".to_string(),
             false,
             Some(std::path::PathBuf::from("/path/to/repo")),
+            None,
         );
 
         // With hooks enabled
@@ -802,6 +861,7 @@ mod tests {
             "merged-".to_string(),
             "Done".to_string(),
             true,
+            None,
             None,
         );
     }
@@ -829,6 +889,7 @@ mod tests {
             "Released".to_string(),
             true,
             Some(std::path::PathBuf::from("/base/repo")),
+            None,
         );
 
         let state = engine.create_state_file(

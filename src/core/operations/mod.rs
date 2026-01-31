@@ -12,10 +12,12 @@
 //! - [`dependency_analysis`] - Analyzing file-level dependencies between PRs
 //! - [`cherry_pick`] - Cherry-picking commits with conflict handling
 //! - [`post_merge`] - Tagging PRs and updating work items
+//! - [`hooks`] - User-defined shell command hooks for merge workflows
 
 pub mod cherry_pick;
 pub mod data_loading;
 pub mod dependency_analysis;
+pub mod hooks;
 pub mod post_merge;
 pub mod pr_selection;
 pub mod work_item_grouping;
@@ -31,6 +33,10 @@ pub use dependency_analysis::{
     ChangeType, DependencyAnalysisConfig, DependencyAnalysisResult, DependencyAnalyzer,
     DependencyCategory, DependencyWarning, FileChange, LineRange, OverlappingFile, PRBitmapIndex,
     PRDependency, PRDependencyGraph, PRDependencyNode, PRInfo,
+};
+pub use hooks::{
+    HookCommandResult, HookContext, HookExecutor, HookProgress, HookResult, HookTrigger,
+    HooksConfig,
 };
 pub use post_merge::{
     PostMergeConfig, PostMergeOperation, PostMergeProgress, PostMergeTask, PostMergeTaskResult,

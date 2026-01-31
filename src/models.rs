@@ -1068,6 +1068,8 @@ impl Args {
             // UI settings are not set via CLI, only via config file
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            // Hooks are not set via CLI, only via config file or env vars
+            hooks: None,
         };
 
         // Merge configs: file < git_remote < env < cli

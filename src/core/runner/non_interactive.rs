@@ -694,6 +694,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             self.config.work_item_state.clone(),
             self.config.run_hooks,
             self.config.local_repo.clone(),
+            self.config.hooks_config.clone(),
         )
     }
 
@@ -763,6 +764,7 @@ mod tests {
             run_hooks: false,
             output_format: OutputFormat::Text,
             quiet: false,
+            hooks_config: None,
         }
     }
 

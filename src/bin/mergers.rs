@@ -297,6 +297,8 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         // UI settings are not set via CLI, only via config file
         show_dependency_highlights: None,
         show_work_item_highlights: None,
+        // Hooks are not set via CLI, only via config file or env vars
+        hooks: None,
     };
 
     // Merge configs: file < git_remote < env < cli
@@ -368,6 +370,7 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         run_hooks,
         output_format: args.output,
         quiet: args.quiet,
+        hooks_config: merged.hooks,
     })
 }
 
@@ -428,5 +431,6 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         run_hooks,
         output_format: output,
         quiet,
+        hooks_config: merged.hooks,
     })
 }
