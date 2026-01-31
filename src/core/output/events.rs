@@ -148,6 +148,54 @@ pub enum ProgressEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<String>,
     },
+
+    /// User-defined hook is starting.
+    HookStart {
+        /// The trigger point (e.g., "post_checkout", "post_merge").
+        trigger: String,
+        /// Number of commands to run.
+        command_count: usize,
+    },
+
+    /// A hook command is starting.
+    HookCommandStart {
+        /// The trigger point.
+        trigger: String,
+        /// The command being run.
+        command: String,
+        /// Zero-based index of the command.
+        index: usize,
+    },
+
+    /// A hook command completed.
+    HookCommandComplete {
+        /// The trigger point.
+        trigger: String,
+        /// The command that ran.
+        command: String,
+        /// Whether it succeeded.
+        success: bool,
+        /// Zero-based index of the command.
+        index: usize,
+    },
+
+    /// All hooks for a trigger completed.
+    HookComplete {
+        /// The trigger point.
+        trigger: String,
+        /// Whether all commands succeeded.
+        all_succeeded: bool,
+    },
+
+    /// A hook failed and the operation is stopping.
+    HookFailed {
+        /// The trigger point.
+        trigger: String,
+        /// The command that failed.
+        command: String,
+        /// Error output from the command.
+        error: String,
+    },
 }
 
 /// Status of a post-merge task.
@@ -719,6 +767,30 @@ mod tests {
             ProgressEvent::Error {
                 message: "err".to_string(),
                 code: None,
+            },
+            ProgressEvent::HookStart {
+                trigger: "post_checkout".to_string(),
+                command_count: 2,
+            },
+            ProgressEvent::HookCommandStart {
+                trigger: "post_checkout".to_string(),
+                command: "npm install".to_string(),
+                index: 0,
+            },
+            ProgressEvent::HookCommandComplete {
+                trigger: "post_checkout".to_string(),
+                command: "npm install".to_string(),
+                success: true,
+                index: 0,
+            },
+            ProgressEvent::HookComplete {
+                trigger: "post_checkout".to_string(),
+                all_succeeded: true,
+            },
+            ProgressEvent::HookFailed {
+                trigger: "post_merge".to_string(),
+                command: "cargo test".to_string(),
+                error: "test failed".to_string(),
             },
         ];
 

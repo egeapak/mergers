@@ -428,6 +428,56 @@ impl<W: Write> OutputWriter<W> {
                     .unwrap_or_default();
                 self.writeln(&format!("Error{}: {}", code_str, message))?;
             }
+            ProgressEvent::HookStart {
+                trigger,
+                command_count,
+            } => {
+                self.writeln(&format!(
+                    "Running {} hook ({} command{})...",
+                    trigger,
+                    command_count,
+                    if *command_count == 1 { "" } else { "s" }
+                ))?;
+            }
+            ProgressEvent::HookCommandStart {
+                trigger: _,
+                command,
+                index: _,
+            } => {
+                self.writeln(&format!("  → {}", command))?;
+            }
+            ProgressEvent::HookCommandComplete {
+                trigger: _,
+                command: _,
+                success,
+                index: _,
+            } => {
+                if *success {
+                    self.writeln("    ✓ completed")?;
+                } else {
+                    self.writeln("    ✗ failed")?;
+                }
+            }
+            ProgressEvent::HookComplete {
+                trigger,
+                all_succeeded,
+            } => {
+                if *all_succeeded {
+                    self.writeln(&format!("  ✓ {} hooks completed", trigger))?;
+                } else {
+                    self.writeln(&format!("  ✗ {} hooks failed", trigger))?;
+                }
+            }
+            ProgressEvent::HookFailed {
+                trigger,
+                command,
+                error,
+            } => {
+                self.writeln(&format!("Hook {} failed: {}", trigger, command))?;
+                if !error.is_empty() {
+                    self.writeln(&format!("  Error: {}", error))?;
+                }
+            }
         }
         Ok(())
     }

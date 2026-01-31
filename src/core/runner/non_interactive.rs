@@ -128,6 +128,18 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
+        // Run post-checkout hooks
+        engine.run_hooks_with_events(
+            crate::core::operations::HookTrigger::PostCheckout,
+            &repo_path,
+            &crate::core::operations::HookContext::new()
+                .with_version(&self.config.version)
+                .with_target_branch(&self.config.target_branch)
+                .with_dev_branch(&self.config.dev_branch)
+                .with_repo_path(repo_path.to_string_lossy()),
+            &mut |event| self.emit_event(event),
+        );
+
         // Run dependency analysis
         self.emit_event(ProgressEvent::DependencyAnalysisStart {
             pr_count: selected_count,
@@ -634,6 +646,18 @@ impl<W: Write> NonInteractiveRunner<W> {
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
+
+        // Run post-complete hooks
+        engine.run_hooks_with_events(
+            crate::core::operations::HookTrigger::PostComplete,
+            &state.repo_path,
+            &crate::core::operations::HookContext::new()
+                .with_version(&state.merge_version)
+                .with_target_branch(&state.target_branch)
+                .with_dev_branch(&state.dev_branch)
+                .with_repo_path(state.repo_path.to_string_lossy()),
+            &mut |event| self.emit_event(event),
+        );
 
         // Mark as completed
         let final_status = engine.determine_final_status(&state);

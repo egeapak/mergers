@@ -131,6 +131,73 @@ impl MergeEngine {
         self.run_hooks::<fn(HookProgress)>(trigger, repo_path, &context, None)
     }
 
+    /// Runs hooks for a given trigger and emits ProgressEvents.
+    ///
+    /// This method is used during the merge workflow to run hooks and emit
+    /// corresponding progress events for output formatting.
+    pub fn run_hooks_with_events<F>(
+        &self,
+        trigger: HookTrigger,
+        repo_path: &Path,
+        context: &HookContext,
+        event_callback: &mut F,
+    ) -> bool
+    where
+        F: FnMut(ProgressEvent),
+    {
+        if !self.hooks_config.has_hooks_for(trigger) {
+            return true;
+        }
+
+        let trigger_name = trigger.description().to_string();
+        let commands = self.hooks_config.commands_for(trigger);
+
+        event_callback(ProgressEvent::HookStart {
+            trigger: trigger_name.clone(),
+            command_count: commands.len(),
+        });
+
+        let executor = HookExecutor::new(self.hooks_config.clone());
+        let result = executor.run_hooks(
+            trigger,
+            repo_path,
+            context,
+            Some(|progress: HookProgress| {
+                // We can't emit events here since we don't have access to event_callback
+                // The hook executor handles its own progress internally
+                let _ = progress;
+            }),
+        );
+
+        // Emit events for each command result
+        for (index, cmd_result) in result.command_results.iter().enumerate() {
+            event_callback(ProgressEvent::HookCommandComplete {
+                trigger: trigger_name.clone(),
+                command: cmd_result.command.clone(),
+                success: cmd_result.success,
+                index,
+            });
+        }
+
+        event_callback(ProgressEvent::HookComplete {
+            trigger: trigger_name.clone(),
+            all_succeeded: result.all_succeeded,
+        });
+
+        // If hooks failed, emit a failure event
+        if !result.all_succeeded
+            && let Some(failure) = result.first_failure()
+        {
+            event_callback(ProgressEvent::HookFailed {
+                trigger: trigger_name,
+                command: failure.command.clone(),
+                error: failure.stderr.clone(),
+            });
+        }
+
+        result.all_succeeded
+    }
+
     /// Loads pull requests from Azure DevOps.
     pub async fn load_pull_requests(&self) -> Result<Vec<PullRequestWithWorkItems>> {
         // Fetch completed PRs from the dev branch
@@ -282,6 +349,16 @@ impl MergeEngine {
     {
         let total = state.cherry_pick_items.len();
 
+        // Run pre-cherry-pick hooks (only if starting from the beginning)
+        if state.current_index == 0 && self.hooks_config.has_hooks_for(HookTrigger::PreCherryPick) {
+            self.run_hooks_with_events(
+                HookTrigger::PreCherryPick,
+                &state.repo_path,
+                &self.create_hook_context(&state.repo_path),
+                &mut event_callback,
+            );
+        }
+
         while state.current_index < total {
             let item = &state.cherry_pick_items[state.current_index];
 
@@ -305,6 +382,20 @@ impl MergeEngine {
                         pr_id: item.pr_id,
                         commit_id: item.commit_id.clone(),
                     });
+
+                    // Run post-cherry-pick hooks
+                    if self.hooks_config.has_hooks_for(HookTrigger::PostCherryPick) {
+                        let context = self
+                            .create_hook_context(&state.repo_path)
+                            .with_pr_id(item.pr_id)
+                            .with_commit_id(&item.commit_id);
+                        self.run_hooks_with_events(
+                            HookTrigger::PostCherryPick,
+                            &state.repo_path,
+                            &context,
+                            &mut event_callback,
+                        );
+                    }
                 }
                 CherryPickOutcome::Conflict {
                     ref conflicted_files,
@@ -318,6 +409,20 @@ impl MergeEngine {
                         conflicted_files: conflicted_files.clone(),
                         repo_path: state.repo_path.clone(),
                     });
+
+                    // Run on-conflict hooks
+                    if self.hooks_config.has_hooks_for(HookTrigger::OnConflict) {
+                        let context = self
+                            .create_hook_context(&state.repo_path)
+                            .with_pr_id(item.pr_id)
+                            .with_commit_id(&item.commit_id);
+                        self.run_hooks_with_events(
+                            HookTrigger::OnConflict,
+                            &state.repo_path,
+                            &context,
+                            &mut event_callback,
+                        );
+                    }
 
                     return Some(ConflictInfo::new(
                         item.pr_id,
@@ -350,6 +455,17 @@ impl MergeEngine {
 
         // All cherry-picks complete
         state.phase = MergePhase::ReadyForCompletion;
+
+        // Run post-merge hooks
+        if self.hooks_config.has_hooks_for(HookTrigger::PostMerge) {
+            self.run_hooks_with_events(
+                HookTrigger::PostMerge,
+                &state.repo_path,
+                &self.create_hook_context(&state.repo_path),
+                &mut event_callback,
+            );
+        }
+
         None
     }
 
