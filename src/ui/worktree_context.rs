@@ -265,4 +265,141 @@ mod tests {
         ctx.cleanup();
         assert!(ctx.worktree_id.is_none());
     }
+
+    /// # WorktreeContext Merge Mode Setup Pattern
+    ///
+    /// Tests the pattern used in merge mode where both base_repo_path and
+    /// worktree_id are set for proper cleanup on exit.
+    ///
+    /// ## Test Scenario
+    /// - Creates context simulating merge mode worktree setup
+    /// - Sets base_repo_path (the original repo)
+    /// - Sets worktree_id (the version string like "v1.0.0")
+    /// - Sets repo_path (the worktree path)
+    /// - Verifies has_worktree() returns true
+    ///
+    /// ## Expected Outcome
+    /// - has_worktree() returns true when properly configured
+    /// - This ensures WorktreeContext::Drop will attempt cleanup
+    #[test]
+    fn test_merge_mode_worktree_setup_pattern() {
+        let mut ctx = WorktreeContext::new();
+
+        // Simulate the setup that happens in SetupRepoState for worktree mode
+        ctx.base_repo_path = Some(PathBuf::from("/path/to/base/repo"));
+        ctx.worktree_id = Some("v1.0.0".to_string());
+        ctx.repo_path = Some(PathBuf::from("/path/to/base/repo/next-v1.0.0"));
+
+        // Verify cleanup would happen on drop
+        assert!(
+            ctx.has_worktree(),
+            "has_worktree() should return true when both base_repo_path and worktree_id are set"
+        );
+
+        // Verify the fields are set correctly
+        assert_eq!(
+            ctx.base_repo_path,
+            Some(PathBuf::from("/path/to/base/repo"))
+        );
+        assert_eq!(ctx.worktree_id, Some("v1.0.0".to_string()));
+        assert_eq!(
+            ctx.repo_path(),
+            Some(std::path::Path::new("/path/to/base/repo/next-v1.0.0"))
+        );
+    }
+
+    /// # WorktreeContext Clone Mode Setup Pattern
+    ///
+    /// Tests the pattern used in clone mode where only temp_dir is set
+    /// (cleanup happens via TempDir Drop, not WorktreeContext cleanup).
+    ///
+    /// ## Test Scenario
+    /// - Creates context simulating clone mode setup
+    /// - Sets repo_path but NOT base_repo_path or worktree_id
+    /// - Verifies has_worktree() returns false
+    ///
+    /// ## Expected Outcome
+    /// - has_worktree() returns false for clone mode
+    /// - Cleanup relies on TempDir's Drop instead
+    #[test]
+    fn test_clone_mode_setup_pattern() {
+        let mut ctx = WorktreeContext::new();
+
+        // Simulate the setup that happens in SetupRepoState for clone mode
+        ctx.repo_path = Some(PathBuf::from("/tmp/mergers-clone-abc123"));
+        // base_repo_path and worktree_id are NOT set in clone mode
+        // _temp_dir would be set but we can't easily test that here
+
+        // Verify worktree cleanup would NOT happen (it's handled by TempDir)
+        assert!(
+            !ctx.has_worktree(),
+            "has_worktree() should return false for clone mode"
+        );
+    }
+
+    /// # WorktreeContext Cleanup With Both Fields Set
+    ///
+    /// Tests that cleanup() properly handles the case when both base_repo_path
+    /// and worktree_id are set (the fix for the cleanup bug).
+    ///
+    /// ## Test Scenario
+    /// - Creates context with both base_repo_path and worktree_id
+    /// - Calls cleanup()
+    /// - Verifies worktree_id is cleared
+    /// - Verifies has_worktree() returns false after cleanup
+    ///
+    /// ## Expected Outcome
+    /// - worktree_id is cleared after cleanup
+    /// - has_worktree() returns false (prevents double cleanup)
+    /// - base_repo_path remains set (only worktree_id is taken)
+    #[test]
+    fn test_cleanup_with_both_fields_set() {
+        let mut ctx = WorktreeContext::new();
+        ctx.base_repo_path = Some(PathBuf::from("/path/to/repo"));
+        ctx.worktree_id = Some("v1.0.0".to_string());
+
+        assert!(ctx.has_worktree(), "Should have worktree before cleanup");
+
+        // Cleanup (will fail silently since path doesn't exist, but clears worktree_id)
+        ctx.cleanup();
+
+        assert!(
+            ctx.worktree_id.is_none(),
+            "worktree_id should be None after cleanup"
+        );
+        assert!(
+            !ctx.has_worktree(),
+            "has_worktree() should return false after cleanup"
+        );
+        // base_repo_path is still set (only worktree_id is taken)
+        assert!(
+            ctx.base_repo_path.is_some(),
+            "base_repo_path should still be set"
+        );
+    }
+
+    /// # WorktreeContext Setters
+    ///
+    /// Tests the setter methods for repo_path and temp_dir.
+    ///
+    /// ## Test Scenario
+    /// - Uses set_repo_path to set and clear repo_path
+    /// - Uses set_temp_dir to set temp_dir
+    ///
+    /// ## Expected Outcome
+    /// - Setters properly update the fields
+    #[test]
+    fn test_setters() {
+        let mut ctx = WorktreeContext::new();
+
+        // Test set_repo_path
+        ctx.set_repo_path(Some(PathBuf::from("/test/path")));
+        assert_eq!(ctx.repo_path(), Some(std::path::Path::new("/test/path")));
+
+        ctx.set_repo_path(None);
+        assert!(ctx.repo_path().is_none());
+
+        // Test set_temp_dir (just verify it doesn't panic)
+        ctx.set_temp_dir(None);
+    }
 }

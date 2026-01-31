@@ -316,9 +316,11 @@ impl SetupRepoState {
 
                 match setup {
                     git::RepositorySetup::Local(path) => {
-                        // Store the base repo path for cleanup (worktree case)
+                        // Store the base repo path and worktree ID for cleanup (worktree case)
                         if let Some(local_repo) = local_repo_path {
                             app.worktree.base_repo_path = Some(local_repo);
+                            // Set worktree_id so WorktreeContext::Drop can clean up
+                            app.worktree.worktree_id = Some(version.clone());
                         }
                         app.set_repo_path(Some(path));
                     }
@@ -1172,5 +1174,97 @@ mod tests {
         let result =
             ModeState::process_key(&mut state, KeyCode::Enter, harness.merge_app_mut()).await;
         assert!(matches!(result, StateChange::Keep));
+    }
+
+    /// # Worktree Context Setup for Cleanup
+    ///
+    /// Tests that worktree context is properly configured for cleanup when
+    /// simulating a worktree mode setup. This validates the fix for the
+    /// cleanup bug where worktree_id was not being set.
+    ///
+    /// ## Test Scenario
+    /// - Simulates the worktree context setup that happens in SetupRepoState
+    /// - Sets base_repo_path and worktree_id as the code now does
+    /// - Verifies has_worktree() returns true (enabling cleanup)
+    ///
+    /// ## Expected Outcome
+    /// - has_worktree() returns true when both fields are set
+    /// - This ensures WorktreeContext::Drop will attempt cleanup
+    #[test]
+    fn test_worktree_context_cleanup_configuration() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Get access to the MergeApp's worktree context
+        let app = harness.merge_app_mut();
+
+        // Before setup - no cleanup would happen
+        assert!(
+            !app.worktree.has_worktree(),
+            "has_worktree() should be false before setup"
+        );
+
+        // Simulate the worktree setup from SetupRepoState
+        // This mirrors the code path in setup_repository():
+        //   app.worktree.base_repo_path = Some(local_repo);
+        //   app.worktree.worktree_id = Some(version.clone());
+        //   app.set_repo_path(Some(path));
+        app.worktree.base_repo_path = Some(std::path::PathBuf::from("/path/to/base/repo"));
+        app.worktree.worktree_id = Some("v1.0.0".to_string());
+        app.set_repo_path(Some(std::path::PathBuf::from(
+            "/path/to/base/repo/next-v1.0.0",
+        )));
+
+        // After setup - cleanup should happen
+        assert!(
+            app.worktree.has_worktree(),
+            "has_worktree() should be true after setup with both base_repo_path and worktree_id"
+        );
+
+        // Verify all fields are correct
+        assert_eq!(
+            app.worktree.base_repo_path,
+            Some(std::path::PathBuf::from("/path/to/base/repo"))
+        );
+        assert_eq!(app.worktree.worktree_id, Some("v1.0.0".to_string()));
+        assert_eq!(
+            app.repo_path(),
+            Some(std::path::Path::new("/path/to/base/repo/next-v1.0.0"))
+        );
+    }
+
+    /// # Worktree ID Required for Cleanup
+    ///
+    /// Tests that cleanup does NOT happen when worktree_id is missing.
+    /// This documents the bug that was fixed - without worktree_id,
+    /// WorktreeContext::Drop would not clean up.
+    ///
+    /// ## Test Scenario
+    /// - Sets base_repo_path but NOT worktree_id (the bug scenario)
+    /// - Verifies has_worktree() returns false
+    ///
+    /// ## Expected Outcome
+    /// - has_worktree() returns false (NO cleanup)
+    /// - This was the bug: worktree_id was never set
+    #[test]
+    fn test_worktree_cleanup_requires_worktree_id() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        // Get access to the MergeApp's worktree context
+        let app = harness.merge_app_mut();
+
+        // Old buggy setup: only base_repo_path set, worktree_id missing
+        app.worktree.base_repo_path = Some(std::path::PathBuf::from("/path/to/base/repo"));
+        app.set_repo_path(Some(std::path::PathBuf::from(
+            "/path/to/base/repo/next-v1.0.0",
+        )));
+        // worktree_id is NOT set - this was the bug
+
+        // Without worktree_id, cleanup would NOT happen
+        assert!(
+            !app.worktree.has_worktree(),
+            "has_worktree() should be false when worktree_id is missing (the bug)"
+        );
     }
 }
