@@ -13,7 +13,7 @@ pub mod merge_engine;
 pub mod non_interactive;
 pub mod traits;
 
-pub use merge_engine::MergeEngine;
+pub use merge_engine::{CherryPickProcessResult, MergeEngine};
 pub use non_interactive::NonInteractiveRunner;
 pub use traits::{MergeRunnerConfig, RunResult};
 

@@ -21,7 +21,7 @@
 //! let merged = config.merge(env_config);
 //! ```
 
-use crate::core::operations::HooksConfig;
+use crate::core::operations::{HookTriggerConfig, HooksConfig};
 use crate::{git_config, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -263,12 +263,24 @@ impl Config {
 
         // Build hooks from environment variables
         let hooks_config = HooksConfig {
-            post_checkout: parse_hook_commands("MERGERS_HOOKS_POST_CHECKOUT"),
-            pre_cherry_pick: parse_hook_commands("MERGERS_HOOKS_PRE_CHERRY_PICK"),
-            post_cherry_pick: parse_hook_commands("MERGERS_HOOKS_POST_CHERRY_PICK"),
-            post_merge: parse_hook_commands("MERGERS_HOOKS_POST_MERGE"),
-            on_conflict: parse_hook_commands("MERGERS_HOOKS_ON_CONFLICT"),
-            post_complete: parse_hook_commands("MERGERS_HOOKS_POST_COMPLETE"),
+            post_checkout: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_CHECKOUT",
+            )),
+            pre_cherry_pick: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_PRE_CHERRY_PICK",
+            )),
+            post_cherry_pick: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_CHERRY_PICK",
+            )),
+            post_merge: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_MERGE",
+            )),
+            on_conflict: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_ON_CONFLICT",
+            )),
+            post_complete: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_COMPLETE",
+            )),
         };
 
         Self {

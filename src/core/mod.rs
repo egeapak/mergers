@@ -44,6 +44,9 @@ pub enum ExitCode {
 
     /// Another merge is in progress (locked).
     Locked = 7,
+
+    /// A hook failed and was configured to abort.
+    HookFailed = 8,
 }
 
 impl ExitCode {
@@ -63,6 +66,7 @@ impl ExitCode {
             ExitCode::InvalidPhase => "Operation not valid for current merge phase",
             ExitCode::NoPRsMatched => "No pull requests matched the selection criteria",
             ExitCode::Locked => "Another merge operation is in progress",
+            ExitCode::HookFailed => "A hook failed and was configured to abort the workflow",
         }
     }
 }
@@ -102,6 +106,7 @@ mod tests {
         assert_eq!(ExitCode::InvalidPhase.code(), 5);
         assert_eq!(ExitCode::NoPRsMatched.code(), 6);
         assert_eq!(ExitCode::Locked.code(), 7);
+        assert_eq!(ExitCode::HookFailed.code(), 8);
     }
 
     /// # Exit Code Descriptions
@@ -123,6 +128,7 @@ mod tests {
         assert!(!ExitCode::InvalidPhase.description().is_empty());
         assert!(!ExitCode::NoPRsMatched.description().is_empty());
         assert!(!ExitCode::Locked.description().is_empty());
+        assert!(!ExitCode::HookFailed.description().is_empty());
     }
 
     /// # Exit Code Display

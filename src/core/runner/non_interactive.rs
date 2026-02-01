@@ -18,8 +18,9 @@ use crate::core::output::{
 use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 use crate::git;
 
-use super::merge_engine::{MergeEngine, acquire_lock};
+use super::merge_engine::{CherryPickProcessResult, MergeEngine, acquire_lock};
 use super::traits::{MergeRunnerConfig, RunResult};
+use crate::core::operations::hooks::HookOutcome;
 
 /// Non-interactive merge runner.
 ///
@@ -128,8 +129,8 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Run post-checkout hooks
-        engine.run_hooks_with_events(
+        // Run post-checkout hooks (defaults to Abort on failure)
+        let hook_outcome = engine.run_hooks_with_events(
             crate::core::operations::HookTrigger::PostCheckout,
             &repo_path,
             &crate::core::operations::HookContext::new()
@@ -139,6 +140,17 @@ impl<W: Write> NonInteractiveRunner<W> {
                 .with_repo_path(repo_path.to_string_lossy()),
             &mut |event| self.emit_event(event),
         );
+
+        if let HookOutcome::Abort { command, error, .. } = hook_outcome {
+            self.emit_error(&format!(
+                "Post-checkout hook failed: {} - {}",
+                command, error
+            ));
+            return RunResult::error(
+                ExitCode::HookFailed,
+                format!("Post-checkout hook '{}' failed: {}", command, error),
+            );
+        }
 
         // Run dependency analysis
         self.emit_event(ProgressEvent::DependencyAnalysisStart {
@@ -206,7 +218,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
 
         // Process cherry-picks
-        let conflict_info = engine.process_cherry_picks(&mut state, |event| {
+        let process_result = engine.process_cherry_picks(&mut state, |event| {
             self.emit_event(event);
         });
 
@@ -219,13 +231,26 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        if let Some(conflict) = conflict_info {
-            // Output conflict info
-            if let Err(e) = self.output.write_conflict(&conflict) {
-                eprintln!("Warning: Failed to write conflict info: {}", e);
+        // Handle process result
+        match process_result {
+            CherryPickProcessResult::Conflict(conflict) => {
+                // Output conflict info
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    eprintln!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
             }
-
-            return RunResult::conflict(state_path);
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
         }
 
         // All cherry-picks complete
@@ -328,7 +353,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let engine = self.create_engine(client);
 
         // Continue processing
-        let conflict_info = engine.process_cherry_picks(&mut state, |event| {
+        let process_result = engine.process_cherry_picks(&mut state, |event| {
             self.emit_event(event);
         });
 
@@ -340,11 +365,25 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        if let Some(conflict) = conflict_info {
-            if let Err(e) = self.output.write_conflict(&conflict) {
-                eprintln!("Warning: Failed to write conflict info: {}", e);
+        // Handle process result
+        match process_result {
+            CherryPickProcessResult::Conflict(conflict) => {
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    eprintln!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
             }
-            return RunResult::conflict(state_path);
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
         }
 
         let counts = engine.create_summary_counts(&state);
@@ -647,8 +686,8 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Run post-complete hooks
-        engine.run_hooks_with_events(
+        // Run post-complete hooks (defaults to Continue, so we don't abort on failure)
+        let _ = engine.run_hooks_with_events(
             crate::core::operations::HookTrigger::PostComplete,
             &state.repo_path,
             &crate::core::operations::HookContext::new()

@@ -35,8 +35,8 @@ pub use dependency_analysis::{
     PRDependency, PRDependencyGraph, PRDependencyNode, PRInfo,
 };
 pub use hooks::{
-    HookCommandResult, HookContext, HookExecutor, HookProgress, HookResult, HookTrigger,
-    HooksConfig,
+    HookCommandResult, HookContext, HookExecutionMode, HookExecutor, HookFailureMode, HookOutcome,
+    HookProgress, HookResult, HookTrigger, HookTriggerConfig, HooksConfig,
 };
 pub use post_merge::{
     PostMergeConfig, PostMergeOperation, PostMergeProgress, PostMergeTask, PostMergeTaskResult,

@@ -43,6 +43,67 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
+/// What to do when a hook command fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HookFailureMode {
+    /// Abort the entire workflow.
+    Abort,
+    /// Continue workflow but emit warning (default).
+    #[default]
+    Continue,
+}
+
+/// Whether to run hooks synchronously or asynchronously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HookExecutionMode {
+    /// Run synchronously, blocking workflow (default).
+    #[default]
+    Blocking,
+    /// Fire and forget - start hook and continue immediately.
+    Async,
+}
+
+/// Result of running hooks that informs the caller what action to take.
+#[derive(Debug, Clone)]
+pub enum HookOutcome {
+    /// All hooks succeeded or no hooks configured.
+    Success,
+    /// Hook failed but configured to continue (warning emitted).
+    ContinuedAfterFailure {
+        /// The trigger that failed.
+        trigger: HookTrigger,
+        /// The command that failed.
+        command: String,
+        /// Error message.
+        error: String,
+    },
+    /// Hook failed and configured to abort workflow.
+    Abort {
+        /// The trigger that failed.
+        trigger: HookTrigger,
+        /// The command that failed.
+        command: String,
+        /// Error message.
+        error: String,
+    },
+    /// Hooks started asynchronously (no result yet).
+    Async,
+}
+
+impl HookOutcome {
+    /// Returns true if the workflow should abort.
+    pub fn should_abort(&self) -> bool {
+        matches!(self, HookOutcome::Abort { .. })
+    }
+
+    /// Returns true if this was a successful outcome.
+    pub fn is_success(&self) -> bool {
+        matches!(self, HookOutcome::Success | HookOutcome::Async)
+    }
+}
+
 /// Hook trigger points in the merge workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookTrigger {
@@ -84,34 +145,219 @@ impl HookTrigger {
             HookTrigger::PostComplete => "post-complete",
         }
     }
+
+    /// Returns the default failure mode for this trigger.
+    ///
+    /// Pre-hooks and setup hooks abort by default since failures there
+    /// indicate problems that should stop the workflow.
+    /// Post-hooks continue by default since they're often informational.
+    pub fn default_failure_mode(&self) -> HookFailureMode {
+        match self {
+            // Setup and validation hooks should abort on failure
+            HookTrigger::PostCheckout | HookTrigger::PreCherryPick => HookFailureMode::Abort,
+            // Post-operation hooks continue by default
+            HookTrigger::PostCherryPick
+            | HookTrigger::PostMerge
+            | HookTrigger::OnConflict
+            | HookTrigger::PostComplete => HookFailureMode::Continue,
+        }
+    }
+
+    /// Creates a HookTrigger from a config key string.
+    pub fn from_config_key(key: &str) -> Option<Self> {
+        match key {
+            "post_checkout" => Some(HookTrigger::PostCheckout),
+            "pre_cherry_pick" => Some(HookTrigger::PreCherryPick),
+            "post_cherry_pick" => Some(HookTrigger::PostCherryPick),
+            "post_merge" => Some(HookTrigger::PostMerge),
+            "on_conflict" => Some(HookTrigger::OnConflict),
+            "post_complete" => Some(HookTrigger::PostComplete),
+            _ => None,
+        }
+    }
+}
+
+/// Default timeout in seconds for hook commands.
+fn default_timeout_secs() -> u64 {
+    300
+}
+
+/// Extended configuration for a single hook trigger.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct HookTriggerConfig {
+    /// Commands to run.
+    #[serde(default)]
+    pub commands: Vec<String>,
+    /// What to do on failure (if not set, uses trigger's default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_failure: Option<HookFailureMode>,
+    /// Execution mode.
+    #[serde(default)]
+    pub execution: HookExecutionMode,
+    /// Timeout in seconds per command (default: 300).
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl HookTriggerConfig {
+    /// Creates a new empty hook trigger config.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a config from a list of commands with default settings.
+    pub fn from_commands(commands: Vec<String>) -> Self {
+        Self {
+            commands,
+            on_failure: None,
+            execution: HookExecutionMode::default(),
+            timeout_secs: default_timeout_secs(),
+        }
+    }
+
+    /// Returns true if this config has any commands.
+    pub fn has_commands(&self) -> bool {
+        !self.commands.is_empty()
+    }
+
+    /// Returns the failure mode, using the trigger's default if not set.
+    pub fn failure_mode(&self, trigger: HookTrigger) -> HookFailureMode {
+        self.on_failure
+            .unwrap_or_else(|| trigger.default_failure_mode())
+    }
+}
+
+/// Helper function for serde to skip serializing empty trigger configs.
+fn is_empty_trigger_config(config: &HookTriggerConfig) -> bool {
+    !config.has_commands()
 }
 
 /// Configuration for hooks.
+///
+/// Supports both simple format (list of commands) and extended format
+/// (with failure mode and execution mode configuration).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct HooksConfig {
     /// Commands to run after repository checkout/setup.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub post_checkout: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub post_checkout: HookTriggerConfig,
 
     /// Commands to run before starting cherry-picks.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pre_cherry_pick: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub pre_cherry_pick: HookTriggerConfig,
 
     /// Commands to run after each successful cherry-pick.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub post_cherry_pick: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub post_cherry_pick: HookTriggerConfig,
 
     /// Commands to run after all cherry-picks complete.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub post_merge: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub post_merge: HookTriggerConfig,
 
     /// Commands to run when a conflict is detected.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub on_conflict: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub on_conflict: HookTriggerConfig,
 
     /// Commands to run after the complete command finishes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub post_complete: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_empty_trigger_config",
+        deserialize_with = "deserialize_hook_trigger_config"
+    )]
+    pub post_complete: HookTriggerConfig,
+}
+
+/// Custom deserializer that supports both simple (Vec<String>) and extended (HookTriggerConfig) formats.
+fn deserialize_hook_trigger_config<'de, D>(deserializer: D) -> Result<HookTriggerConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, MapAccess, SeqAccess, Visitor};
+
+    struct HookTriggerConfigVisitor;
+
+    impl<'de> Visitor<'de> for HookTriggerConfigVisitor {
+        type Value = HookTriggerConfig;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a list of commands or a hook trigger config object")
+        }
+
+        // Handle simple format: ["cmd1", "cmd2"]
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut commands = Vec::new();
+            while let Some(cmd) = seq.next_element::<String>()? {
+                commands.push(cmd);
+            }
+            Ok(HookTriggerConfig::from_commands(commands))
+        }
+
+        // Handle extended format: { commands = [...], on_failure = "abort" }
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut commands = None;
+            let mut on_failure = None;
+            let mut execution = None;
+            let mut timeout_secs = None;
+
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "commands" => {
+                        commands = Some(map.next_value::<Vec<String>>()?);
+                    }
+                    "on_failure" => {
+                        on_failure = Some(map.next_value::<HookFailureMode>()?);
+                    }
+                    "execution" => {
+                        execution = Some(map.next_value::<HookExecutionMode>()?);
+                    }
+                    "timeout_secs" => {
+                        timeout_secs = Some(map.next_value::<u64>()?);
+                    }
+                    _ => {
+                        return Err(de::Error::unknown_field(
+                            &key,
+                            &["commands", "on_failure", "execution", "timeout_secs"],
+                        ));
+                    }
+                }
+            }
+
+            Ok(HookTriggerConfig {
+                commands: commands.unwrap_or_default(),
+                on_failure,
+                execution: execution.unwrap_or_default(),
+                timeout_secs: timeout_secs.unwrap_or_else(default_timeout_secs),
+            })
+        }
+    }
+
+    deserializer.deserialize_any(HookTriggerConfigVisitor)
 }
 
 impl HooksConfig {
@@ -120,8 +366,8 @@ impl HooksConfig {
         Self::default()
     }
 
-    /// Returns the commands for a given trigger.
-    pub fn commands_for(&self, trigger: HookTrigger) -> &[String] {
+    /// Returns the configuration for a given trigger.
+    pub fn config_for(&self, trigger: HookTrigger) -> &HookTriggerConfig {
         match trigger {
             HookTrigger::PostCheckout => &self.post_checkout,
             HookTrigger::PreCherryPick => &self.pre_cherry_pick,
@@ -132,19 +378,24 @@ impl HooksConfig {
         }
     }
 
+    /// Returns the commands for a given trigger.
+    pub fn commands_for(&self, trigger: HookTrigger) -> &[String] {
+        &self.config_for(trigger).commands
+    }
+
     /// Returns true if any hooks are configured.
     pub fn has_hooks(&self) -> bool {
-        !self.post_checkout.is_empty()
-            || !self.pre_cherry_pick.is_empty()
-            || !self.post_cherry_pick.is_empty()
-            || !self.post_merge.is_empty()
-            || !self.on_conflict.is_empty()
-            || !self.post_complete.is_empty()
+        self.post_checkout.has_commands()
+            || self.pre_cherry_pick.has_commands()
+            || self.post_cherry_pick.has_commands()
+            || self.post_merge.has_commands()
+            || self.on_conflict.has_commands()
+            || self.post_complete.has_commands()
     }
 
     /// Returns true if hooks are configured for the given trigger.
     pub fn has_hooks_for(&self, trigger: HookTrigger) -> bool {
-        !self.commands_for(trigger).is_empty()
+        self.config_for(trigger).has_commands()
     }
 
     /// Merges another hooks config into this one, with other taking precedence.
@@ -152,36 +403,55 @@ impl HooksConfig {
     /// If the other config has any hooks for a trigger, they replace this config's hooks.
     pub fn merge(self, other: Self) -> Self {
         Self {
-            post_checkout: if other.post_checkout.is_empty() {
-                self.post_checkout
-            } else {
+            post_checkout: if other.post_checkout.has_commands() {
                 other.post_checkout
-            },
-            pre_cherry_pick: if other.pre_cherry_pick.is_empty() {
-                self.pre_cherry_pick
             } else {
+                self.post_checkout
+            },
+            pre_cherry_pick: if other.pre_cherry_pick.has_commands() {
                 other.pre_cherry_pick
-            },
-            post_cherry_pick: if other.post_cherry_pick.is_empty() {
-                self.post_cherry_pick
             } else {
+                self.pre_cherry_pick
+            },
+            post_cherry_pick: if other.post_cherry_pick.has_commands() {
                 other.post_cherry_pick
-            },
-            post_merge: if other.post_merge.is_empty() {
-                self.post_merge
             } else {
+                self.post_cherry_pick
+            },
+            post_merge: if other.post_merge.has_commands() {
                 other.post_merge
-            },
-            on_conflict: if other.on_conflict.is_empty() {
-                self.on_conflict
             } else {
+                self.post_merge
+            },
+            on_conflict: if other.on_conflict.has_commands() {
                 other.on_conflict
-            },
-            post_complete: if other.post_complete.is_empty() {
-                self.post_complete
             } else {
-                other.post_complete
+                self.on_conflict
             },
+            post_complete: if other.post_complete.has_commands() {
+                other.post_complete
+            } else {
+                self.post_complete
+            },
+        }
+    }
+
+    /// Creates a HooksConfig from simple command lists (for backward compatibility).
+    pub fn from_simple(
+        post_checkout: Vec<String>,
+        pre_cherry_pick: Vec<String>,
+        post_cherry_pick: Vec<String>,
+        post_merge: Vec<String>,
+        on_conflict: Vec<String>,
+        post_complete: Vec<String>,
+    ) -> Self {
+        Self {
+            post_checkout: HookTriggerConfig::from_commands(post_checkout),
+            pre_cherry_pick: HookTriggerConfig::from_commands(pre_cherry_pick),
+            post_cherry_pick: HookTriggerConfig::from_commands(post_cherry_pick),
+            post_merge: HookTriggerConfig::from_commands(post_merge),
+            on_conflict: HookTriggerConfig::from_commands(on_conflict),
+            post_complete: HookTriggerConfig::from_commands(post_complete),
         }
     }
 }
@@ -471,6 +741,94 @@ impl HookExecutor {
     ) -> HookResult {
         self.run_hooks::<fn(HookProgress)>(trigger, working_dir, context, None)
     }
+
+    /// Runs hooks for a trigger and returns an outcome based on failure mode.
+    ///
+    /// This method considers the configured failure mode for the trigger and
+    /// returns an appropriate `HookOutcome` that tells the caller what action
+    /// to take.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger` - The hook trigger point
+    /// * `working_dir` - The working directory for commands
+    /// * `context` - Context for environment variables
+    /// * `progress_callback` - Optional callback for progress updates
+    ///
+    /// # Returns
+    ///
+    /// A `HookOutcome` indicating success, continue-after-failure, abort, or async.
+    pub fn run_hooks_with_outcome<F>(
+        &self,
+        trigger: HookTrigger,
+        working_dir: &Path,
+        context: &HookContext,
+        progress_callback: Option<F>,
+    ) -> HookOutcome
+    where
+        F: FnMut(HookProgress),
+    {
+        let trigger_config = self.config.config_for(trigger);
+
+        // If no hooks configured, return success
+        if !trigger_config.has_commands() {
+            return HookOutcome::Success;
+        }
+
+        // Handle async execution mode
+        if trigger_config.execution == HookExecutionMode::Async {
+            // For async mode, we start the hooks and return immediately
+            // The actual async spawning is handled by the caller
+            return HookOutcome::Async;
+        }
+
+        // Run hooks synchronously
+        let result = self.run_hooks(trigger, working_dir, context, progress_callback);
+
+        if result.all_succeeded {
+            return HookOutcome::Success;
+        }
+
+        // Get failure details
+        let failure = result.first_failure();
+        let (command, error) = match failure {
+            Some(f) => (
+                f.command.clone(),
+                if f.stderr.is_empty() {
+                    format!("Command failed with exit code {:?}", f.exit_code)
+                } else {
+                    f.stderr.clone()
+                },
+            ),
+            None => ("unknown".to_string(), "Unknown error".to_string()),
+        };
+
+        // Determine action based on failure mode
+        let failure_mode = trigger_config.failure_mode(trigger);
+
+        match failure_mode {
+            HookFailureMode::Abort => HookOutcome::Abort {
+                trigger,
+                command,
+                error,
+            },
+            HookFailureMode::Continue => HookOutcome::ContinuedAfterFailure {
+                trigger,
+                command,
+                error,
+            },
+        }
+    }
+
+    /// Runs hooks for a trigger with outcome, without progress callbacks.
+    pub fn run_hooks_with_outcome_simple(
+        &self,
+        trigger: HookTrigger,
+        working_dir: &Path,
+        context: &HookContext,
+    ) -> HookOutcome {
+        self.run_hooks_with_outcome::<fn(HookProgress)>(trigger, working_dir, context, None)
+    }
 }
 
 /// Runs a single shell command.
@@ -567,16 +925,16 @@ mod tests {
     /// - Creates default HooksConfig
     ///
     /// ## Expected Outcome
-    /// - All hook lists are empty
+    /// - All hook trigger configs are empty
     #[test]
     fn test_hooks_config_default() {
         let config = HooksConfig::default();
-        assert!(config.post_checkout.is_empty());
-        assert!(config.pre_cherry_pick.is_empty());
-        assert!(config.post_cherry_pick.is_empty());
-        assert!(config.post_merge.is_empty());
-        assert!(config.on_conflict.is_empty());
-        assert!(config.post_complete.is_empty());
+        assert!(!config.post_checkout.has_commands());
+        assert!(!config.pre_cherry_pick.has_commands());
+        assert!(!config.post_cherry_pick.has_commands());
+        assert!(!config.post_merge.has_commands());
+        assert!(!config.on_conflict.has_commands());
+        assert!(!config.post_complete.has_commands());
         assert!(!config.has_hooks());
     }
 
@@ -595,7 +953,7 @@ mod tests {
         assert!(!config.has_hooks());
 
         let config_with_hooks = HooksConfig {
-            post_merge: vec!["echo test".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
             ..Default::default()
         };
         assert!(config_with_hooks.has_hooks());
@@ -613,7 +971,7 @@ mod tests {
     #[test]
     fn test_hooks_config_has_hooks_for() {
         let config = HooksConfig {
-            post_merge: vec!["echo test".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
             ..Default::default()
         };
 
@@ -633,14 +991,14 @@ mod tests {
     /// - commands_for returns correct slice for each trigger
     #[test]
     fn test_hooks_config_commands_for() {
-        let config = HooksConfig {
-            post_checkout: vec!["echo checkout".to_string()],
-            pre_cherry_pick: vec!["echo pre".to_string()],
-            post_cherry_pick: vec!["echo post".to_string()],
-            post_merge: vec!["echo merge1".to_string(), "echo merge2".to_string()],
-            on_conflict: vec!["echo conflict".to_string()],
-            post_complete: vec!["echo complete".to_string()],
-        };
+        let config = HooksConfig::from_simple(
+            vec!["echo checkout".to_string()],
+            vec!["echo pre".to_string()],
+            vec!["echo post".to_string()],
+            vec!["echo merge1".to_string(), "echo merge2".to_string()],
+            vec!["echo conflict".to_string()],
+            vec!["echo complete".to_string()],
+        );
 
         assert_eq!(config.commands_for(HookTrigger::PostCheckout).len(), 1);
         assert_eq!(config.commands_for(HookTrigger::PostMerge).len(), 2);
@@ -659,25 +1017,31 @@ mod tests {
     #[test]
     fn test_hooks_config_merge() {
         let base = HooksConfig {
-            post_merge: vec!["base cmd".to_string()],
-            on_conflict: vec!["base conflict".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["base cmd".to_string()]),
+            on_conflict: HookTriggerConfig::from_commands(vec!["base conflict".to_string()]),
             ..Default::default()
         };
 
         let other = HooksConfig {
-            post_merge: vec!["other cmd".to_string()],
-            post_complete: vec!["other complete".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["other cmd".to_string()]),
+            post_complete: HookTriggerConfig::from_commands(vec!["other complete".to_string()]),
             ..Default::default()
         };
 
         let merged = base.merge(other);
 
         // Other takes precedence
-        assert_eq!(merged.post_merge, vec!["other cmd".to_string()]);
+        assert_eq!(merged.post_merge.commands, vec!["other cmd".to_string()]);
         // Base kept when other is empty
-        assert_eq!(merged.on_conflict, vec!["base conflict".to_string()]);
+        assert_eq!(
+            merged.on_conflict.commands,
+            vec!["base conflict".to_string()]
+        );
         // Other added
-        assert_eq!(merged.post_complete, vec!["other complete".to_string()]);
+        assert_eq!(
+            merged.post_complete.commands,
+            vec!["other complete".to_string()]
+        );
     }
 
     /// # Hook Context Builder
@@ -767,7 +1131,7 @@ mod tests {
     #[test]
     fn test_hook_executor_run_simple_command() {
         let config = HooksConfig {
-            post_merge: vec!["echo hello".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["echo hello".to_string()]),
             ..Default::default()
         };
         let executor = HookExecutor::new(config);
@@ -795,7 +1159,10 @@ mod tests {
     #[test]
     fn test_hook_executor_run_multiple_commands() {
         let config = HooksConfig {
-            post_merge: vec!["echo first".to_string(), "echo second".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec![
+                "echo first".to_string(),
+                "echo second".to_string(),
+            ]),
             ..Default::default()
         };
         let executor = HookExecutor::new(config);
@@ -823,10 +1190,10 @@ mod tests {
     #[test]
     fn test_hook_executor_stop_on_failure() {
         let config = HooksConfig {
-            post_merge: vec![
+            post_merge: HookTriggerConfig::from_commands(vec![
                 "exit 1".to_string(), // This fails
                 "echo should_not_run".to_string(),
-            ],
+            ]),
             ..Default::default()
         };
         let executor = HookExecutor::new(config);
@@ -853,7 +1220,7 @@ mod tests {
     #[test]
     fn test_hook_executor_env_vars() {
         let config = HooksConfig {
-            post_merge: vec!["echo $MERGERS_VERSION".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["echo $MERGERS_VERSION".to_string()]),
             ..Default::default()
         };
         let executor = HookExecutor::new(config);
@@ -916,8 +1283,8 @@ mod tests {
     #[test]
     fn test_hooks_config_serialization() {
         let config = HooksConfig {
-            post_merge: vec!["cargo test".to_string()],
-            on_conflict: vec!["git status".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["cargo test".to_string()]),
+            on_conflict: HookTriggerConfig::from_commands(vec!["git status".to_string()]),
             ..Default::default()
         };
 
@@ -946,15 +1313,18 @@ on_conflict = ["git status"]
 
         let config: HooksConfig = toml::from_str(toml_str).unwrap();
 
-        assert_eq!(config.post_checkout, vec!["npm install".to_string()]);
         assert_eq!(
-            config.post_merge,
+            config.post_checkout.commands,
+            vec!["npm install".to_string()]
+        );
+        assert_eq!(
+            config.post_merge.commands,
             vec!["cargo test".to_string(), "cargo build".to_string()]
         );
-        assert_eq!(config.on_conflict, vec!["git status".to_string()]);
-        assert!(config.pre_cherry_pick.is_empty());
-        assert!(config.post_cherry_pick.is_empty());
-        assert!(config.post_complete.is_empty());
+        assert_eq!(config.on_conflict.commands, vec!["git status".to_string()]);
+        assert!(!config.pre_cherry_pick.has_commands());
+        assert!(!config.post_cherry_pick.has_commands());
+        assert!(!config.post_complete.has_commands());
     }
 
     /// # Hook Progress Variants
@@ -1002,7 +1372,7 @@ on_conflict = ["git status"]
     #[test]
     fn test_hook_executor_with_progress_callback() {
         let config = HooksConfig {
-            post_merge: vec!["echo test".to_string()],
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
             ..Default::default()
         };
         let executor = HookExecutor::new(config);
@@ -1022,5 +1392,212 @@ on_conflict = ["git status"]
         );
 
         assert_eq!(events.len(), 4); // Starting, CommandStarting, CommandCompleted, Completed
+    }
+
+    /// # Hook Trigger Default Failure Mode
+    ///
+    /// Verifies that hook triggers have sensible default failure modes.
+    ///
+    /// ## Test Scenario
+    /// - Checks default failure mode for each trigger
+    ///
+    /// ## Expected Outcome
+    /// - Pre-hooks abort, post-hooks continue
+    #[test]
+    fn test_hook_trigger_default_failure_mode() {
+        // Pre-hooks should abort by default
+        assert_eq!(
+            HookTrigger::PostCheckout.default_failure_mode(),
+            HookFailureMode::Abort
+        );
+        assert_eq!(
+            HookTrigger::PreCherryPick.default_failure_mode(),
+            HookFailureMode::Abort
+        );
+
+        // Post-hooks should continue by default
+        assert_eq!(
+            HookTrigger::PostCherryPick.default_failure_mode(),
+            HookFailureMode::Continue
+        );
+        assert_eq!(
+            HookTrigger::PostMerge.default_failure_mode(),
+            HookFailureMode::Continue
+        );
+        assert_eq!(
+            HookTrigger::OnConflict.default_failure_mode(),
+            HookFailureMode::Continue
+        );
+        assert_eq!(
+            HookTrigger::PostComplete.default_failure_mode(),
+            HookFailureMode::Continue
+        );
+    }
+
+    /// # Hook Trigger From Config Key
+    ///
+    /// Verifies that HookTrigger can be created from config keys.
+    ///
+    /// ## Test Scenario
+    /// - Creates triggers from valid config keys
+    ///
+    /// ## Expected Outcome
+    /// - Valid keys return Some(trigger), invalid returns None
+    #[test]
+    fn test_hook_trigger_from_config_key() {
+        assert_eq!(
+            HookTrigger::from_config_key("post_checkout"),
+            Some(HookTrigger::PostCheckout)
+        );
+        assert_eq!(
+            HookTrigger::from_config_key("pre_cherry_pick"),
+            Some(HookTrigger::PreCherryPick)
+        );
+        assert_eq!(HookTrigger::from_config_key("invalid"), None);
+    }
+
+    /// # Hook Outcome Methods
+    ///
+    /// Verifies HookOutcome helper methods work correctly.
+    ///
+    /// ## Test Scenario
+    /// - Tests should_abort and is_success for each variant
+    ///
+    /// ## Expected Outcome
+    /// - Methods return correct values
+    #[test]
+    fn test_hook_outcome_methods() {
+        assert!(!HookOutcome::Success.should_abort());
+        assert!(HookOutcome::Success.is_success());
+
+        assert!(!HookOutcome::Async.should_abort());
+        assert!(HookOutcome::Async.is_success());
+
+        let continued = HookOutcome::ContinuedAfterFailure {
+            trigger: HookTrigger::PostMerge,
+            command: "test".to_string(),
+            error: "error".to_string(),
+        };
+        assert!(!continued.should_abort());
+        assert!(!continued.is_success());
+
+        let abort = HookOutcome::Abort {
+            trigger: HookTrigger::PreCherryPick,
+            command: "test".to_string(),
+            error: "error".to_string(),
+        };
+        assert!(abort.should_abort());
+        assert!(!abort.is_success());
+    }
+
+    /// # Hook Outcome With Failure Mode Abort
+    ///
+    /// Verifies run_hooks_with_outcome returns Abort when failure mode is Abort.
+    ///
+    /// ## Test Scenario
+    /// - Creates config with failing command and Abort failure mode
+    /// - Runs hooks
+    ///
+    /// ## Expected Outcome
+    /// - Returns HookOutcome::Abort
+    #[test]
+    fn test_hook_outcome_abort() {
+        let config = HooksConfig {
+            pre_cherry_pick: HookTriggerConfig {
+                commands: vec!["exit 1".to_string()],
+                on_failure: Some(HookFailureMode::Abort),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let executor = HookExecutor::new(config);
+        let temp_dir = TempDir::new().unwrap();
+        let context = HookContext::new();
+
+        let outcome = executor.run_hooks_with_outcome_simple(
+            HookTrigger::PreCherryPick,
+            temp_dir.path(),
+            &context,
+        );
+
+        assert!(outcome.should_abort());
+        if let HookOutcome::Abort { command, .. } = outcome {
+            assert_eq!(command, "exit 1");
+        } else {
+            panic!("Expected Abort outcome");
+        }
+    }
+
+    /// # Hook Outcome With Failure Mode Continue
+    ///
+    /// Verifies run_hooks_with_outcome returns ContinuedAfterFailure when mode is Continue.
+    ///
+    /// ## Test Scenario
+    /// - Creates config with failing command and Continue failure mode
+    /// - Runs hooks
+    ///
+    /// ## Expected Outcome
+    /// - Returns HookOutcome::ContinuedAfterFailure
+    #[test]
+    fn test_hook_outcome_continue() {
+        let config = HooksConfig {
+            post_merge: HookTriggerConfig {
+                commands: vec!["exit 1".to_string()],
+                on_failure: Some(HookFailureMode::Continue),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let executor = HookExecutor::new(config);
+        let temp_dir = TempDir::new().unwrap();
+        let context = HookContext::new();
+
+        let outcome = executor.run_hooks_with_outcome_simple(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+        );
+
+        assert!(!outcome.should_abort());
+        assert!(matches!(outcome, HookOutcome::ContinuedAfterFailure { .. }));
+    }
+
+    /// # Extended Config TOML Parsing
+    ///
+    /// Verifies that extended hook configuration format parses correctly.
+    ///
+    /// ## Test Scenario
+    /// - Parses TOML with extended format (commands, on_failure, etc)
+    ///
+    /// ## Expected Outcome
+    /// - Config has correct values including failure mode
+    #[test]
+    fn test_extended_config_toml_parsing() {
+        let toml_str = r#"
+[post_checkout]
+commands = ["npm install"]
+on_failure = "abort"
+
+[post_merge]
+commands = ["cargo test"]
+on_failure = "continue"
+"#;
+
+        let config: HooksConfig = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(
+            config.post_checkout.commands,
+            vec!["npm install".to_string()]
+        );
+        assert_eq!(
+            config.post_checkout.on_failure,
+            Some(HookFailureMode::Abort)
+        );
+
+        assert_eq!(config.post_merge.commands, vec!["cargo test".to_string()]);
+        assert_eq!(
+            config.post_merge.on_failure,
+            Some(HookFailureMode::Continue)
+        );
     }
 }

@@ -13,7 +13,7 @@ use crate::core::operations::cherry_pick::{
     CherryPickConfig, CherryPickOperation, CherryPickOutcome,
 };
 use crate::core::operations::hooks::{
-    HookContext, HookExecutor, HookProgress, HookTrigger, HooksConfig,
+    HookContext, HookExecutor, HookFailureMode, HookOutcome, HookProgress, HookTrigger, HooksConfig,
 };
 use crate::core::operations::post_merge::{
     CompletedPRInfo, PostMergeConfig, PostMergeOperation, WorkItemInfo,
@@ -27,6 +27,41 @@ use crate::core::state::{
 };
 use crate::git;
 use crate::models::PullRequestWithWorkItems;
+
+/// Result of processing cherry-picks.
+#[derive(Debug)]
+pub enum CherryPickProcessResult {
+    /// All cherry-picks completed successfully (may have skips/failures but no conflicts).
+    Complete,
+    /// A conflict was encountered that requires resolution.
+    Conflict(ConflictInfo),
+    /// A hook failed and was configured to abort the workflow.
+    HookAbort {
+        /// The hook trigger that failed.
+        trigger: HookTrigger,
+        /// The command that failed.
+        command: String,
+        /// Error message.
+        error: String,
+    },
+}
+
+impl CherryPickProcessResult {
+    /// Returns true if processing should stop.
+    pub fn should_stop(&self) -> bool {
+        !matches!(self, CherryPickProcessResult::Complete)
+    }
+
+    /// Returns true if this is a hook abort.
+    pub fn is_hook_abort(&self) -> bool {
+        matches!(self, CherryPickProcessResult::HookAbort { .. })
+    }
+
+    /// Returns true if this is a conflict.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, CherryPickProcessResult::Conflict(_))
+    }
+}
 
 /// Core merge engine that orchestrates the merge workflow.
 ///
@@ -135,22 +170,26 @@ impl MergeEngine {
     ///
     /// This method is used during the merge workflow to run hooks and emit
     /// corresponding progress events for output formatting.
+    ///
+    /// Returns a `HookOutcome` that indicates whether the workflow should continue,
+    /// abort, or if a warning was emitted and workflow continues.
     pub fn run_hooks_with_events<F>(
         &self,
         trigger: HookTrigger,
         repo_path: &Path,
         context: &HookContext,
         event_callback: &mut F,
-    ) -> bool
+    ) -> HookOutcome
     where
         F: FnMut(ProgressEvent),
     {
         if !self.hooks_config.has_hooks_for(trigger) {
-            return true;
+            return HookOutcome::Success;
         }
 
         let trigger_name = trigger.description().to_string();
         let commands = self.hooks_config.commands_for(trigger);
+        let trigger_config = self.hooks_config.config_for(trigger);
 
         event_callback(ProgressEvent::HookStart {
             trigger: trigger_name.clone(),
@@ -184,18 +223,54 @@ impl MergeEngine {
             all_succeeded: result.all_succeeded,
         });
 
-        // If hooks failed, emit a failure event
-        if !result.all_succeeded
-            && let Some(failure) = result.first_failure()
-        {
-            event_callback(ProgressEvent::HookFailed {
-                trigger: trigger_name,
-                command: failure.command.clone(),
-                error: failure.stderr.clone(),
-            });
+        // If all hooks succeeded, return success
+        if result.all_succeeded {
+            return HookOutcome::Success;
         }
 
-        result.all_succeeded
+        // Get failure details
+        let failure = result.first_failure();
+        let (command, error) = match failure {
+            Some(f) => (
+                f.command.clone(),
+                if f.stderr.is_empty() {
+                    format!("Command failed with exit code {:?}", f.exit_code)
+                } else {
+                    f.stderr.clone()
+                },
+            ),
+            None => ("unknown".to_string(), "Unknown error".to_string()),
+        };
+
+        // Determine action based on failure mode
+        let failure_mode = trigger_config.failure_mode(trigger);
+
+        match failure_mode {
+            HookFailureMode::Abort => {
+                event_callback(ProgressEvent::HookFailed {
+                    trigger: trigger_name,
+                    command: command.clone(),
+                    error: error.clone(),
+                });
+                HookOutcome::Abort {
+                    trigger,
+                    command,
+                    error,
+                }
+            }
+            HookFailureMode::Continue => {
+                event_callback(ProgressEvent::HookFailed {
+                    trigger: trigger_name,
+                    command: command.clone(),
+                    error: error.clone(),
+                });
+                HookOutcome::ContinuedAfterFailure {
+                    trigger,
+                    command,
+                    error,
+                }
+            }
+        }
     }
 
     /// Loads pull requests from Azure DevOps.
@@ -338,12 +413,15 @@ impl MergeEngine {
 
     /// Processes cherry-pick items from the current index.
     ///
-    /// Returns the progress events and optionally a conflict info.
+    /// Returns the result of processing:
+    /// - `Complete` if all cherry-picks finished (with possible skips/failures)
+    /// - `Conflict` if a conflict was encountered
+    /// - `HookAbort` if a hook failed and was configured to abort
     pub fn process_cherry_picks<F>(
         &self,
         state: &mut MergeStateFile,
         mut event_callback: F,
-    ) -> Option<ConflictInfo>
+    ) -> CherryPickProcessResult
     where
         F: FnMut(ProgressEvent),
     {
@@ -351,12 +429,25 @@ impl MergeEngine {
 
         // Run pre-cherry-pick hooks (only if starting from the beginning)
         if state.current_index == 0 && self.hooks_config.has_hooks_for(HookTrigger::PreCherryPick) {
-            self.run_hooks_with_events(
+            let outcome = self.run_hooks_with_events(
                 HookTrigger::PreCherryPick,
                 &state.repo_path,
                 &self.create_hook_context(&state.repo_path),
                 &mut event_callback,
             );
+
+            if let HookOutcome::Abort {
+                trigger,
+                command,
+                error,
+            } = outcome
+            {
+                return CherryPickProcessResult::HookAbort {
+                    trigger,
+                    command,
+                    error,
+                };
+            }
         }
 
         while state.current_index < total {
@@ -410,13 +501,14 @@ impl MergeEngine {
                         repo_path: state.repo_path.clone(),
                     });
 
-                    // Run on-conflict hooks
+                    // Run on-conflict hooks (always continue regardless of failure)
                     if self.hooks_config.has_hooks_for(HookTrigger::OnConflict) {
                         let context = self
                             .create_hook_context(&state.repo_path)
                             .with_pr_id(item.pr_id)
                             .with_commit_id(&item.commit_id);
-                        self.run_hooks_with_events(
+                        // OnConflict hooks default to Continue, so we don't check the outcome
+                        let _ = self.run_hooks_with_events(
                             HookTrigger::OnConflict,
                             &state.repo_path,
                             &context,
@@ -424,7 +516,7 @@ impl MergeEngine {
                         );
                     }
 
-                    return Some(ConflictInfo::new(
+                    return CherryPickProcessResult::Conflict(ConflictInfo::new(
                         item.pr_id,
                         item.pr_title.clone(),
                         item.commit_id.clone(),
@@ -456,9 +548,10 @@ impl MergeEngine {
         // All cherry-picks complete
         state.phase = MergePhase::ReadyForCompletion;
 
-        // Run post-merge hooks
+        // Run post-merge hooks (defaults to Continue, so we don't abort on failure)
         if self.hooks_config.has_hooks_for(HookTrigger::PostMerge) {
-            self.run_hooks_with_events(
+            // PostMerge hooks default to Continue, so we don't check the outcome
+            let _ = self.run_hooks_with_events(
                 HookTrigger::PostMerge,
                 &state.repo_path,
                 &self.create_hook_context(&state.repo_path),
@@ -466,7 +559,7 @@ impl MergeEngine {
             );
         }
 
-        None
+        CherryPickProcessResult::Complete
     }
 
     /// Executes post-merge tasks (tagging PRs and updating work items).
