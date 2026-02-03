@@ -365,6 +365,8 @@ pub struct StepData {
     pub base_repo_path: Option<PathBuf>,
     /// Branch name to create
     pub branch_name: Option<String>,
+    /// Cherry-pick items prepared during setup
+    pub cherry_pick_items: Option<Vec<CherryPickItem>>,
 }
 
 impl StepData {
@@ -384,6 +386,9 @@ impl StepData {
         }
         if result.branch_name.is_some() {
             self.branch_name = result.branch_name.clone();
+        }
+        if result.cherry_pick_items.is_some() {
+            self.cherry_pick_items = result.cherry_pick_items.clone();
         }
     }
 }
@@ -549,11 +554,11 @@ impl SetupRepoState {
             ProgressMessage::AllComplete => {
                 // Extract the accumulated data and transition to Complete state
                 if let SetupState::Running { step_data, .. } = &self.state {
-                    // Prepare cherry-pick items from context (already done in background task)
-                    // The cherry_pick_items will be applied to MergeApp in process_key
+                    // Get cherry-pick items from accumulated step_data
+                    let cherry_pick_items = step_data.cherry_pick_items.clone().unwrap_or_default();
                     self.state = SetupState::Complete {
                         step_data: step_data.clone(),
-                        cherry_pick_items: Vec::new(), // Will be set from last StepResult
+                        cherry_pick_items,
                     };
                 }
             }
@@ -1264,27 +1269,9 @@ impl ModeState for SetupRepoState {
                 Vec::new()
             };
 
-        // Track cherry-pick items to store after processing
-        let mut pending_cherry_pick_items: Option<Vec<CherryPickItem>> = None;
-
         // Process collected messages
         for msg in messages {
-            // Check if this is the final message with cherry-pick items
-            if let ProgressMessage::StepCompleted(WizardStep::PrepareCherryPicks, ref result) = msg
-            {
-                pending_cherry_pick_items = result.cherry_pick_items.clone();
-            }
-
             self.handle_progress_message(msg);
-        }
-
-        // Store cherry-pick items if we got them and transitioned to Complete
-        if let Some(items) = pending_cherry_pick_items
-            && let SetupState::Complete {
-                cherry_pick_items, ..
-            } = &mut self.state
-        {
-            *cherry_pick_items = items;
         }
 
         match &self.state {
