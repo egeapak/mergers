@@ -659,6 +659,7 @@ async fn run_setup_task(ctx: SetupContext, tx: mpsc::Sender<ProgressMessage>) {
             WizardStep::FetchDetails,
             WizardStep::CheckPrerequisites,
             WizardStep::CloneOrWorktree,
+            WizardStep::ConfigureRepository,
             WizardStep::CreateBranch,
             WizardStep::PrepareCherryPicks,
             WizardStep::InitializeState,
@@ -668,6 +669,7 @@ async fn run_setup_task(ctx: SetupContext, tx: mpsc::Sender<ProgressMessage>) {
             WizardStep::CheckPrerequisites,
             WizardStep::FetchTargetBranch,
             WizardStep::CloneOrWorktree,
+            WizardStep::ConfigureRepository,
             WizardStep::CreateBranch,
             WizardStep::PrepareCherryPicks,
             WizardStep::InitializeState,
@@ -841,8 +843,32 @@ async fn execute_step_impl(
         }
 
         WizardStep::ConfigureRepository => {
-            // This step is handled within clone/worktree creation
-            Ok(StepResult::default())
+            // Configure the repository (disable hooks unless --run-hooks is specified)
+            if let Some(path) = repo_path {
+                if !ctx.run_hooks {
+                    let output = std::process::Command::new("git")
+                        .current_dir(path)
+                        .args(["config", "core.hooksPath", "/dev/null"])
+                        .output();
+
+                    match output {
+                        Ok(result) if result.status.success() => Ok(StepResult::default()),
+                        Ok(result) => Err(SetupError::Other(format!(
+                            "Failed to configure hooks path: {}",
+                            String::from_utf8_lossy(&result.stderr)
+                        ))),
+                        Err(e) => Err(SetupError::Other(format!(
+                            "Failed to configure hooks path: {}",
+                            e
+                        ))),
+                    }
+                } else {
+                    // Hooks enabled, nothing to configure
+                    Ok(StepResult::default())
+                }
+            } else {
+                Err(SetupError::Other("Repository path not set".to_string()))
+            }
         }
 
         WizardStep::CreateBranch => {
@@ -2088,5 +2114,219 @@ mod tests {
         state.handle_progress_message(ProgressMessage::AllComplete);
 
         assert!(matches!(state.state, SetupState::Complete { .. }));
+    }
+
+    // =========================================================================
+    // Integration Tests for ConfigureRepository Step
+    // =========================================================================
+
+    /// # ConfigureRepository Step - Disables Hooks When run_hooks=false
+    ///
+    /// Tests that the ConfigureRepository step sets core.hooksPath to /dev/null
+    /// when run_hooks is false.
+    ///
+    /// ## Test Scenario
+    /// - Creates a temporary git repository
+    /// - Executes the ConfigureRepository step with run_hooks=false
+    /// - Verifies that core.hooksPath is set to /dev/null
+    ///
+    /// ## Expected Outcome
+    /// - The repository has hooks disabled via core.hooksPath=/dev/null
+    #[test]
+    fn test_configure_repository_disables_hooks() {
+        use tempfile::TempDir;
+
+        // Create a temporary directory and initialize a git repo
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().to_path_buf();
+
+        std::process::Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+
+        // Create a minimal SetupContext with run_hooks=false
+        let ctx = SetupContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "https://dev.azure.com/org".to_string(),
+                "project".to_string(),
+                "repo".to_string(),
+                "pat".to_string(),
+            )
+            .unwrap(),
+            is_clone_mode: true,
+            local_repo: None,
+            target_branch: "main".to_string(),
+            version: "1.0.0".to_string(),
+            run_hooks: false,
+            selected_prs: vec![],
+        };
+
+        // Execute the ConfigureRepository step
+        let mut ssh_url = None;
+        let mut repo_path_opt = Some(repo_path.clone());
+        let mut base_repo_path = None;
+        let mut is_worktree = false;
+        let mut branch_name = None;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(execute_step_impl(
+            WizardStep::ConfigureRepository,
+            &ctx,
+            &mut ssh_url,
+            &mut repo_path_opt,
+            &mut base_repo_path,
+            &mut is_worktree,
+            &mut branch_name,
+        ));
+
+        assert!(result.is_ok(), "ConfigureRepository step should succeed");
+
+        // Verify hooks are disabled
+        let output = std::process::Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "--get", "core.hooksPath"])
+            .output()
+            .unwrap();
+
+        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert_eq!(
+            hooks_path, "/dev/null",
+            "Hooks should be disabled when run_hooks=false"
+        );
+    }
+
+    /// # ConfigureRepository Step - Does Not Disable Hooks When run_hooks=true
+    ///
+    /// Tests that the ConfigureRepository step does NOT set core.hooksPath
+    /// when run_hooks is true.
+    ///
+    /// ## Test Scenario
+    /// - Creates a temporary git repository
+    /// - Executes the ConfigureRepository step with run_hooks=true
+    /// - Verifies that core.hooksPath is NOT set to /dev/null
+    ///
+    /// ## Expected Outcome
+    /// - The repository does NOT have core.hooksPath set to /dev/null
+    #[test]
+    fn test_configure_repository_keeps_hooks_enabled() {
+        use tempfile::TempDir;
+
+        // Create a temporary directory and initialize a git repo
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().to_path_buf();
+
+        std::process::Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .unwrap();
+
+        // Create a minimal SetupContext with run_hooks=true
+        let ctx = SetupContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "https://dev.azure.com/org".to_string(),
+                "project".to_string(),
+                "repo".to_string(),
+                "pat".to_string(),
+            )
+            .unwrap(),
+            is_clone_mode: true,
+            local_repo: None,
+            target_branch: "main".to_string(),
+            version: "1.0.0".to_string(),
+            run_hooks: true,
+            selected_prs: vec![],
+        };
+
+        // Execute the ConfigureRepository step
+        let mut ssh_url = None;
+        let mut repo_path_opt = Some(repo_path.clone());
+        let mut base_repo_path = None;
+        let mut is_worktree = false;
+        let mut branch_name = None;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(execute_step_impl(
+            WizardStep::ConfigureRepository,
+            &ctx,
+            &mut ssh_url,
+            &mut repo_path_opt,
+            &mut base_repo_path,
+            &mut is_worktree,
+            &mut branch_name,
+        ));
+
+        assert!(result.is_ok(), "ConfigureRepository step should succeed");
+
+        // Verify hooks are NOT disabled
+        let output = std::process::Command::new("git")
+            .current_dir(&repo_path)
+            .args(["config", "--get", "core.hooksPath"])
+            .output()
+            .unwrap();
+
+        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert!(
+            hooks_path.is_empty() || hooks_path != "/dev/null",
+            "Hooks should NOT be disabled when run_hooks=true"
+        );
+    }
+
+    /// # ConfigureRepository Step - Fails Without Repo Path
+    ///
+    /// Tests that the ConfigureRepository step returns an error when
+    /// repo_path is not set.
+    ///
+    /// ## Test Scenario
+    /// - Executes the ConfigureRepository step without a repo_path
+    ///
+    /// ## Expected Outcome
+    /// - Returns SetupError::Other indicating repo path not set
+    #[test]
+    fn test_configure_repository_fails_without_repo_path() {
+        let ctx = SetupContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "https://dev.azure.com/org".to_string(),
+                "project".to_string(),
+                "repo".to_string(),
+                "pat".to_string(),
+            )
+            .unwrap(),
+            is_clone_mode: true,
+            local_repo: None,
+            target_branch: "main".to_string(),
+            version: "1.0.0".to_string(),
+            run_hooks: false,
+            selected_prs: vec![],
+        };
+
+        let mut ssh_url = None;
+        let mut repo_path_opt = None; // No repo path set
+        let mut base_repo_path = None;
+        let mut is_worktree = false;
+        let mut branch_name = None;
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(execute_step_impl(
+            WizardStep::ConfigureRepository,
+            &ctx,
+            &mut ssh_url,
+            &mut repo_path_opt,
+            &mut base_repo_path,
+            &mut is_worktree,
+            &mut branch_name,
+        ));
+
+        assert!(result.is_err(), "Should fail without repo path");
+        if let Err(SetupError::Other(msg)) = result {
+            assert!(
+                msg.contains("Repository path not set"),
+                "Error message should indicate missing repo path"
+            );
+        } else {
+            panic!("Expected SetupError::Other");
+        }
     }
 }

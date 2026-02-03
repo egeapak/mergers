@@ -228,15 +228,8 @@ pub fn shallow_clone_repo(
         );
     }
 
-    // Disable hooks to prevent commit hook failures during cherry-pick operations
-    // unless --run-hooks is specified
-    if !run_hooks {
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["config", "core.hooksPath", "/dev/null"])
-            .output()
-            .context("Failed to configure hooks path")?;
-    }
+    // Note: Hook configuration is now handled by the ConfigureRepository wizard step
+    let _ = run_hooks; // Acknowledge parameter (used by wizard step)
 
     Ok((repo_path, temp_dir))
 }
@@ -323,28 +316,8 @@ pub fn create_worktree(
         )));
     }
 
-    // Disable hooks to prevent commit hook failures during cherry-pick operations
-    // unless --run-hooks is specified
-    if !run_hooks {
-        let config_output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "core.hooksPath", "/dev/null"])
-            .output()
-            .map_err(|e| {
-                // Clean up the worktree we just created before returning error
-                let _ = force_remove_worktree(base_repo_path, version);
-                RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
-            })?;
-
-        if !config_output.status.success() {
-            // Clean up the worktree we just created before returning error
-            let _ = force_remove_worktree(base_repo_path, version);
-            return Err(RepositorySetupError::Other(format!(
-                "Failed to configure hooks path: {}",
-                String::from_utf8_lossy(&config_output.stderr)
-            )));
-        }
-    }
+    // Note: Hook configuration is now handled by the ConfigureRepository wizard step
+    let _ = run_hooks; // Acknowledge parameter (used by wizard step)
 
     Ok(worktree_path)
 }
@@ -2139,111 +2112,8 @@ mod tests {
         assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
     }
 
-    /// # Create Worktree Hooks Disabled by Default
-    ///
-    /// Tests that git hooks are disabled when run_hooks=false (default).
-    ///
-    /// ## Test Scenario
-    /// - Creates a worktree with run_hooks=false
-    /// - Verifies that core.hooksPath is set to /dev/null
-    ///
-    /// ## Expected Outcome
-    /// - The worktree has hooks disabled via core.hooksPath=/dev/null
-    #[test]
-    fn test_create_worktree_hooks_disabled_by_default() {
-        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
-
-        // Create target branch
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "-b", "target-branch"])
-            .output()
-            .unwrap();
-
-        create_commit_with_message(&repo_path, "Target branch commit");
-
-        // Push the target branch to origin
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["push", "origin", "target-branch"])
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "main"])
-            .output()
-            .unwrap();
-
-        // Create worktree with hooks disabled (default)
-        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
-
-        // Verify hooks are disabled
-        let output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "--get", "core.hooksPath"])
-            .output()
-            .unwrap();
-
-        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert_eq!(
-            hooks_path, "/dev/null",
-            "Hooks should be disabled by default"
-        );
-    }
-
-    /// # Create Worktree Hooks Enabled with run_hooks Flag
-    ///
-    /// Tests that git hooks are NOT disabled when run_hooks=true.
-    ///
-    /// ## Test Scenario
-    /// - Creates a worktree with run_hooks=true
-    /// - Verifies that core.hooksPath is NOT set to /dev/null
-    ///
-    /// ## Expected Outcome
-    /// - The worktree does NOT have core.hooksPath set to /dev/null
-    #[test]
-    fn test_create_worktree_hooks_enabled_with_flag() {
-        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
-
-        // Create target branch
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "-b", "target-branch"])
-            .output()
-            .unwrap();
-
-        create_commit_with_message(&repo_path, "Target branch commit");
-
-        // Push the target branch to origin
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["push", "origin", "target-branch"])
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "main"])
-            .output()
-            .unwrap();
-
-        // Create worktree with hooks enabled
-        let worktree_path = create_worktree(&repo_path, "target-branch", "2.0.0", true).unwrap();
-
-        // Verify hooks are NOT disabled
-        let output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "--get", "core.hooksPath"])
-            .output()
-            .unwrap();
-
-        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert!(
-            hooks_path.is_empty() || hooks_path != "/dev/null",
-            "Hooks should NOT be disabled when run_hooks=true"
-        );
-    }
+    // Note: Hook configuration tests have been moved to setup_repo.rs
+    // as hook configuration is now handled by the ConfigureRepository wizard step
 
     /// # Create Worktree Branch Exists
     ///
