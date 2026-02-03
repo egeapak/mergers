@@ -307,11 +307,11 @@ impl ModeState for CompletionState {
         match code {
             KeyCode::Char('q') => {
                 // Mark state file as completed and clean up before exit
-                if let Some(state_file) = app.state_file_mut() {
+                app.with_state_file_mut(|state_file| {
                     state_file.final_status = Some(MergeStatus::Success);
                     state_file.completed_at = Some(chrono::Utc::now());
                     let _ = state_file.save_for_repo();
-                }
+                });
                 let _ = app.cleanup_state_file();
                 StateChange::Exit
             }

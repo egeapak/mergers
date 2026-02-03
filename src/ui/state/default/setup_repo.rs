@@ -4,7 +4,7 @@
 use super::MergeState;
 use crate::{
     api::AzureDevOpsClient,
-    core::state::MergePhase,
+    core::state::{MergePhase, StateCreateConfig, StateManager},
     git,
     models::CherryPickItem,
     ui::apps::MergeApp,
@@ -20,7 +20,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc;
 
 // ============================================================================
@@ -97,7 +100,6 @@ impl From<SetupError> for git::RepositorySetupError {
 /// This struct contains all the data needed to run the setup steps without
 /// requiring mutable access to MergeApp. It's extracted once at the start
 /// of the setup process.
-#[derive(Clone)]
 pub struct SetupContext {
     /// API client for Azure DevOps operations
     pub client: AzureDevOpsClient,
@@ -113,6 +115,10 @@ pub struct SetupContext {
     pub run_hooks: bool,
     /// Selected PRs with their merge commits for cherry-picking
     pub selected_prs: Vec<SelectedPrInfo>,
+    /// State manager for creating state files from background task
+    pub state_manager: Arc<Mutex<StateManager>>,
+    /// Configuration for state file creation
+    pub state_config: StateCreateConfig,
 }
 
 /// Minimal PR info needed for cherry-pick preparation.
@@ -149,6 +155,8 @@ impl SetupContext {
             version,
             run_hooks: app.run_hooks(),
             selected_prs,
+            state_manager: app.state_manager(),
+            state_config: app.state_create_config(),
         })
     }
 }
@@ -571,24 +579,8 @@ impl SetupRepoState {
             // Set cherry-pick items
             *app.cherry_pick_items_mut() = cherry_pick_items;
 
-            // Create state file for cross-mode resume support
-            if let Some(repo_path) = &step_data.repo_path {
-                // Clone version first to avoid borrow conflict
-                let version = app.version().map(|v| v.to_string());
-                if let Some(version) = version {
-                    let base_repo_path = step_data.base_repo_path.clone();
-                    let is_worktree = step_data.is_worktree;
-
-                    // State file creation is optional for TUI - silently ignore errors
-                    if app
-                        .create_state_file(repo_path.clone(), base_repo_path, is_worktree, &version)
-                        .is_ok()
-                    {
-                        // Set initial phase to CherryPicking
-                        let _ = app.update_state_phase(MergePhase::CherryPicking);
-                    }
-                }
-            }
+            // State file is created during InitializeState step in background task
+            // via the shared StateManager, so no need to create it here
         }
     }
 
@@ -924,8 +916,26 @@ async fn execute_step_impl(
         }
 
         WizardStep::InitializeState => {
-            // State file creation is handled by apply_results_to_app
-            // because it requires mutable access to MergeApp
+            // Create state file via StateManager (shared via Arc<Mutex<>>)
+            if let Some(repo_path_ref) = repo_path {
+                let mut manager = ctx.state_manager.lock().unwrap();
+                manager
+                    .create_state_file(
+                        repo_path_ref.clone(),
+                        base_repo_path.clone(),
+                        *is_worktree,
+                        &ctx.version,
+                        &ctx.state_config,
+                    )
+                    .map_err(|e| {
+                        SetupError::Other(format!("Failed to create state file: {}", e))
+                    })?;
+
+                // Set initial phase to CherryPicking
+                manager
+                    .update_phase(MergePhase::CherryPicking)
+                    .map_err(|e| SetupError::Other(format!("Failed to update phase: {}", e)))?;
+            }
             Ok(StepResult::default())
         }
     }
@@ -1339,6 +1349,36 @@ mod tests {
         testing::{TuiTestHarness, create_test_config_default},
     };
     use insta::assert_snapshot;
+
+    /// Creates a test SetupContext with the given run_hooks setting.
+    fn create_test_setup_context(run_hooks: bool) -> SetupContext {
+        SetupContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "https://dev.azure.com/org".to_string(),
+                "project".to_string(),
+                "repo".to_string(),
+                "pat".to_string(),
+            )
+            .unwrap(),
+            is_clone_mode: true,
+            local_repo: None,
+            target_branch: "main".to_string(),
+            version: "1.0.0".to_string(),
+            run_hooks,
+            selected_prs: vec![],
+            state_manager: Arc::new(Mutex::new(StateManager::new())),
+            state_config: StateCreateConfig {
+                organization: "org".to_string(),
+                project: "project".to_string(),
+                repository: "repo".to_string(),
+                dev_branch: "dev".to_string(),
+                target_branch: "main".to_string(),
+                tag_prefix: "merged/".to_string(),
+                work_item_state: "Done".to_string(),
+                run_hooks,
+            },
+        }
+    }
 
     /// # Setup Repo State - Initializing
     ///
@@ -2147,21 +2187,7 @@ mod tests {
             .unwrap();
 
         // Create a minimal SetupContext with run_hooks=false
-        let ctx = SetupContext {
-            client: crate::api::AzureDevOpsClient::new(
-                "https://dev.azure.com/org".to_string(),
-                "project".to_string(),
-                "repo".to_string(),
-                "pat".to_string(),
-            )
-            .unwrap(),
-            is_clone_mode: true,
-            local_repo: None,
-            target_branch: "main".to_string(),
-            version: "1.0.0".to_string(),
-            run_hooks: false,
-            selected_prs: vec![],
-        };
+        let ctx = create_test_setup_context(false);
 
         // Execute the ConfigureRepository step
         let mut ssh_url = None;
@@ -2224,21 +2250,7 @@ mod tests {
             .unwrap();
 
         // Create a minimal SetupContext with run_hooks=true
-        let ctx = SetupContext {
-            client: crate::api::AzureDevOpsClient::new(
-                "https://dev.azure.com/org".to_string(),
-                "project".to_string(),
-                "repo".to_string(),
-                "pat".to_string(),
-            )
-            .unwrap(),
-            is_clone_mode: true,
-            local_repo: None,
-            target_branch: "main".to_string(),
-            version: "1.0.0".to_string(),
-            run_hooks: true,
-            selected_prs: vec![],
-        };
+        let ctx = create_test_setup_context(true);
 
         // Execute the ConfigureRepository step
         let mut ssh_url = None;
@@ -2286,21 +2298,7 @@ mod tests {
     /// - Returns SetupError::Other indicating repo path not set
     #[test]
     fn test_configure_repository_fails_without_repo_path() {
-        let ctx = SetupContext {
-            client: crate::api::AzureDevOpsClient::new(
-                "https://dev.azure.com/org".to_string(),
-                "project".to_string(),
-                "repo".to_string(),
-                "pat".to_string(),
-            )
-            .unwrap(),
-            is_clone_mode: true,
-            local_repo: None,
-            target_branch: "main".to_string(),
-            version: "1.0.0".to_string(),
-            run_hooks: false,
-            selected_prs: vec![],
-        };
+        let ctx = create_test_setup_context(false);
 
         let mut ssh_url = None;
         let mut repo_path_opt = None; // No repo path set

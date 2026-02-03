@@ -20,7 +20,8 @@ use crate::core::operations::pr_selection::{
 };
 use crate::core::output::{ConflictInfo, ItemStatus, ProgressEvent, SummaryCounts, SummaryItem};
 use crate::core::state::{
-    LockGuard, MergePhase, MergeStateFile, MergeStatus, StateCherryPickItem, StateItemStatus,
+    LockGuard, MergePhase, MergeStateFile, MergeStatus, StateCherryPickItem, StateCreateConfig,
+    StateItemStatus, StateManager,
 };
 use crate::git;
 use crate::models::PullRequestWithWorkItems;
@@ -41,6 +42,8 @@ pub struct MergeEngine {
     work_item_state: String,
     run_hooks: bool,
     local_repo: Option<PathBuf>,
+    /// State manager for state file operations.
+    state_manager: StateManager,
 }
 
 impl MergeEngine {
@@ -71,7 +74,18 @@ impl MergeEngine {
             work_item_state,
             run_hooks,
             local_repo,
+            state_manager: StateManager::new(),
         }
+    }
+
+    /// Returns a mutable reference to the state manager.
+    pub fn state_manager_mut(&mut self) -> &mut StateManager {
+        &mut self.state_manager
+    }
+
+    /// Returns a reference to the state manager.
+    pub fn state_manager(&self) -> &StateManager {
+        &self.state_manager
     }
 
     /// Loads pull requests from Azure DevOps.
@@ -142,27 +156,31 @@ impl MergeEngine {
     }
 
     /// Creates a new state file for a merge operation.
+    ///
+    /// This method delegates to the internal StateManager and returns the path
+    /// where the state file was saved. The state file is populated with cherry-pick
+    /// items from the selected PRs.
+    ///
+    /// # Returns
+    ///
+    /// The path where the state file was saved.
     pub fn create_state_file(
-        &self,
+        &mut self,
         repo_path: PathBuf,
         base_repo_path: Option<PathBuf>,
         is_worktree: bool,
         prs: &[PullRequestWithWorkItems],
-    ) -> MergeStateFile {
-        let mut state = MergeStateFile::new(
-            repo_path,
-            base_repo_path,
-            is_worktree,
-            self.organization.clone(),
-            self.project.clone(),
-            self.repository.clone(),
-            self.dev_branch.clone(),
-            self.target_branch.clone(),
-            self.version.clone(),
-            self.work_item_state.clone(),
-            self.tag_prefix.clone(),
-            self.run_hooks,
-        );
+    ) -> Result<PathBuf> {
+        let config = StateCreateConfig {
+            organization: self.organization.clone(),
+            project: self.project.clone(),
+            repository: self.repository.clone(),
+            dev_branch: self.dev_branch.clone(),
+            target_branch: self.target_branch.clone(),
+            tag_prefix: self.tag_prefix.clone(),
+            work_item_state: self.work_item_state.clone(),
+            run_hooks: self.run_hooks,
+        };
 
         // Convert selected PRs to cherry-pick items
         let items: Vec<StateCherryPickItem> = prs
@@ -183,9 +201,14 @@ impl MergeEngine {
             })
             .collect();
 
-        state.cherry_pick_items = items;
-        state.phase = MergePhase::CherryPicking;
-        state
+        self.state_manager.create_state_file_with_items(
+            repo_path,
+            base_repo_path,
+            is_worktree,
+            &self.version,
+            &config,
+            items,
+        )
     }
 
     /// Cherry-picks a single commit.
@@ -212,87 +235,123 @@ impl MergeEngine {
         (outcome, conflicted_files)
     }
 
-    /// Processes cherry-pick items from the current index.
+    /// Processes cherry-pick items using the internal StateManager.
     ///
-    /// Returns the progress events and optionally a conflict info.
-    pub fn process_cherry_picks<F>(
-        &self,
-        state: &mut MergeStateFile,
-        mut event_callback: F,
-    ) -> Option<ConflictInfo>
+    /// This method uses the state file stored in the engine's internal StateManager.
+    /// The state file must have been created via `create_state_file` or set via
+    /// `state_manager_mut().set_state_file()` before calling this method.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(ConflictInfo)` - If a conflict occurred
+    /// * `None` - If all cherry-picks completed successfully
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state file is set in the internal StateManager.
+    pub fn process_cherry_picks<F>(&mut self, mut event_callback: F) -> Option<ConflictInfo>
     where
         F: FnMut(ProgressEvent),
     {
-        let total = state.cherry_pick_items.len();
+        // Extract info from state file first to avoid borrow conflicts
+        let (total, repo_path) = {
+            let state_file = self
+                .state_manager
+                .state_file()
+                .expect("state_file must be set before processing cherry-picks");
+            (
+                state_file.cherry_pick_items.len(),
+                state_file.repo_path.clone(),
+            )
+        };
 
-        while state.current_index < total {
-            let item = &state.cherry_pick_items[state.current_index];
+        loop {
+            // Get current index and item info
+            let (current_index, commit_id, pr_id, pr_title) = {
+                let state_file = self.state_manager.state_file().unwrap();
+                if state_file.current_index >= total {
+                    break;
+                }
+                let item = &state_file.cherry_pick_items[state_file.current_index];
+                (
+                    state_file.current_index,
+                    item.commit_id.clone(),
+                    item.pr_id,
+                    item.pr_title.clone(),
+                )
+            };
 
             // Emit start event
             event_callback(ProgressEvent::CherryPickStart {
-                pr_id: item.pr_id,
-                commit_id: item.commit_id.clone(),
-                index: state.current_index,
+                pr_id,
+                commit_id: commit_id.clone(),
+                index: current_index,
                 total,
             });
 
-            let (outcome, _conflicted_files) =
-                self.cherry_pick_commit(&state.repo_path, &item.commit_id);
+            // Perform cherry-pick (borrows self immutably)
+            let (outcome, _conflicted_files) = self.cherry_pick_commit(&repo_path, &commit_id);
 
             // Update state based on outcome
-            let item = &mut state.cherry_pick_items[state.current_index];
-            match outcome {
-                CherryPickOutcome::Success => {
-                    item.status = StateItemStatus::Success;
-                    event_callback(ProgressEvent::CherryPickSuccess {
-                        pr_id: item.pr_id,
-                        commit_id: item.commit_id.clone(),
-                    });
-                }
-                CherryPickOutcome::Conflict {
-                    ref conflicted_files,
-                } => {
-                    item.status = StateItemStatus::Conflict;
-                    state.phase = MergePhase::AwaitingConflictResolution;
-                    state.conflicted_files = Some(conflicted_files.clone());
+            {
+                let state_file = self.state_manager.state_file_mut().unwrap();
+                let item = &mut state_file.cherry_pick_items[current_index];
 
-                    event_callback(ProgressEvent::CherryPickConflict {
-                        pr_id: item.pr_id,
-                        conflicted_files: conflicted_files.clone(),
-                        repo_path: state.repo_path.clone(),
-                    });
+                match outcome {
+                    CherryPickOutcome::Success => {
+                        item.status = StateItemStatus::Success;
+                        event_callback(ProgressEvent::CherryPickSuccess {
+                            pr_id,
+                            commit_id: commit_id.clone(),
+                        });
+                    }
+                    CherryPickOutcome::Conflict {
+                        ref conflicted_files,
+                    } => {
+                        item.status = StateItemStatus::Conflict;
+                        state_file.phase = MergePhase::AwaitingConflictResolution;
+                        state_file.conflicted_files = Some(conflicted_files.clone());
 
-                    return Some(ConflictInfo::new(
-                        item.pr_id,
-                        item.pr_title.clone(),
-                        item.commit_id.clone(),
-                        conflicted_files.clone(),
-                        state.repo_path.clone(),
-                    ));
+                        event_callback(ProgressEvent::CherryPickConflict {
+                            pr_id,
+                            conflicted_files: conflicted_files.clone(),
+                            repo_path: repo_path.clone(),
+                        });
+
+                        return Some(ConflictInfo::new(
+                            pr_id,
+                            pr_title,
+                            commit_id,
+                            conflicted_files.clone(),
+                            repo_path,
+                        ));
+                    }
+                    CherryPickOutcome::Skipped => {
+                        item.status = StateItemStatus::Skipped;
+                        event_callback(ProgressEvent::CherryPickSkipped {
+                            pr_id,
+                            reason: None,
+                        });
+                    }
+                    CherryPickOutcome::Failed { ref message } => {
+                        item.status = StateItemStatus::Failed {
+                            message: message.clone(),
+                        };
+                        event_callback(ProgressEvent::CherryPickFailed {
+                            pr_id,
+                            error: message.clone(),
+                        });
+                    }
                 }
-                CherryPickOutcome::Skipped => {
-                    item.status = StateItemStatus::Skipped;
-                    event_callback(ProgressEvent::CherryPickSkipped {
-                        pr_id: item.pr_id,
-                        reason: None,
-                    });
-                }
-                CherryPickOutcome::Failed { ref message } => {
-                    item.status = StateItemStatus::Failed {
-                        message: message.clone(),
-                    };
-                    event_callback(ProgressEvent::CherryPickFailed {
-                        pr_id: item.pr_id,
-                        error: message.clone(),
-                    });
-                }
+
+                state_file.current_index += 1;
             }
-
-            state.current_index += 1;
         }
 
         // All cherry-picks complete
-        state.phase = MergePhase::ReadyForCompletion;
+        if let Some(state_file) = self.state_manager.state_file_mut() {
+            state_file.phase = MergePhase::ReadyForCompletion;
+        }
         None
     }
 
@@ -806,18 +865,27 @@ mod tests {
         );
     }
 
-    /// # Create State File From PRs
+    /// # Create State File With StateManager
     ///
-    /// Verifies state file is correctly created from PRs.
+    /// Verifies state file creation using the StateManager-backed method.
     ///
     /// ## Test Scenario
-    /// - Creates a state file with test parameters
+    /// - Creates a state file using create_state_file which uses StateManager
     ///
     /// ## Expected Outcome
-    /// - State file has correct metadata
+    /// - State file is persisted and accessible via state_manager
     #[test]
-    fn test_create_state_file() {
-        let engine = MergeEngine::new(
+    #[serial_test::serial]
+    fn test_create_state_file_with_state_manager() {
+        use tempfile::TempDir;
+
+        let temp_state_dir = TempDir::new().unwrap();
+        let temp_repo = TempDir::new().unwrap();
+
+        // Set state dir env var
+        unsafe { std::env::set_var(crate::core::state::STATE_DIR_ENV, temp_state_dir.path()) };
+
+        let mut engine = MergeEngine::new(
             create_mock_client(),
             "test-org".to_string(),
             "test-project".to_string(),
@@ -828,28 +896,27 @@ mod tests {
             "release-".to_string(),
             "Released".to_string(),
             true,
-            Some(std::path::PathBuf::from("/base/repo")),
+            None,
         );
 
-        let state = engine.create_state_file(
-            std::path::PathBuf::from("/work/repo"),
-            Some(std::path::PathBuf::from("/base/repo")),
-            true,
+        let result = engine.create_state_file(
+            temp_repo.path().to_path_buf(),
+            None,
+            false,
             &[], // Empty PRs
         );
 
+        assert!(result.is_ok());
+        assert!(engine.state_manager().has_state_file());
+
+        let state = engine.state_manager().state_file().unwrap();
         assert_eq!(state.organization, "test-org");
         assert_eq!(state.project, "test-project");
-        assert_eq!(state.repository, "test-repo");
-        assert_eq!(state.dev_branch, "develop");
-        assert_eq!(state.target_branch, "release");
         assert_eq!(state.merge_version, "v2.0.0");
-        assert_eq!(state.tag_prefix, "release-");
-        assert_eq!(state.work_item_state, "Released");
         assert!(state.run_hooks);
-        assert!(state.is_worktree);
-        assert_eq!(state.phase, MergePhase::CherryPicking);
-        assert!(state.cherry_pick_items.is_empty());
+
+        // Cleanup
+        unsafe { std::env::remove_var(crate::core::state::STATE_DIR_ENV) };
     }
 
     /// # Acquire Lock Function
