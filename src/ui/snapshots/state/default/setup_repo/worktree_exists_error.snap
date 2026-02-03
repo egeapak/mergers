@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/setup_repo.rs
-assertion_line: 970
+assertion_line: 1451
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -9,7 +9,7 @@ expression: harness.backend()
 "  │                                             Repository Setup - Error                                             │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Steps─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
-"  │                        1 ○ Create Worktree  →  2 ○ Create Branch  →  3 ○ Initialize State                        │  "
+"  │1 ○ Check Prerequisites  →  2 ○ Fetch Branch  →  3 ○ Create Worktree  →  4 ○ Configure  →  5 ○ Create Branch  →  6│  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Error─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
 "  │Worktree already exists at:                                                                                       │  "

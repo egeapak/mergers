@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/setup_repo.rs
-assertion_line: 1210
+assertion_line: 1279
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -9,11 +9,11 @@ expression: harness.backend()
 "  │                                                 Repository Setup                                                 │  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Steps─────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
-"  │1 ✓ Check Prerequisites  →  2 ✓ Fetch Branch  →  3 ● Create Worktree  →  4 ○ Configure  →  5 ○ Create Branch  →  6│  "
+"  │1 ✓ Check Prerequisites  →  2 ✓ Fetch Branch  →  3 ✓ Create Worktree  →  4 ✓ Configure  →  5 ✓ Create Branch  →  6│  "
 "  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  "
 "  ┌Current Step──────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
 "  │                                                                                                                  │  "
-"  │                                               Creating worktree...                                               │  "
+"  │                                          Preparing cherry-pick items...                                          │  "
 "  │                                                                                                                  │  "
 "  │                                                  Please wait...                                                  │  "
 "  │                                                                                                                  │  "

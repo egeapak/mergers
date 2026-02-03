@@ -7,15 +7,17 @@ use crate::{
     Config,
     api::AzureDevOpsClient,
     core::operations::PRDependencyGraph,
-    core::state::{LockGuard, MergePhase, MergeStateFile, StateCherryPickItem, StateItemStatus},
+    core::state::{
+        LockGuard, MergePhase, MergeStateFile, StateCreateConfig, StateItemStatus, StateManager,
+    },
     models::{CherryPickItem, CherryPickStatus, MergeConfig},
     ui::{AppBase, AppMode, browser::BrowserOpener},
 };
 use anyhow::Result;
 use std::{
     ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
 /// Application state for merge (default) mode.
@@ -54,14 +56,9 @@ pub struct MergeApp {
     /// Index of the currently processing cherry-pick item.
     pub current_cherry_pick_index: usize,
 
-    /// State file for cross-mode resume support.
-    /// Created during repo setup, updated during cherry-picks.
-    state_file: Option<MergeStateFile>,
-
-    /// Lock guard for exclusive merge access.
-    /// Held for the duration of the TUI session.
-    #[allow(dead_code)]
-    lock_guard: Option<LockGuard>,
+    /// State manager for state file and lock handling.
+    /// Wrapped in Arc<Mutex<>> to allow sharing with background tasks.
+    state_manager: Arc<Mutex<StateManager>>,
 
     /// Cached dependency analysis result.
     /// Populated during data loading, before PR selection.
@@ -124,8 +121,7 @@ impl MergeApp {
             base: AppBase::new(config, client, browser),
             cherry_pick_items: Vec::new(),
             current_cherry_pick_index: 0,
-            state_file: None,
-            lock_guard: None,
+            state_manager: Arc::new(Mutex::new(StateManager::new())),
             dependency_graph: None,
             show_dependency_highlights,
             show_work_item_highlights,
@@ -193,6 +189,36 @@ impl MergeApp {
     }
 
     // ==========================================================================
+    // State Manager Access
+    // ==========================================================================
+
+    /// Returns a clone of the state manager Arc for sharing with background tasks.
+    ///
+    /// This allows background tasks to create and update state files without
+    /// requiring mutable access to the entire MergeApp.
+    pub fn state_manager(&self) -> Arc<Mutex<StateManager>> {
+        Arc::clone(&self.state_manager)
+    }
+
+    /// Creates a StateCreateConfig from the current app configuration.
+    ///
+    /// This extracts the configuration needed for state file creation from
+    /// the MergeConfig.
+    pub fn state_create_config(&self) -> StateCreateConfig {
+        let config = self.config();
+        StateCreateConfig {
+            organization: config.shared.organization.value().clone(),
+            project: config.shared.project.value().clone(),
+            repository: config.shared.repository.value().clone(),
+            dev_branch: config.shared.dev_branch.value().clone(),
+            target_branch: config.shared.target_branch.value().clone(),
+            tag_prefix: config.shared.tag_prefix.value().clone(),
+            work_item_state: config.work_item_state.value().clone(),
+            run_hooks: *config.run_hooks.value(),
+        }
+    }
+
+    // ==========================================================================
     // State File Management (for cross-mode resume support)
     // ==========================================================================
 
@@ -208,68 +234,54 @@ impl MergeApp {
         is_worktree: bool,
         merge_version: &str,
     ) -> Result<PathBuf> {
-        // Acquire lock first to ensure exclusive access
-        match LockGuard::acquire(&repo_path) {
-            Ok(Some(guard)) => {
-                self.lock_guard = Some(guard);
-            }
-            Ok(None) => {
-                return Err(anyhow::anyhow!(
-                    "Another merge operation is in progress for this repository"
-                ));
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("Failed to acquire lock: {}", e));
-            }
-        }
-
-        let config = self.config();
-        let state_file = MergeStateFile::new(
+        let config = self.state_create_config();
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.create_state_file(
             repo_path,
             base_repo_path,
             is_worktree,
-            config.shared.organization.value().clone(),
-            config.shared.project.value().clone(),
-            config.shared.repository.value().clone(),
-            config.shared.dev_branch.value().clone(),
-            config.shared.target_branch.value().clone(),
-            merge_version.to_string(),
-            config.work_item_state.value().clone(),
-            config.shared.tag_prefix.value().clone(),
-            *config.run_hooks.value(),
-        );
-        self.state_file = Some(state_file);
-        self.save_state_file()
+            merge_version,
+            &config,
+        )
     }
 
     /// Sets the state file (for resuming from existing state).
     pub fn set_state_file(&mut self, state_file: MergeStateFile) {
-        self.state_file = Some(state_file);
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.set_state_file(state_file);
     }
 
     /// Sets the lock guard for exclusive merge access.
     pub fn set_lock_guard(&mut self, lock_guard: LockGuard) {
-        self.lock_guard = Some(lock_guard);
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.set_lock_guard(lock_guard);
     }
 
-    /// Returns a reference to the state file, if any.
-    pub fn state_file(&self) -> Option<&MergeStateFile> {
-        self.state_file.as_ref()
+    /// Returns a clone of the state file, if any.
+    ///
+    /// Note: This returns a clone rather than a reference because the state file
+    /// is now stored inside the state manager's mutex.
+    pub fn state_file(&self) -> Option<MergeStateFile> {
+        let manager = self.state_manager.lock().unwrap();
+        manager.state_file().cloned()
     }
 
-    /// Returns a mutable reference to the state file, if any.
-    pub fn state_file_mut(&mut self) -> Option<&mut MergeStateFile> {
-        self.state_file.as_mut()
+    /// Executes a function with mutable access to the state file.
+    ///
+    /// This is useful for operations that need to modify the state file
+    /// and then save it.
+    pub fn with_state_file_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut MergeStateFile) -> R,
+    {
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.state_file_mut().map(f)
     }
 
     /// Updates the phase in the state file and saves.
     pub fn update_state_phase(&mut self, phase: MergePhase) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            let path = state_file.set_phase(phase)?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.update_phase(phase)
     }
 
     /// Sets the cherry-pick items in the state file.
@@ -280,25 +292,22 @@ impl MergeApp {
         &mut self,
         work_items_map: &std::collections::HashMap<i32, Vec<i32>>,
     ) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            let state_items: Vec<StateCherryPickItem> = self
-                .cherry_pick_items
-                .iter()
-                .map(|item| StateCherryPickItem {
-                    commit_id: item.commit_id.clone(),
-                    pr_id: item.pr_id,
-                    pr_title: item.pr_title.clone(),
-                    status: cherry_pick_status_to_state(&item.status),
-                    work_item_ids: work_items_map.get(&item.pr_id).cloned().unwrap_or_default(),
-                })
-                .collect();
-            state_file.cherry_pick_items = state_items;
-            state_file.current_index = self.current_cherry_pick_index;
-            let path = state_file.save_for_repo()?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
+        use crate::core::state::StateCherryPickItem;
+
+        let state_items: Vec<StateCherryPickItem> = self
+            .cherry_pick_items
+            .iter()
+            .map(|item| StateCherryPickItem {
+                commit_id: item.commit_id.clone(),
+                pr_id: item.pr_id,
+                pr_title: item.pr_title.clone(),
+                status: cherry_pick_status_to_state(&item.status),
+                work_item_ids: vec![], // Work item IDs will be added by set_cherry_pick_items
+            })
+            .collect();
+
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.set_cherry_pick_items(state_items, work_items_map, self.current_cherry_pick_index)
     }
 
     /// Updates the status of a cherry-pick item in the state file.
@@ -307,75 +316,44 @@ impl MergeApp {
         index: usize,
         status: StateItemStatus,
     ) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            if let Some(item) = state_file.cherry_pick_items.get_mut(index) {
-                item.status = status;
-            }
-            state_file.current_index = self.current_cherry_pick_index;
-            let path = state_file.save_for_repo()?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.update_item_status(index, status, self.current_cherry_pick_index)
     }
 
     /// Syncs the current cherry-pick index to the state file.
     pub fn sync_state_current_index(&mut self) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            state_file.current_index = self.current_cherry_pick_index;
-            let path = state_file.save_for_repo()?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.sync_current_index(self.current_cherry_pick_index)
     }
 
     /// Sets conflicted files in the state file.
     pub fn set_state_conflicted_files(&mut self, files: Vec<String>) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            state_file.conflicted_files = Some(files);
-            let path = state_file.save_for_repo()?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.set_conflicted_files(files)
     }
 
     /// Clears conflicted files in the state file.
     pub fn clear_state_conflicted_files(&mut self) -> Result<Option<PathBuf>> {
-        if let Some(ref mut state_file) = self.state_file {
-            state_file.conflicted_files = None;
-            let path = state_file.save_for_repo()?;
-            Ok(Some(path))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Saves the current state file to disk.
-    fn save_state_file(&mut self) -> Result<PathBuf> {
-        self.state_file
-            .as_mut()
-            .expect("state_file must be set before saving")
-            .save_for_repo()
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.clear_conflicted_files()
     }
 
     /// Removes the state file from disk and clears it from memory.
     pub fn cleanup_state_file(&mut self) -> Result<()> {
-        if let Some(ref state_file) = self.state_file {
-            let path = crate::core::state::path_for_repo(&state_file.repo_path)?;
-            if path.exists() {
-                std::fs::remove_file(&path)?;
-            }
-        }
-        self.state_file = None;
-        self.lock_guard = None;
-        Ok(())
+        let mut manager = self.state_manager.lock().unwrap();
+        manager.cleanup()
     }
 
     /// Returns the repo path from the state file, if any.
-    pub fn state_repo_path(&self) -> Option<&Path> {
-        self.state_file.as_ref().map(|s| s.repo_path.as_path())
+    pub fn state_repo_path(&self) -> Option<PathBuf> {
+        let manager = self.state_manager.lock().unwrap();
+        manager.state_repo_path().map(|p| p.to_path_buf())
+    }
+
+    /// Returns whether a state file is currently set.
+    pub fn has_state_file(&self) -> bool {
+        let manager = self.state_manager.lock().unwrap();
+        manager.has_state_file()
     }
 
     // ==========================================================================
@@ -460,18 +438,6 @@ fn cherry_pick_status_to_state(status: &CherryPickStatus) -> StateItemStatus {
         CherryPickStatus::Failed(msg) => StateItemStatus::Failed {
             message: msg.clone(),
         },
-    }
-}
-
-/// Converts a state file StateItemStatus to a TUI CherryPickStatus.
-#[allow(dead_code)]
-fn state_status_to_cherry_pick(status: &StateItemStatus) -> CherryPickStatus {
-    match status {
-        StateItemStatus::Pending => CherryPickStatus::Pending,
-        StateItemStatus::Success => CherryPickStatus::Success,
-        StateItemStatus::Conflict => CherryPickStatus::Conflict,
-        StateItemStatus::Skipped => CherryPickStatus::Skipped,
-        StateItemStatus::Failed { message } => CherryPickStatus::Failed(message.clone()),
     }
 }
 
