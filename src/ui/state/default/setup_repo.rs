@@ -748,16 +748,55 @@ async fn execute_step_impl(
                 if ssh_url.is_none() {
                     return Err(SetupError::Other("SSH URL not available".to_string()));
                 }
+                // Note: Cannot check branch existence in clone mode - no local repo yet
             } else {
-                // For worktree mode, verify local repo exists
+                // For worktree mode
                 if let Some(local_repo) = &ctx.local_repo {
-                    let path = std::path::Path::new(local_repo);
-                    if !path.exists() {
+                    let base_path = std::path::Path::new(local_repo);
+
+                    // Check 1: Verify local repo path exists (unrecoverable)
+                    if !base_path.exists() {
                         return Err(SetupError::Other(format!(
                             "Local repository path does not exist: {:?}",
-                            path
+                            base_path
                         )));
                     }
+
+                    // Check 2: Verify worktree doesn't already exist (recoverable via 'f')
+                    match git::worktree_exists(base_path, &ctx.version) {
+                        Ok(true) => {
+                            let worktree_path = base_path.join(format!("next-{}", ctx.version));
+                            return Err(SetupError::WorktreeExists(
+                                worktree_path.display().to_string(),
+                            ));
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            return Err(SetupError::Other(format!(
+                                "Failed to check worktree existence: {}",
+                                e
+                            )));
+                        }
+                    }
+
+                    // Check 3: Verify patch branch doesn't already exist (recoverable via 'f')
+                    let branch_name = format!("patch/{}-{}", ctx.target_branch, ctx.version);
+                    match git::branch_exists(base_path, &branch_name) {
+                        Ok(true) => {
+                            return Err(SetupError::BranchExists(branch_name));
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            return Err(SetupError::Other(format!(
+                                "Failed to check branch existence: {}",
+                                e
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(SetupError::Other(
+                        "Local repository path not set for worktree mode".to_string(),
+                    ));
                 }
             }
             Ok(StepResult::default())
@@ -879,14 +918,8 @@ async fn execute_step_impl(
                             ..Default::default()
                         })
                     }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        if err_msg.contains("already exists") {
-                            Err(SetupError::BranchExists(name))
-                        } else {
-                            Err(SetupError::Other(format!("Failed to create branch: {}", e)))
-                        }
-                    }
+                    // Note: Branch existence is checked earlier in CheckPrerequisites step
+                    Err(e) => Err(SetupError::Other(format!("Failed to create branch: {}", e))),
                 }
             } else {
                 Err(SetupError::Other("Repository path not set".to_string()))
