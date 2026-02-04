@@ -2,52 +2,92 @@
 
 [![CI](https://github.com/egeapak/mergers/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/mergers/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/egeapak/mergers/branch/master/graph/badge.svg?token=18UOQC3763)](https://codecov.io/gh/egeapak/mergers)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
-A command-line interface (CLI) tool written in Rust to help streamline the process of merging multiple Azure DevOps pull requests (PRs) into a target branch via cherry-picking. It provides a Text-based User Interface (TUI) for selecting PRs.
+A Rust CLI/TUI tool for streamlining Azure DevOps pull request merging and migration workflows via cherry-picking.
+
+<!-- TODO: Add demo GIF
+## Demo
+
+![mergers TUI demo](./assets/demo.gif)
+-->
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [TUI Controls](#tui-controls)
+- [Non-Interactive Mode](#non-interactive-mode)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Azure DevOps Integration:**
-    - Fetches pull requests from a specified Azure DevOps organization, project, and repository.
-    - Filters out pull requests that already have a "merged" tag (or similar, based on `api::filter_prs_without_merged_tag`).
-    - Retrieves associated work items for each pull request.
-- **Interactive Pull Request Selection:**
-    - Utilizes a Text-based User Interface (TUI) built with `ratatui` for interactively selecting the pull requests you want to merge.
-- **Flexible Git Workflow:**
-    - **New Clone:** If no local repository path is provided, it performs a shallow clone of the repository.
-    - **Worktree Support:** If a local repository path is provided, it creates a new git worktree, keeping your main working directory clean.
-    - **Automated Cherry-Picking:** Cherry-picks the `lastMergeCommit` of the selected pull requests into a new local branch (e.g., `patch/target_branch-version`).
-    - **Conflict Handling:** Provides an interactive prompt to pause the process if conflicts occur during cherry-picking, allowing you to resolve them manually before continuing or skipping the problematic commit.
-- **Convenient Output:**
-    - Displays clickable links to the selected Azure DevOps pull requests and their associated work items in the terminal after successful operation.
+- **Azure DevOps Integration**
+  - Fetch pull requests from any organization, project, and repository
+  - Filter PRs by tags and merge status
+  - Retrieve and display associated work items
+  - Update work item states after successful merges
 
-## Prerequisites
+- **Interactive TUI**
+  - Select PRs visually with keyboard navigation
+  - View PR details and associated work items
+  - Open PRs and work items in browser directly from the TUI
 
-- **Git:** Must be installed and accessible in your system's PATH. The tool relies on `git` CLI commands for all repository operations.
-- **Azure DevOps Personal Access Token (PAT):** You'll need a PAT with appropriate permissions (e.g., Code Read, Work Items Read) to fetch data from Azure DevOps. This token is passed as a command-line argument.
-- **Note on PAT Security:** Treat your PAT like a password. Ensure it has the minimum required scopes and consider setting an expiration date. Do not hardcode it directly into scripts or share it publicly.
+- **Flexible Git Workflow**
+  - Shallow clone or git worktree support
+  - Automated cherry-picking with conflict handling
+  - Interactive conflict resolution prompts
 
-## Command-Line Arguments
+- **Non-Interactive Mode**
+  - CI/CD friendly commands for automated pipelines
+  - JSON/NDJSON output formats for scripting
+  - State persistence for resumable operations
 
-The tool uses the following command-line arguments:
+## Installation
 
--   `-o, --organization <ORGANIZATION>`: Specifies the Azure DevOps organization.
--   `-p, --project <PROJECT>`: Specifies the Azure DevOps project.
--   `-r, --repository <REPOSITORY>`: Specifies the repository name within the Azure DevOps project.
--   `-t, --pat <PAT>`: Your Azure DevOps Personal Access Token for authentication.
--   `--dev-branch <DEV_BRANCH>`: The development branch from which to fetch pull requests (default: `dev`).
--   `--target-branch <TARGET_BRANCH>`: The target branch into which the changes will be merged (default: `next`). This branch will be the base for the new `patch/...` branch.
--   `--local-repo <LOCAL_REPO>`: Optional. Path to your local git repository. If provided, the tool will create a git worktree within this repository instead of cloning anew. If omitted, the tool will perform a shallow clone of the repository into a temporary directory.
+### Prerequisites
+
+- **Rust 1.85+** (edition 2024)
+- **Git** installed and accessible in PATH
+- **Azure DevOps PAT** with Code Read and Work Items Read permissions
+
+### From Source
+
+```bash
+git clone https://github.com/egeapak/mergers.git
+cd mergers
+cargo build --release
+```
+
+The executable will be at `target/release/mergers`.
+
+### Pre-built Binaries
+
+Download from the [Releases](https://github.com/egeapak/mergers/releases) page.
+
+## Quick Start
+
+```bash
+# Set your PAT as an environment variable (recommended)
+export MERGERS_PAT="your-azure-devops-pat"
+
+# Run with minimal arguments
+mergers -o "MyOrg" -p "MyProject" -r "MyRepo"
+```
 
 ## Usage
 
-1.  **Build the tool** (see [Building](#building) section below).
-2.  **Run the tool** from your terminal.
-
-**Example:**
+### Basic Usage
 
 ```bash
-./target/release/mergers \
+mergers \
     -o "MyAzureOrg" \
     -p "MyProject" \
     -r "MyRepo" \
@@ -56,98 +96,204 @@ The tool uses the following command-line arguments:
     --target-branch "release/1.2.0"
 ```
 
-**Using a local repository:**
-
-If you have a local clone of the repository and prefer to use a git worktree:
+### Using Local Repository (Worktree Mode)
 
 ```bash
-./target/release/mergers \
+mergers \
     -o "MyAzureOrg" \
     -p "MyProject" \
     -r "MyRepo" \
-    -t "YOUR_AZURE_DEVOPS_PAT" \
     --dev-branch "main" \
     --target-branch "hotfix/1.2.1" \
-    --local-repo "/path/to/your/local/clone/MyRepo"
+    --local-repo "/path/to/your/local/clone"
 ```
 
-Upon running, the tool will:
-1. Fetch pull requests from the specified `--dev-branch`.
-2. Display a TUI where you can select the PRs to include.
-3. Prompt you to enter a version number (this will be used in the new branch name, e.g., `patch/target_branch-version`).
-4. Either clone the repository or create a worktree.
-5. Cherry-pick the selected PRs into the new branch.
-6. If conflicts occur, it will pause and allow you to resolve them.
+### Workflow
+
+1. Fetch pull requests from the specified `--dev-branch`
+2. Display TUI for PR selection
+3. Enter a version number for the new branch name
+4. Clone repository or create worktree
+5. Cherry-pick selected PRs into the new branch
+6. Resolve conflicts interactively if they occur
+
+### Command-Line Arguments
+
+| Argument | Short | Description | Default |
+|----------|-------|-------------|---------|
+| `--organization` | `-o` | Azure DevOps organization | Required |
+| `--project` | `-p` | Azure DevOps project | Required |
+| `--repository` | `-r` | Repository name | Required |
+| `--pat` | `-t` | Personal Access Token | `$MERGERS_PAT` |
+| `--dev-branch` | | Source branch for PRs | `dev` |
+| `--target-branch` | | Target branch for merge | `next` |
+| `--local-repo` | | Local repo path (worktree mode) | None |
+
+## Configuration
+
+### Configuration File
+
+Create `~/.config/mergers/config.toml`:
+
+```toml
+organization = "MyOrg"
+project = "MyProject"
+repository = "MyRepo"
+dev_branch = "develop"
+target_branch = "main"
+```
+
+### Environment Variables
+
+All configuration options can be set via environment variables with the `MERGERS_` prefix:
+
+| Variable | Description |
+|----------|-------------|
+| `MERGERS_PAT` | Azure DevOps Personal Access Token |
+| `MERGERS_ORGANIZATION` | Azure DevOps organization |
+| `MERGERS_PROJECT` | Azure DevOps project |
+| `MERGERS_REPOSITORY` | Repository name |
+| `MERGERS_DEV_BRANCH` | Source branch for PRs |
+| `MERGERS_TARGET_BRANCH` | Target branch for merge |
+| `MERGERS_STATE_DIR` | Custom state directory path |
+
+### Configuration Precedence
+
+1. Command-line arguments (highest)
+2. Environment variables
+3. Configuration file
+4. Default values (lowest)
 
 ## TUI Controls
 
-When the list of pull requests is displayed, you can use the following keys to navigate and make selections:
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Navigate PR list |
+| `Space` | Toggle PR selection |
+| `Enter` | Confirm selections |
+| `p` | Open PR in browser |
+| `w` | Open work items in browser |
+| `q` | Quit |
 
--   **`↑` (Up Arrow)**: Move selection up.
--   **`↓` (Down Arrow)**: Move selection down.
--   **`Space`**: Toggle selection for the currently highlighted pull request. Selected items are marked with `[x]`.
--   **`Enter`**: Confirm your selections and proceed to the next step (entering version number and cherry-picking).
--   **`p`**: Open the currently highlighted pull request in your default web browser.
--   **`w`**: Open the work items associated with the highlighted pull request in your default web browser.
--   **`q`**: Quit the application without proceeding.
+## Non-Interactive Mode
 
-## Building
+For CI/CD pipelines and automation:
 
-To build the project, you'll need to have Rust and Cargo installed. If you don't have them, please visit [rust-lang.org](https://www.rust-lang.org/tools/install) for installation instructions.
-
-1.  **Clone the repository (if you haven't already):**
-    ```bash
-    git clone <repository-url>
-    cd <repository-directory>
-    ```
-
-2.  **Build the project:**
-    For a release build (recommended for usage):
-    ```bash
-    cargo build --release
-    ```
-    The executable will be located at `target/release/mergers`.
-
-    For a debug build:
-    ```bash
-    cargo build
-    ```
-    The executable will be located at `target/debug/mergers`.
-
-## Testing
-
-This project uses cargo-nextest for faster test execution and cargo-llvm-cov for code coverage.
-
-### Running Tests
-
-**Standard tests:**
 ```bash
+# Start a merge
+mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next"
+
+# Check status
+mergers merge status --output json
+
+# Continue after resolving conflicts
+mergers merge continue
+
+# Abort a merge
+mergers merge abort
+
+# Complete and update work items
+mergers merge complete --next-state "Done"
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Conflict - manual resolution needed |
+| 3 | Partial success |
+| 4 | No state file found |
+| 5 | Invalid phase |
+| 6 | No PRs matched |
+| 7 | Locked (merge in progress) |
+
+## Development
+
+### Building
+
+```bash
+# Debug build
+cargo build
+
+# Release build
+cargo build --release
+```
+
+### Testing
+
+This project uses [cargo-nextest](https://nexte.st/) for test execution and [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) for coverage.
+
+```bash
+# Standard tests
 cargo test
-```
 
-**With nextest (faster, parallel execution):**
-```bash
+# With nextest (faster)
 cargo nextest run
-```
 
-**With coverage:**
-```bash
+# With coverage
 cargo llvm-cov nextest
-```
 
-**Generate HTML coverage report:**
-```bash
+# HTML coverage report
 cargo llvm-cov nextest --html
-```
 
-**Generate LCOV coverage report for CI:**
-```bash
+# CI coverage report
 cargo llvm-cov nextest --lcov --output-path lcov.info
 ```
 
-### Test Configuration
+### Test Profiles
 
-Tests are configured via `.config/nextest.toml` with different profiles:
+Configured in `.config/nextest.toml`:
 - `default`: Standard development settings
-- `ci`: Optimized for CI environments with longer timeouts and more retries
+- `ci`: Optimized for CI with longer timeouts
 - `dev`: Verbose output for local development
+
+### Code Quality
+
+```bash
+# Format code
+cargo fmt
+
+# Lint
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Authentication Failed**
+- Verify your PAT has not expired
+- Ensure PAT has `Code (Read)` and `Work Items (Read)` scopes
+- Check organization/project names are correct
+
+**Git Clone/Worktree Fails**
+- Ensure git is installed and in PATH
+- Check network connectivity to Azure DevOps
+- Verify repository URL is accessible with your PAT
+
+**Cherry-pick Conflicts**
+- The tool will pause and prompt for manual resolution
+- Resolve conflicts in the worktree directory
+- Use `mergers merge continue` to resume
+
+**PAT Security**
+- Never hardcode PATs in scripts
+- Use environment variables or secure credential storage
+- Set PAT expiration dates and use minimal scopes
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run `cargo fmt` and `cargo clippy`
+5. Ensure tests pass with `cargo nextest run`
+6. Submit a pull request
+
+## License
+
+This project is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
