@@ -2551,4 +2551,54 @@ mod tests {
             panic!("Expected default config");
         }
     }
+
+    /// # Merge Run Subcommand with Positional Path
+    ///
+    /// Tests that positional path argument works for `merge run` subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge run -n --version v1.0 /path/to/repo`
+    /// - Verifies the path is captured in MergeRunArgs.shared.path
+    ///
+    /// ## Expected Outcome
+    /// - MergeRunArgs.shared.path should contain the positional path
+    #[test]
+    fn test_merge_run_with_positional_path() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            // Check if the path is captured in the outer MergeArgs
+            println!("MergeArgs.shared.path = {:?}", merge_args.shared.path);
+
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                // This is what the non-interactive mode uses
+                println!("MergeRunArgs.shared.path = {:?}", run_args.shared.path);
+                assert_eq!(
+                    run_args.shared.path,
+                    Some("/path/to/repo".to_string()),
+                    "Expected MergeRunArgs.shared.path to contain the positional path"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
 }
