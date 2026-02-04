@@ -102,6 +102,7 @@ impl MergeEngine {
 
     /// Loads pull requests from Azure DevOps.
     pub async fn load_pull_requests(&self) -> Result<Vec<PullRequestWithWorkItems>> {
+        use crate::api::filter_prs_without_merged_tag;
         use crate::utils::throttle::NetworkProcessor;
         use futures::stream::{self, StreamExt};
 
@@ -118,6 +119,14 @@ impl MergeEngine {
             .context("Failed to fetch pull requests")?;
 
         tracing::info!("Retrieved {} pull requests from Azure DevOps", prs.len());
+
+        // Filter out PRs that already have "merged-" tags (same as TUI mode)
+        let prs = filter_prs_without_merged_tag(prs);
+        tracing::info!(
+            "After filtering merged tags: {} pull requests remain",
+            prs.len()
+        );
+
         tracing::info!(
             "Fetching work items for PRs (max_concurrent_network={})",
             self.max_concurrent_network
@@ -1104,5 +1113,245 @@ mod tests {
         assert_eq!(count, 1);
         assert!(prs[0].selected);
         assert!(!prs[1].selected);
+    }
+
+    /// # Filter PRs Without Merged Tag Integration
+    ///
+    /// Verifies that the filter_prs_without_merged_tag function works correctly
+    /// when integrated with MergeEngine data structures.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with and without merged tags
+    /// - Applies filter
+    ///
+    /// ## Expected Outcome
+    /// - PRs with "merged-*" labels are excluded
+    /// - PRs without such labels are retained
+    #[test]
+    fn test_filter_prs_without_merged_tag_integration() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        fn create_pr_with_labels(id: i32, labels: Option<Vec<&str>>) -> PullRequest {
+            PullRequest {
+                id,
+                title: format!("PR {}", id),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test User".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: format!("commit{}", id),
+                }),
+                labels: labels.map(|l| {
+                    l.into_iter()
+                        .map(|name| Label {
+                            name: name.to_string(),
+                        })
+                        .collect()
+                }),
+            }
+        }
+
+        let prs = vec![
+            create_pr_with_labels(1, None),                  // No labels - keep
+            create_pr_with_labels(2, Some(vec!["feature"])), // Non-merged label - keep
+            create_pr_with_labels(3, Some(vec!["merged-v1.0.0"])), // Merged tag - filter
+            create_pr_with_labels(4, Some(vec!["bug", "merged-v2"])), // Has merged tag - filter
+            create_pr_with_labels(5, Some(vec![])),          // Empty labels - keep
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered[0].id, 1);
+        assert_eq!(filtered[1].id, 2);
+        assert_eq!(filtered[2].id, 5);
+    }
+
+    /// # Filter PRs All Have Merged Tags
+    ///
+    /// Verifies behavior when all PRs have merged tags.
+    ///
+    /// ## Test Scenario
+    /// - All PRs have merged-* labels
+    ///
+    /// ## Expected Outcome
+    /// - Returns empty vector
+    #[test]
+    fn test_filter_prs_all_merged() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        let prs = vec![
+            PullRequest {
+                id: 1,
+                title: "PR 1".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "a".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v1.0.0".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "PR 2".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "b".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v2.0.0".to_string(),
+                }]),
+            },
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert!(filtered.is_empty());
+    }
+
+    /// # Filter PRs None Have Merged Tags
+    ///
+    /// Verifies that all PRs pass through when none have merged tags.
+    ///
+    /// ## Test Scenario
+    /// - No PRs have merged-* labels
+    ///
+    /// ## Expected Outcome
+    /// - All PRs retained
+    #[test]
+    fn test_filter_prs_none_merged() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        let prs = vec![
+            PullRequest {
+                id: 1,
+                title: "PR 1".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "a".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "feature".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "PR 2".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "b".to_string(),
+                }),
+                labels: None,
+            },
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// # Non-Interactive Mode Filter Integration
+    ///
+    /// Verifies that PRs with merged tags would be filtered in the
+    /// non-interactive workflow by testing the filter with the full
+    /// PullRequestWithWorkItems structure.
+    ///
+    /// ## Test Scenario
+    /// - Creates PullRequestWithWorkItems with various label configurations
+    /// - Simulates the filtering that happens in load_pull_requests
+    ///
+    /// ## Expected Outcome
+    /// - Only PRs without merged tags remain for processing
+    #[test]
+    fn test_non_interactive_workflow_filter_integration() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{
+            CreatedBy, Label, MergeCommit, PullRequest, PullRequestWithWorkItems, WorkItem,
+            WorkItemFields,
+        };
+
+        // Simulate what load_pull_requests does:
+        // 1. Fetch PRs
+        // 2. Filter merged tags
+        // 3. Create PullRequestWithWorkItems
+
+        let raw_prs = vec![
+            PullRequest {
+                id: 1,
+                title: "Ready PR".to_string(),
+                closed_date: Some("2024-01-01".to_string()),
+                created_by: CreatedBy {
+                    display_name: "Dev".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "abc".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "feature".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "Already Merged PR".to_string(),
+                closed_date: Some("2024-01-01".to_string()),
+                created_by: CreatedBy {
+                    display_name: "Dev".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "def".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v1.0.0".to_string(),
+                }]),
+            },
+        ];
+
+        // This is what load_pull_requests now does
+        let filtered_prs = filter_prs_without_merged_tag(raw_prs);
+
+        // Then converts to PullRequestWithWorkItems
+        let prs_with_work_items: Vec<PullRequestWithWorkItems> = filtered_prs
+            .into_iter()
+            .map(|pr| PullRequestWithWorkItems {
+                pr,
+                work_items: vec![WorkItem {
+                    id: 100,
+                    fields: WorkItemFields {
+                        title: Some("Work Item".to_string()),
+                        state: Some("Ready".to_string()),
+                        work_item_type: Some("Bug".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: Vec::new(),
+                }],
+                selected: false,
+            })
+            .collect();
+
+        // Verify only PR 1 remains
+        assert_eq!(prs_with_work_items.len(), 1);
+        assert_eq!(prs_with_work_items[0].pr.id, 1);
+        assert_eq!(prs_with_work_items[0].pr.title, "Ready PR");
     }
 }
