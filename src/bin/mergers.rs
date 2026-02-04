@@ -346,6 +346,15 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         .unwrap_or_else(|| "Next Merged".to_string());
     let local_repo = merged.local_repo.map(|p| PathBuf::from(p.value().clone()));
     let run_hooks = merged.run_hooks.map(|p| *p.value()).unwrap_or(false);
+    let max_concurrent_network = merged
+        .max_concurrent_network
+        .map(|p| *p.value())
+        .unwrap_or(100);
+    let max_concurrent_processing = merged
+        .max_concurrent_processing
+        .map(|p| *p.value())
+        .unwrap_or(10);
+    let since = shared.since.clone();
 
     // Version is required for non-interactive mode
     let version = args
@@ -368,6 +377,9 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         run_hooks,
         output_format: args.output,
         quiet: args.quiet,
+        max_concurrent_network,
+        max_concurrent_processing,
+        since,
     })
 }
 
@@ -412,6 +424,14 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         .unwrap_or_else(|| "Next Merged".to_string());
     let local_repo = merged.local_repo.map(|p| PathBuf::from(p.value().clone()));
     let run_hooks = merged.run_hooks.map(|p| *p.value()).unwrap_or(false);
+    let max_concurrent_network = merged
+        .max_concurrent_network
+        .map(|p| *p.value())
+        .unwrap_or(100);
+    let max_concurrent_processing = merged
+        .max_concurrent_processing
+        .map(|p| *p.value())
+        .unwrap_or(10);
 
     Ok(MergeRunnerConfig {
         organization,
@@ -428,5 +448,8 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         run_hooks,
         output_format: output,
         quiet,
+        max_concurrent_network,
+        max_concurrent_processing,
+        since: None, // Not needed for continue/abort/status/complete
     })
 }

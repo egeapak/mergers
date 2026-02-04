@@ -174,8 +174,11 @@ impl AzureDevOpsClient {
         dev_branch: &str,
         since: Option<&str>,
     ) -> Result<Vec<PullRequest>> {
+        tracing::info!("Fetching pull requests for branch: {}", dev_branch);
+
         // Parse the since date if provided
         let since_date = if let Some(since_str) = since {
+            tracing::debug!("Filtering PRs since: {}", since_str);
             Some(parse_since_date(since_str).context("Failed to parse since date")?)
         } else {
             None
@@ -190,7 +193,19 @@ impl AzureDevOpsClient {
 
         loop {
             request_count += 1;
+            tracing::debug!(
+                "Fetching PR page: request #{}, skip={}, top={}",
+                request_count,
+                skip,
+                top
+            );
+
             if request_count > max_requests {
+                tracing::error!(
+                    "Exceeded maximum number of requests ({}), retrieved {} PRs",
+                    max_requests,
+                    all_prs.len()
+                );
                 anyhow::bail!(
                     "Exceeded maximum number of requests ({}) while fetching pull requests. Retrieved {} PRs so far.",
                     max_requests,
@@ -211,6 +226,11 @@ impl AzureDevOpsClient {
                 .context("Failed to fetch pull requests")?;
 
             let fetched_count = response.value.len();
+            tracing::debug!(
+                "Retrieved {} PRs in this batch, {} total so far",
+                fetched_count,
+                all_prs.len()
+            );
 
             // Convert and filter PRs by date
             let mut reached_date_limit = false;
@@ -223,6 +243,7 @@ impl AzureDevOpsClient {
                 {
                     let closed_date_utc = closed_date.with_timezone(&Utc);
                     if closed_date_utc < since_dt {
+                        tracing::debug!("Reached date limit at PR {}", converted_pr.id);
                         reached_date_limit = true;
                         break;
                     }
@@ -231,12 +252,18 @@ impl AzureDevOpsClient {
             }
 
             if reached_date_limit || fetched_count < top as usize {
+                tracing::debug!(
+                    "Fetch complete: reached_date_limit={}, is_last_page={}",
+                    reached_date_limit,
+                    fetched_count < top as usize
+                );
                 break;
             }
 
             skip += top;
         }
 
+        tracing::info!("Fetched {} total pull requests", all_prs.len());
         Ok(all_prs)
     }
 

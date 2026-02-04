@@ -992,6 +992,9 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Text,
         quiet: false,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer1 = Vec::new();
@@ -1013,6 +1016,9 @@ fn test_runner_configuration() {
         run_hooks: true,
         output_format: OutputFormat::Json,
         quiet: true,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer2 = Vec::new();
@@ -1034,6 +1040,9 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Ndjson,
         quiet: false,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer3 = Vec::new();
