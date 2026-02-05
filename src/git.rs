@@ -21,6 +21,19 @@ use tempfile::TempDir;
 
 use crate::error::GitError;
 
+/// Creates a git command with non-interactive settings.
+///
+/// This helper ensures git operations don't hang waiting for user input
+/// by setting `GIT_TERMINAL_PROMPT=0`, which causes git to fail immediately
+/// when credentials are needed instead of waiting for interactive input.
+///
+/// This is critical for non-interactive contexts like CI/CD pipelines.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 /// Trait for abstracting git operations.
 ///
 /// This trait allows for mocking git operations in tests and potentially
@@ -203,10 +216,15 @@ pub fn shallow_clone_repo(
     target_branch: &str,
     run_hooks: bool,
 ) -> Result<(PathBuf, TempDir)> {
+    tracing::info!("Cloning repository: {} -> temporary directory", ssh_url);
+    tracing::debug!("Clone args: depth=1, branch={}", target_branch);
+
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let repo_path = temp_dir.path().to_path_buf();
 
-    let output = Command::new("git")
+    tracing::debug!("Repository will be cloned to: {}", repo_path.display());
+
+    let output = git_command()
         .args([
             "clone",
             "--depth",
@@ -221,12 +239,15 @@ pub fn shallow_clone_repo(
         .output()
         .context("Failed to clone repository")?;
 
+    tracing::debug!("Git clone completed with status: {}", output.status);
+
     if !output.status.success() {
-        anyhow::bail!(
-            "Git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!("Git clone failed. stderr: {}", stderr);
+        anyhow::bail!("Git clone failed: {}", stderr);
     }
+
+    tracing::info!("Repository cloned successfully");
 
     // Note: Hook configuration is now handled by the ConfigureRepository wizard step
     let _ = run_hooks; // Acknowledge parameter (used by wizard step)
@@ -243,10 +264,17 @@ pub fn create_worktree(
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
 
+    tracing::info!(
+        "Creating worktree at {} for origin/{}",
+        worktree_path.display(),
+        target_branch
+    );
+
     // Note: Worktree existence is checked earlier in CheckPrerequisites step
     // This function assumes the worktree does not exist
 
-    let fetch_output = Command::new("git")
+    tracing::debug!("Fetching origin/{}", target_branch);
+    let fetch_output = git_command()
         .current_dir(base_repo_path)
         .args(["fetch", "origin", target_branch])
         .output()
@@ -254,14 +282,19 @@ pub fn create_worktree(
             RepositorySetupError::Other(format!("Failed to fetch target branch: {}", e))
         })?;
 
+    tracing::debug!("Git fetch completed with status: {}", fetch_output.status);
+
     if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        tracing::error!("Git fetch failed. stderr: {}", stderr);
         return Err(RepositorySetupError::Other(format!(
             "Failed to fetch target branch: {}",
-            String::from_utf8_lossy(&fetch_output.stderr)
+            stderr
         )));
     }
 
-    let create_output = Command::new("git")
+    tracing::debug!("Creating worktree from origin/{}", target_branch);
+    let create_output = git_command()
         .current_dir(base_repo_path)
         .args([
             "worktree",
@@ -272,8 +305,15 @@ pub fn create_worktree(
         .output()
         .map_err(|e| RepositorySetupError::Other(format!("Failed to create worktree: {}", e)))?;
 
+    tracing::debug!(
+        "Git worktree add completed with status: {}",
+        create_output.status
+    );
+
     if !create_output.status.success() {
         let stderr = String::from_utf8_lossy(&create_output.stderr);
+        tracing::error!("Git worktree add failed. stderr: {}", stderr);
+
         if stderr.contains("already exists")
             || stderr.contains("already checked out")
             || stderr.contains("is already checked out")
@@ -297,6 +337,11 @@ pub fn create_worktree(
             stderr
         )));
     }
+
+    tracing::info!(
+        "Worktree created successfully at {}",
+        worktree_path.display()
+    );
 
     // Note: Hook configuration is now handled by the ConfigureRepository wizard step
     let _ = run_hooks; // Acknowledge parameter (used by wizard step)

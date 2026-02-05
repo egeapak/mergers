@@ -208,7 +208,7 @@ cargo run -- merge
    - Verify JSON output shows same dependencies
 
 2. **Non-Interactive Consistency**
-   - Run `mergers merge run -n --version v1.0.0 --select-by-state "Ready"`
+   - Run `mergers merge -n --version v1.0.0 --select-by-state "Ready"`
    - Verify dependency warnings in output
    - Compare with TUI highlighting
 

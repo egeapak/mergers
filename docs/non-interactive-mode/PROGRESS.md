@@ -250,7 +250,7 @@ None (Phase 1, 2, 3 complete)
 |------|--------|-------|
 | Add subcommand parsing to mergers.rs | ✅ Complete | MergeArgs.subcommand field |
 | Handle `merge` (no subcommand) → TUI | ✅ Complete | Falls through to TUI |
-| Handle `merge run` routing | ✅ Complete | Non-interactive with -n flag |
+| Handle `merge -n` routing | ✅ Complete | Non-interactive with -n flag |
 | Handle `merge continue` routing | ✅ Complete | |
 | Handle `merge abort` routing | ✅ Complete | |
 | Handle `merge status` routing | ✅ Complete | |
