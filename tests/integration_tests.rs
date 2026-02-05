@@ -4,8 +4,8 @@
 //! end-to-end functionality.
 
 use mergers::{
-    AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs, SharedArgs,
-    parsed_property::ParsedProperty,
+    AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs,
+    NonInteractiveArgs, SharedArgs, parsed_property::ParsedProperty,
 };
 use serial_test::file_serial;
 use std::fs;
@@ -603,6 +603,7 @@ fn test_args_cli_precedence() {
                 log_file: None,
                 log_format: None,
             },
+            ni: NonInteractiveArgs::default(),
             work_item_state: None,
             run_hooks: false,
             subcommand: None,
@@ -992,6 +993,9 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Text,
         quiet: false,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer1 = Vec::new();
@@ -1013,6 +1017,9 @@ fn test_runner_configuration() {
         run_hooks: true,
         output_format: OutputFormat::Json,
         quiet: true,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer2 = Vec::new();
@@ -1034,6 +1041,9 @@ fn test_runner_configuration() {
         run_hooks: false,
         output_format: OutputFormat::Ndjson,
         quiet: false,
+        max_concurrent_network: 100,
+        max_concurrent_processing: 10,
+        since: None,
     };
 
     let mut buffer3 = Vec::new();
