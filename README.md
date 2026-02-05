@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/egeapak/mergers/actions/workflows/ci.yml/badge.svg)](https://github.com/egeapak/mergers/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/egeapak/mergers/branch/master/graph/badge.svg?token=18UOQC3763)](https://codecov.io/gh/egeapak/mergers)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 
 A Rust CLI/TUI tool for streamlining Azure DevOps pull request merging and migration workflows via cherry-picking.
@@ -296,4 +296,4 @@ Contributions are welcome! Please:
 
 ## License
 
-This project is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+This project is licensed under the [MIT License](LICENSE).
