@@ -45,16 +45,14 @@ pub enum LoadingProgressMessage {
 /// Result data from completing a loading step.
 #[derive(Debug, Clone, Default)]
 pub struct LoadingStepResult {
-    /// Number of PRs fetched (FetchPullRequests step)
-    pub prs_fetched: Option<usize>,
+    /// Fetched PR list (FetchPullRequests step)
+    pub prs: Option<Vec<PullRequestWithWorkItems>>,
     /// Work items update for a specific PR (FetchWorkItems step)
     pub work_items_update: Option<WorkItemsResult>,
-    /// Number of commits fetched (FetchCommitInfo step)
-    pub commits_fetched: Option<usize>,
-    /// Whether dependency analysis completed (AnalyzeDependencies step)
-    /// Reserved for future step result tracking
-    #[allow(dead_code)]
-    pub dependencies_analyzed: Option<bool>,
+    /// Commit info update for a specific PR (FetchCommitInfo step)
+    pub commit_info_update: Option<CommitInfoResult>,
+    /// Dependency graph result (AnalyzeDependencies step)
+    pub dependency_graph: Option<PRDependencyGraph>,
 }
 
 /// Error types that can occur during data loading.
@@ -302,19 +300,6 @@ impl LoadingProgress {
         }
     }
 
-    /// Marks a step as skipped
-    pub fn skip_step(&mut self, step: LoadingStep) {
-        match step {
-            LoadingStep::FetchPullRequests => self.fetch_pull_requests = StepStatus::Skipped,
-            LoadingStep::FetchWorkItems => self.fetch_work_items = StepStatus::Skipped,
-            LoadingStep::FetchCommitInfo => self.fetch_commit_info = StepStatus::Skipped,
-            LoadingStep::AnalyzeDependencies => self.analyze_dependencies = StepStatus::Skipped,
-        }
-        if self.current_step == Some(step) {
-            self.current_step = None;
-        }
-    }
-
     /// Updates progress counters for a step
     pub fn update_progress(&mut self, step: LoadingStep, fetched: usize, total: usize) {
         match step {
@@ -349,13 +334,6 @@ impl LoadingProgress {
             None => "Initializing...".to_string(),
         }
     }
-
-    /// Returns whether dependency analysis is available
-    /// Reserved for future use in dynamic step configuration
-    #[allow(dead_code)]
-    pub fn has_dependency_analysis(&self) -> bool {
-        self.dependency_analysis_available
-    }
 }
 
 // ============================================================================
@@ -372,9 +350,6 @@ pub struct LoadingStepData {
     pub work_items_total: usize,
     /// Commit info fetch progress
     pub commits_fetched: usize,
-    /// Reserved for future progress tracking
-    #[allow(dead_code)]
-    pub commits_total: usize,
     /// Dependency graph result
     pub dependency_graph: Option<PRDependencyGraph>,
 }
@@ -382,15 +357,18 @@ pub struct LoadingStepData {
 impl LoadingStepData {
     /// Merge a step result into this data, updating relevant fields
     pub fn merge_result(&mut self, result: &LoadingStepResult) {
-        if let Some(count) = result.prs_fetched {
-            self.total_prs = count;
-            self.work_items_total = count;
+        if let Some(ref prs) = result.prs {
+            self.total_prs = prs.len();
+            self.work_items_total = prs.len();
         }
         if result.work_items_update.is_some() {
             self.work_items_fetched += 1;
         }
-        if let Some(count) = result.commits_fetched {
-            self.commits_fetched = count;
+        if result.commit_info_update.is_some() {
+            self.commits_fetched += 1;
+        }
+        if let Some(ref graph) = result.dependency_graph {
+            self.dependency_graph = Some(graph.clone());
         }
     }
 }
@@ -414,7 +392,10 @@ pub enum LoadingState {
 
     /// All steps completed successfully
     Complete {
-        /// Final step data with all accumulated results
+        /// Final step data with all accumulated results.
+        /// Data is applied to the app via handle_progress_message as each step completes.
+        /// Retained here for structural parity with setup_repo wizard pattern.
+        #[allow(dead_code)]
         step_data: LoadingStepData,
     },
 
@@ -424,6 +405,8 @@ pub enum LoadingState {
         message: String,
         /// Progress at the time of error (to show which step failed)
         progress: Option<LoadingProgress>,
+        /// Step data accumulated before the error (preserved for skip/retry)
+        step_data: Option<LoadingStepData>,
     },
 }
 
@@ -491,6 +474,13 @@ impl std::fmt::Debug for LoadingProgressReceiver {
 pub struct WorkItemsResult {
     pub pr_index: usize,
     pub work_items: Vec<crate::models::WorkItem>,
+}
+
+/// Result of fetching commit info for a single PR
+#[derive(Debug, Clone)]
+pub struct CommitInfoResult {
+    pub pr_index: usize,
+    pub merge_commit: crate::models::MergeCommit,
 }
 
 /// The data loading state machine.
@@ -570,12 +560,15 @@ impl DataLoadingState {
         }
     }
 
-    /// Set error state with preserved progress
+    /// Set error state with preserved progress and step data
     fn set_error(&mut self, error: LoadingError) {
-        // Preserve the current progress to show which step failed
-        let current_progress = match &self.state {
-            LoadingState::Running { progress, .. } => Some(progress.clone()),
-            _ => None,
+        // Preserve the current progress and step data to show which step failed
+        let (current_progress, current_step_data) = match &self.state {
+            LoadingState::Running {
+                progress,
+                step_data,
+            } => (Some(progress.clone()), Some(step_data.clone())),
+            _ => (None, None),
         };
 
         let message = error.message();
@@ -583,6 +576,7 @@ impl DataLoadingState {
             error,
             message,
             progress: current_progress,
+            step_data: current_step_data,
         };
     }
 
@@ -613,12 +607,31 @@ impl DataLoadingState {
             }
             LoadingProgressMessage::StepCompleted(step, result) => {
                 self.complete_step(step);
+
+                // Apply PR list to app when fetched
+                if let Some(ref prs) = result.prs {
+                    *app.pull_requests_mut() = prs.clone();
+                }
+
                 // Apply work items updates to app immediately
-                if let Some(wi_result) = &result.work_items_update
+                if let Some(ref wi_result) = result.work_items_update
                     && let Some(pr_with_wi) = app.pull_requests_mut().get_mut(wi_result.pr_index)
                 {
                     pr_with_wi.work_items = wi_result.work_items.clone();
                 }
+
+                // Apply commit info updates to app immediately
+                if let Some(ref ci_result) = result.commit_info_update
+                    && let Some(pr_with_wi) = app.pull_requests_mut().get_mut(ci_result.pr_index)
+                {
+                    pr_with_wi.pr.last_merge_commit = Some(ci_result.merge_commit.clone());
+                }
+
+                // Apply dependency graph to app
+                if let Some(ref graph) = result.dependency_graph {
+                    app.set_dependency_graph(graph.clone());
+                }
+
                 self.merge_step_result(&result);
             }
             LoadingProgressMessage::StepProgress(step, fetched, total) => {
@@ -664,15 +677,15 @@ impl DataLoadingState {
     fn skip_current_step(&mut self) {
         if let LoadingState::Error {
             progress: Some(prog),
+            step_data,
             ..
         } = &self.state
             && prog.current_step == Some(LoadingStep::AnalyzeDependencies)
         {
-            // Restore running state with skipped step
-            let mut new_progress = prog.clone();
-            new_progress.skip_step(LoadingStep::AnalyzeDependencies);
+            // Preserve accumulated step data from before the error
+            let preserved_data = step_data.clone().unwrap_or_default();
             self.state = LoadingState::Complete {
-                step_data: LoadingStepData::default(),
+                step_data: preserved_data,
             };
         }
     }
@@ -717,7 +730,7 @@ async fn run_loading_task(ctx: LoadingContext, tx: mpsc::Sender<LoadingProgressM
         LoadingProgressMessage::StepCompleted(
             LoadingStep::FetchPullRequests,
             LoadingStepResult {
-                prs_fetched: Some(pr_count),
+                prs: Some(prs.clone()),
                 ..Default::default()
             }
         )
@@ -779,10 +792,7 @@ async fn run_loading_task(ctx: LoadingContext, tx: mpsc::Sender<LoadingProgressM
         tx,
         LoadingProgressMessage::StepCompleted(
             LoadingStep::FetchCommitInfo,
-            LoadingStepResult {
-                commits_fetched: Some(commits_needed),
-                ..Default::default()
-            }
+            LoadingStepResult::default()
         )
     );
 
@@ -805,27 +815,21 @@ async fn run_loading_task(ctx: LoadingContext, tx: mpsc::Sender<LoadingProgressM
                     LoadingProgressMessage::StepCompleted(
                         LoadingStep::AnalyzeDependencies,
                         LoadingStepResult {
-                            dependencies_analyzed: Some(true),
+                            dependency_graph: graph,
                             ..Default::default()
                         }
                     )
                 );
-                // Note: The dependency graph will be set in the app when processing StepCompleted
-                let _ = graph; // Graph is applied separately
             }
             Err(e) => {
-                // Dependency analysis errors are non-fatal, just log and skip
+                // Dependency analysis errors are non-fatal, complete the step without graph
+                tracing::warn!("Dependency analysis failed (non-fatal): {:?}", e);
                 let _ = tx
                     .send(LoadingProgressMessage::StepCompleted(
                         LoadingStep::AnalyzeDependencies,
-                        LoadingStepResult {
-                            dependencies_analyzed: Some(false),
-                            ..Default::default()
-                        },
+                        LoadingStepResult::default(),
                     ))
                     .await;
-                // Log the error but continue
-                eprintln!("Dependency analysis failed (non-fatal): {:?}", e);
             }
         }
     }
@@ -965,11 +969,26 @@ async fn fetch_commit_info_impl(
         .filter(|p| p.pr.last_merge_commit.is_none())
         .count();
 
-    for pr_with_wi in prs {
+    for (index, pr_with_wi) in prs.iter().enumerate() {
         if pr_with_wi.pr.last_merge_commit.is_none() {
             match ctx.client.fetch_pr_commit(pr_with_wi.pr.id).await {
-                Ok(_commit_info) => {
+                Ok(commit_info) => {
                     fetched += 1;
+
+                    // Send individual commit info result for UI to apply
+                    let _ = tx
+                        .send(LoadingProgressMessage::StepCompleted(
+                            LoadingStep::FetchCommitInfo,
+                            LoadingStepResult {
+                                commit_info_update: Some(CommitInfoResult {
+                                    pr_index: index,
+                                    merge_commit: commit_info,
+                                }),
+                                ..Default::default()
+                            },
+                        ))
+                        .await;
+
                     // Send progress update
                     let _ = tx
                         .send(LoadingProgressMessage::StepProgress(
@@ -1404,12 +1423,9 @@ impl ModeState for DataLoadingState {
                     return StateChange::Exit;
                 }
             }
-            LoadingState::Complete { step_data } => {
-                // Apply dependency graph if available
-                if let Some(graph) = &step_data.dependency_graph {
-                    app.set_dependency_graph(graph.clone());
-                }
-                // Automatically transition to PR selection
+            LoadingState::Complete { .. } => {
+                // All data has been applied to app in handle_progress_message.
+                // Automatically transition to PR selection.
                 return StateChange::Change(MergeState::PullRequestSelection(
                     PullRequestSelectionState::new(),
                 ));
@@ -1525,6 +1541,7 @@ mod tests {
                 error,
                 message,
                 progress: Some(progress),
+                step_data: Some(LoadingStepData::default()),
             },
             receiver: None,
             has_local_repo: Some(has_local_repo),
@@ -2438,5 +2455,187 @@ mod tests {
         // Complete step
         progress.complete_step(LoadingStep::FetchPullRequests);
         assert_eq!(progress.steps()[0].1, StepStatus::Completed);
+    }
+
+    fn make_test_pr(id: i32) -> PullRequestWithWorkItems {
+        PullRequestWithWorkItems {
+            pr: crate::models::PullRequest {
+                id,
+                title: format!("Test PR #{}", id),
+                closed_date: None,
+                created_by: crate::models::CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: None,
+                labels: None,
+            },
+            work_items: Vec::new(),
+            selected: false,
+        }
+    }
+
+    /// # LoadingStepData - Merge Result with PRs
+    ///
+    /// Tests that merge_result correctly tracks PR count from fetched PRs.
+    ///
+    /// ## Expected Outcome
+    /// - total_prs and work_items_total set to PR list length
+    #[test]
+    fn test_step_data_merge_result_with_prs() {
+        let mut data = LoadingStepData::default();
+        let prs = vec![make_test_pr(1), make_test_pr(2)];
+
+        let result = LoadingStepResult {
+            prs: Some(prs),
+            ..Default::default()
+        };
+        data.merge_result(&result);
+
+        assert_eq!(data.total_prs, 2);
+        assert_eq!(data.work_items_total, 2);
+    }
+
+    /// # LoadingStepData - Merge Result with Work Items
+    ///
+    /// Tests that merge_result correctly increments work_items_fetched.
+    #[test]
+    fn test_step_data_merge_result_with_work_items() {
+        let mut data = LoadingStepData::default();
+
+        let result = LoadingStepResult {
+            work_items_update: Some(WorkItemsResult {
+                pr_index: 0,
+                work_items: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        data.merge_result(&result);
+        assert_eq!(data.work_items_fetched, 1);
+
+        // Second merge increments
+        data.merge_result(&result);
+        assert_eq!(data.work_items_fetched, 2);
+    }
+
+    /// # LoadingStepData - Merge Result with Commit Info
+    ///
+    /// Tests that merge_result correctly increments commits_fetched.
+    #[test]
+    fn test_step_data_merge_result_with_commit_info() {
+        let mut data = LoadingStepData::default();
+
+        let result = LoadingStepResult {
+            commit_info_update: Some(CommitInfoResult {
+                pr_index: 0,
+                merge_commit: crate::models::MergeCommit {
+                    commit_id: "abc123".to_string(),
+                },
+            }),
+            ..Default::default()
+        };
+        data.merge_result(&result);
+        assert_eq!(data.commits_fetched, 1);
+    }
+
+    /// # LoadingStepData - Merge Result with Dependency Graph
+    ///
+    /// Tests that merge_result correctly stores the dependency graph.
+    #[test]
+    fn test_step_data_merge_result_with_dependency_graph() {
+        let mut data = LoadingStepData::default();
+        assert!(data.dependency_graph.is_none());
+
+        let graph = PRDependencyGraph {
+            nodes: std::collections::HashMap::new(),
+            topological_order: Vec::new(),
+        };
+        let result = LoadingStepResult {
+            dependency_graph: Some(graph),
+            ..Default::default()
+        };
+        data.merge_result(&result);
+        assert!(data.dependency_graph.is_some());
+    }
+
+    /// # Skip Current Step - Preserves Accumulated Data
+    ///
+    /// Tests that skipping preserves previously accumulated step data.
+    ///
+    /// ## Test Scenario
+    /// - Error occurs at AnalyzeDependencies step with accumulated data
+    /// - Skip the step
+    ///
+    /// ## Expected Outcome
+    /// - Transitions to Complete state
+    /// - Accumulated step data (total_prs) is preserved
+    #[test]
+    fn test_skip_current_step_preserves_data() {
+        let mut progress = LoadingProgress::new(true);
+        progress.start_step(LoadingStep::FetchPullRequests);
+        progress.complete_step(LoadingStep::FetchPullRequests);
+        progress.start_step(LoadingStep::FetchWorkItems);
+        progress.complete_step(LoadingStep::FetchWorkItems);
+        progress.start_step(LoadingStep::FetchCommitInfo);
+        progress.complete_step(LoadingStep::FetchCommitInfo);
+        progress.start_step(LoadingStep::AnalyzeDependencies);
+
+        let accumulated_data = LoadingStepData {
+            total_prs: 5,
+            work_items_fetched: 5,
+            work_items_total: 5,
+            commits_fetched: 3,
+            dependency_graph: None,
+        };
+
+        let error = LoadingError::LocalRepoNotFound("/path/to/repo".to_string());
+        let message = error.message();
+        let mut state = DataLoadingState {
+            state: LoadingState::Error {
+                error,
+                message,
+                progress: Some(progress),
+                step_data: Some(accumulated_data),
+            },
+            receiver: None,
+            has_local_repo: Some(true),
+        };
+
+        state.skip_current_step();
+
+        // Should be in Complete state with preserved data
+        if let LoadingState::Complete { step_data } = &state.state {
+            assert_eq!(step_data.total_prs, 5);
+            assert_eq!(step_data.work_items_fetched, 5);
+            assert_eq!(step_data.commits_fetched, 3);
+        } else {
+            panic!("Expected Complete state after skip");
+        }
+    }
+
+    /// # Skip Current Step - Only Skips AnalyzeDependencies
+    ///
+    /// Tests that skip only works when the current step is AnalyzeDependencies.
+    #[test]
+    fn test_skip_current_step_only_for_deps() {
+        let mut progress = LoadingProgress::new(true);
+        progress.start_step(LoadingStep::FetchPullRequests);
+
+        let error = LoadingError::ApiError("test".to_string());
+        let message = error.message();
+        let mut state = DataLoadingState {
+            state: LoadingState::Error {
+                error,
+                message,
+                progress: Some(progress),
+                step_data: Some(LoadingStepData::default()),
+            },
+            receiver: None,
+            has_local_repo: Some(true),
+        };
+
+        state.skip_current_step();
+
+        // Should still be in Error state (skip only works for AnalyzeDependencies)
+        assert!(matches!(state.state, LoadingState::Error { .. }));
     }
 }
