@@ -2552,18 +2552,20 @@ mod tests {
         }
     }
 
-    /// # Merge Run Subcommand with Positional Path
+    /// # Merge Run with Path After Subcommand
     ///
-    /// Tests that positional path argument works for `merge run` subcommand.
+    /// Tests `mergers merge run -n --version v1.0 /path/to/repo` where the
+    /// positional path appears after the `run` subcommand.
     ///
     /// ## Test Scenario
-    /// - Parses `merge run -n --version v1.0 /path/to/repo`
-    /// - Verifies the path is captured in MergeRunArgs.shared.path
+    /// - Path is placed after `run` subcommand and flags
+    /// - This is the most natural invocation for non-interactive mode
     ///
     /// ## Expected Outcome
-    /// - MergeRunArgs.shared.path should contain the positional path
+    /// - Path is captured in MergeRunArgs.shared.path (inner)
+    /// - MergeArgs.shared.path (outer) is None
     #[test]
-    fn test_merge_run_with_positional_path() {
+    fn test_merge_run_path_after_subcommand() {
         let args = Args::parse_from([
             "mergers",
             "merge",
@@ -2583,16 +2585,416 @@ mod tests {
         ]);
 
         if let Some(Commands::Merge(merge_args)) = args.command {
-            // Check if the path is captured in the outer MergeArgs
-            println!("MergeArgs.shared.path = {:?}", merge_args.shared.path);
+            assert_eq!(
+                merge_args.shared.path, None,
+                "Outer MergeArgs.shared.path should be None when path is after `run`"
+            );
 
             if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
-                // This is what the non-interactive mode uses
-                println!("MergeRunArgs.shared.path = {:?}", run_args.shared.path);
                 assert_eq!(
                     run_args.shared.path,
                     Some("/path/to/repo".to_string()),
-                    "Expected MergeRunArgs.shared.path to contain the positional path"
+                    "Inner MergeRunArgs.shared.path should capture the positional path"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Run with Path Before Subcommand
+    ///
+    /// Tests `mergers merge /path/to/repo run -n --version v1.0` where the
+    /// positional path appears between `merge` and `run`.
+    ///
+    /// ## Test Scenario
+    /// - Path is placed between `merge` and `run` subcommands
+    /// - Path is captured by the outer MergeArgs, not the inner MergeRunArgs
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in MergeArgs.shared.path (outer)
+    /// - MergeRunArgs.shared.path (inner) is None
+    /// - The effective path should still be available to non-interactive mode
+    #[test]
+    fn test_merge_run_path_before_subcommand() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "/path/to/repo",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            // Path goes to the OUTER MergeArgs when placed before `run`
+            assert_eq!(
+                merge_args.shared.path,
+                Some("/path/to/repo".to_string()),
+                "Outer MergeArgs.shared.path should capture the path placed before `run`"
+            );
+
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                // Inner MergeRunArgs does NOT get the path
+                assert_eq!(
+                    run_args.shared.path, None,
+                    "Inner MergeRunArgs.shared.path should be None when path is before `run`"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Run with --local-repo Flag
+    ///
+    /// Tests `mergers merge run -n --version v1.0 --local-repo /path/to/repo`
+    /// using the explicit flag instead of positional argument.
+    ///
+    /// ## Test Scenario
+    /// - Uses --local-repo flag instead of positional path
+    /// - Flag should be captured in MergeRunArgs.shared.local_repo
+    ///
+    /// ## Expected Outcome
+    /// - local_repo is set, path is None
+    /// - Non-interactive mode should use local_repo
+    #[test]
+    fn test_merge_run_with_local_repo_flag() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                assert_eq!(
+                    run_args.shared.path, None,
+                    "Positional path should be None when using --local-repo flag"
+                );
+                assert_eq!(
+                    run_args.shared.local_repo,
+                    Some("/path/to/repo".to_string()),
+                    "--local-repo flag should be captured"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Run with --since Parameter
+    ///
+    /// Tests that --since is correctly parsed in `merge run` non-interactive mode.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge run -n --version v1.0 --since 6mo`
+    /// - Verifies --since is captured in MergeRunArgs.shared.since
+    ///
+    /// ## Expected Outcome
+    /// - since parameter is correctly parsed and available
+    #[test]
+    fn test_merge_run_with_since_parameter() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--since",
+            "6mo",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                assert_eq!(
+                    run_args.shared.since,
+                    Some("6mo".to_string()),
+                    "--since should be captured in MergeRunArgs"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Run with All Non-Interactive Parameters
+    ///
+    /// Tests that all parameters specific to non-interactive mode are parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge run with every possible parameter set
+    /// - Verifies each parameter is correctly captured
+    ///
+    /// ## Expected Outcome
+    /// - All parameters are correctly parsed and available
+    #[test]
+    fn test_merge_run_all_parameters() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v2.0.0",
+            "--organization",
+            "my-org",
+            "--project",
+            "my-project",
+            "--repository",
+            "my-repo",
+            "--pat",
+            "secret-token",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release",
+            "--tag-prefix",
+            "released-",
+            "--work-item-state",
+            "Done",
+            "--select-by-state",
+            "Ready for Next",
+            "--since",
+            "2w",
+            "--max-concurrent-network",
+            "50",
+            "--max-concurrent-processing",
+            "5",
+            "--run-hooks",
+            "--output",
+            "json",
+            "--quiet",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                assert_eq!(run_args.shared.path, Some("/path/to/repo".to_string()));
+                assert_eq!(run_args.shared.organization, Some("my-org".to_string()));
+                assert_eq!(run_args.shared.project, Some("my-project".to_string()));
+                assert_eq!(run_args.shared.repository, Some("my-repo".to_string()));
+                assert_eq!(run_args.shared.pat, Some("secret-token".to_string()));
+                assert_eq!(run_args.shared.dev_branch, Some("develop".to_string()));
+                assert_eq!(run_args.shared.target_branch, Some("release".to_string()));
+                assert_eq!(run_args.shared.tag_prefix, Some("released-".to_string()));
+                assert_eq!(run_args.shared.since, Some("2w".to_string()));
+                assert_eq!(run_args.shared.max_concurrent_network, Some(50));
+                assert_eq!(run_args.shared.max_concurrent_processing, Some(5));
+                assert_eq!(run_args.work_item_state, Some("Done".to_string()));
+                assert_eq!(run_args.select_by_state, Some("Ready for Next".to_string()));
+                assert_eq!(run_args.version, Some("v2.0.0".to_string()));
+                assert!(run_args.non_interactive);
+                assert!(run_args.run_hooks);
+                assert!(run_args.quiet);
+                assert_eq!(run_args.output, OutputFormat::Json);
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Shorthand Non-Interactive Flag is Unavailable Without Subcommand
+    ///
+    /// Tests that `mergers /path -n --since 6mo` fails because `-n` is only
+    /// defined on MergeRunArgs (the `run` subcommand), not on MergeArgs.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse args with -n but without the `run` subcommand
+    /// - This goes through MergeArgsParser fallback which uses MergeArgs
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because -n is not a valid flag on MergeArgs
+    /// - Users must use `mergers merge run -n` for non-interactive mode
+    #[test]
+    fn test_shorthand_non_interactive_flag_requires_run_subcommand() {
+        // MergeArgsParser wraps MergeArgs which does NOT have -n flag
+        let result = MergeArgsParser::try_parse_from([
+            "mergers",
+            "/path/to/repo",
+            "-n",
+            "--since",
+            "6mo",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(
+            result.is_err(),
+            "Should fail: -n flag is only available on `merge run` subcommand, not on top-level MergeArgs"
+        );
+    }
+
+    /// # Merge Run Effective Path from Both Positions
+    ///
+    /// Tests MergeRunArgs::effective_path() which resolves the path from either
+    /// the inner positional arg or the --local-repo flag.
+    ///
+    /// ## Test Scenario
+    /// - Tests positional path takes precedence over --local-repo
+    /// - Tests --local-repo works when positional is absent
+    /// - Tests None when neither is provided
+    ///
+    /// ## Expected Outcome
+    /// - Positional path takes precedence
+    /// - Falls back to --local-repo
+    /// - Returns None when neither is set
+    #[test]
+    fn test_merge_run_effective_path_precedence() {
+        // Case 1: Both positional and --local-repo set → positional wins
+        let args_both = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/from/flag",
+            "/from/positional",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_both.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                let effective = run_args
+                    .shared
+                    .path
+                    .as_ref()
+                    .or(run_args.shared.local_repo.as_ref());
+                assert_eq!(
+                    effective,
+                    Some(&"/from/positional".to_string()),
+                    "Positional path should take precedence over --local-repo"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+
+        // Case 2: Only --local-repo → flag is used
+        let args_flag_only = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/from/flag",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_flag_only.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                let effective = run_args
+                    .shared
+                    .path
+                    .as_ref()
+                    .or(run_args.shared.local_repo.as_ref());
+                assert_eq!(
+                    effective,
+                    Some(&"/from/flag".to_string()),
+                    "--local-repo should be used when positional is absent"
+                );
+            } else {
+                panic!("Expected Run subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+
+        // Case 3: Neither → None
+        let args_none = Args::parse_from([
+            "mergers",
+            "merge",
+            "run",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_none.command {
+            if let Some(MergeSubcommand::Run(run_args)) = merge_args.subcommand {
+                let effective = run_args
+                    .shared
+                    .path
+                    .as_ref()
+                    .or(run_args.shared.local_repo.as_ref());
+                assert_eq!(
+                    effective, None,
+                    "Should be None when neither positional nor --local-repo is set"
                 );
             } else {
                 panic!("Expected Run subcommand");
