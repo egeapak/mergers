@@ -205,7 +205,7 @@ The tool supports a non-interactive mode designed for CI/CD pipelines and AI age
 
 **Start a new merge:**
 ```bash
-mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next"
+mergers merge -n --version v1.0.0 --select-by-state "Ready for Next"
 ```
 
 **Check status:**

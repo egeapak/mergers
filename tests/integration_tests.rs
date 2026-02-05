@@ -4,8 +4,8 @@
 //! end-to-end functionality.
 
 use mergers::{
-    AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs, SharedArgs,
-    parsed_property::ParsedProperty,
+    AppConfig, Args, AzureDevOpsClient, Commands, Config, MergeArgs, MigrateArgs,
+    NonInteractiveArgs, SharedArgs, parsed_property::ParsedProperty,
 };
 use serial_test::file_serial;
 use std::fs;
@@ -603,6 +603,7 @@ fn test_args_cli_precedence() {
                 log_file: None,
                 log_format: None,
             },
+            ni: NonInteractiveArgs::default(),
             work_item_state: None,
             run_hooks: false,
             subcommand: None,
