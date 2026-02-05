@@ -21,6 +21,19 @@ use tempfile::TempDir;
 
 use crate::error::GitError;
 
+/// Creates a git command with non-interactive settings.
+///
+/// This helper ensures git operations don't hang waiting for user input
+/// by setting `GIT_TERMINAL_PROMPT=0`, which causes git to fail immediately
+/// when credentials are needed instead of waiting for interactive input.
+///
+/// This is critical for non-interactive contexts like CI/CD pipelines.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
 /// Trait for abstracting git operations.
 ///
 /// This trait allows for mocking git operations in tests and potentially
@@ -203,10 +216,15 @@ pub fn shallow_clone_repo(
     target_branch: &str,
     run_hooks: bool,
 ) -> Result<(PathBuf, TempDir)> {
+    tracing::info!("Cloning repository: {} -> temporary directory", ssh_url);
+    tracing::debug!("Clone args: depth=1, branch={}", target_branch);
+
     let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
     let repo_path = temp_dir.path().to_path_buf();
 
-    let output = Command::new("git")
+    tracing::debug!("Repository will be cloned to: {}", repo_path.display());
+
+    let output = git_command()
         .args([
             "clone",
             "--depth",
@@ -221,22 +239,18 @@ pub fn shallow_clone_repo(
         .output()
         .context("Failed to clone repository")?;
 
+    tracing::debug!("Git clone completed with status: {}", output.status);
+
     if !output.status.success() {
-        anyhow::bail!(
-            "Git clone failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!("Git clone failed. stderr: {}", stderr);
+        anyhow::bail!("Git clone failed: {}", stderr);
     }
 
-    // Disable hooks to prevent commit hook failures during cherry-pick operations
-    // unless --run-hooks is specified
-    if !run_hooks {
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["config", "core.hooksPath", "/dev/null"])
-            .output()
-            .context("Failed to configure hooks path")?;
-    }
+    tracing::info!("Repository cloned successfully");
+
+    // Note: Hook configuration is now handled by the ConfigureRepository wizard step
+    let _ = run_hooks; // Acknowledge parameter (used by wizard step)
 
     Ok((repo_path, temp_dir))
 }
@@ -250,28 +264,17 @@ pub fn create_worktree(
     let worktree_name = format!("next-{}", version);
     let worktree_path = base_repo_path.join(&worktree_name);
 
-    // Check if worktree already exists
-    let list_output = Command::new("git")
-        .current_dir(base_repo_path)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .map_err(|e| RepositorySetupError::Other(format!("Failed to list worktrees: {}", e)))?;
+    tracing::info!(
+        "Creating worktree at {} for origin/{}",
+        worktree_path.display(),
+        target_branch
+    );
 
-    if !list_output.status.success() {
-        return Err(RepositorySetupError::Other(format!(
-            "Failed to list worktrees: {}",
-            String::from_utf8_lossy(&list_output.stderr)
-        )));
-    }
+    // Note: Worktree existence is checked earlier in CheckPrerequisites step
+    // This function assumes the worktree does not exist
 
-    let worktree_list = String::from_utf8_lossy(&list_output.stdout);
-    if worktree_list.contains(&worktree_name) || worktree_path.exists() {
-        return Err(RepositorySetupError::WorktreeExists(
-            worktree_path.display().to_string(),
-        ));
-    }
-
-    let fetch_output = Command::new("git")
+    tracing::debug!("Fetching origin/{}", target_branch);
+    let fetch_output = git_command()
         .current_dir(base_repo_path)
         .args(["fetch", "origin", target_branch])
         .output()
@@ -279,14 +282,19 @@ pub fn create_worktree(
             RepositorySetupError::Other(format!("Failed to fetch target branch: {}", e))
         })?;
 
+    tracing::debug!("Git fetch completed with status: {}", fetch_output.status);
+
     if !fetch_output.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch_output.stderr);
+        tracing::error!("Git fetch failed. stderr: {}", stderr);
         return Err(RepositorySetupError::Other(format!(
             "Failed to fetch target branch: {}",
-            String::from_utf8_lossy(&fetch_output.stderr)
+            stderr
         )));
     }
 
-    let create_output = Command::new("git")
+    tracing::debug!("Creating worktree from origin/{}", target_branch);
+    let create_output = git_command()
         .current_dir(base_repo_path)
         .args([
             "worktree",
@@ -297,8 +305,15 @@ pub fn create_worktree(
         .output()
         .map_err(|e| RepositorySetupError::Other(format!("Failed to create worktree: {}", e)))?;
 
+    tracing::debug!(
+        "Git worktree add completed with status: {}",
+        create_output.status
+    );
+
     if !create_output.status.success() {
         let stderr = String::from_utf8_lossy(&create_output.stderr);
+        tracing::error!("Git worktree add failed. stderr: {}", stderr);
+
         if stderr.contains("already exists")
             || stderr.contains("already checked out")
             || stderr.contains("is already checked out")
@@ -323,30 +338,82 @@ pub fn create_worktree(
         )));
     }
 
-    // Disable hooks to prevent commit hook failures during cherry-pick operations
-    // unless --run-hooks is specified
-    if !run_hooks {
-        let config_output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "core.hooksPath", "/dev/null"])
-            .output()
-            .map_err(|e| {
-                // Clean up the worktree we just created before returning error
-                let _ = force_remove_worktree(base_repo_path, version);
-                RepositorySetupError::Other(format!("Failed to configure hooks path: {}", e))
-            })?;
+    tracing::info!(
+        "Worktree created successfully at {}",
+        worktree_path.display()
+    );
 
-        if !config_output.status.success() {
-            // Clean up the worktree we just created before returning error
-            let _ = force_remove_worktree(base_repo_path, version);
-            return Err(RepositorySetupError::Other(format!(
-                "Failed to configure hooks path: {}",
-                String::from_utf8_lossy(&config_output.stderr)
-            )));
-        }
-    }
+    // Note: Hook configuration is now handled by the ConfigureRepository wizard step
+    let _ = run_hooks; // Acknowledge parameter (used by wizard step)
 
     Ok(worktree_path)
+}
+
+/// Check if a worktree with the given version already exists.
+///
+/// This checks both the filesystem and git's worktree list to detect
+/// existing worktrees that might conflict with a new one.
+///
+/// # Arguments
+///
+/// * `base_repo_path` - Path to the base repository
+/// * `version` - Version string used to construct the worktree name (`next-{version}`)
+///
+/// # Returns
+///
+/// * `Ok(true)` if a worktree with this version exists
+/// * `Ok(false)` if no such worktree exists
+/// * `Err` if the check could not be performed
+#[must_use = "this returns whether the worktree exists"]
+pub fn worktree_exists(base_repo_path: &Path, version: &str) -> Result<bool> {
+    let worktree_name = format!("next-{}", version);
+    let worktree_path = base_repo_path.join(&worktree_name);
+
+    // Check if directory exists on disk
+    if worktree_path.exists() {
+        return Ok(true);
+    }
+
+    // Check git's worktree list
+    let list_output = Command::new("git")
+        .current_dir(base_repo_path)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .context("Failed to list worktrees")?;
+
+    if !list_output.status.success() {
+        return Ok(false);
+    }
+
+    let worktree_list = String::from_utf8_lossy(&list_output.stdout);
+    Ok(worktree_list.contains(&worktree_name))
+}
+
+/// Check if a local branch with the given name already exists.
+///
+/// # Arguments
+///
+/// * `repo_path` - Path to the repository
+/// * `branch_name` - Full branch name to check (e.g., `patch/main-v1.0.0`)
+///
+/// # Returns
+///
+/// * `Ok(true)` if the branch exists
+/// * `Ok(false)` if the branch does not exist
+/// * `Err` if the check could not be performed
+#[must_use = "this returns whether the branch exists"]
+pub fn branch_exists(repo_path: &Path, branch_name: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(repo_path)
+        .args([
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{}", branch_name),
+        ])
+        .output()
+        .context("Failed to check branch existence")?;
+
+    Ok(output.status.success())
 }
 
 #[must_use = "this operation can fail and the result should be checked"]
@@ -2139,123 +2206,20 @@ mod tests {
         assert_eq!(worktree_path.file_name().unwrap(), "next-1.0.0");
     }
 
-    /// # Create Worktree Hooks Disabled by Default
+    // Note: Hook configuration tests have been moved to setup_repo.rs
+    // as hook configuration is now handled by the ConfigureRepository wizard step
+
+    /// # Worktree Exists Detects Directory Conflict
     ///
-    /// Tests that git hooks are disabled when run_hooks=false (default).
-    ///
-    /// ## Test Scenario
-    /// - Creates a worktree with run_hooks=false
-    /// - Verifies that core.hooksPath is set to /dev/null
-    ///
-    /// ## Expected Outcome
-    /// - The worktree has hooks disabled via core.hooksPath=/dev/null
-    #[test]
-    fn test_create_worktree_hooks_disabled_by_default() {
-        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
-
-        // Create target branch
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "-b", "target-branch"])
-            .output()
-            .unwrap();
-
-        create_commit_with_message(&repo_path, "Target branch commit");
-
-        // Push the target branch to origin
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["push", "origin", "target-branch"])
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "main"])
-            .output()
-            .unwrap();
-
-        // Create worktree with hooks disabled (default)
-        let worktree_path = create_worktree(&repo_path, "target-branch", "1.0.0", false).unwrap();
-
-        // Verify hooks are disabled
-        let output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "--get", "core.hooksPath"])
-            .output()
-            .unwrap();
-
-        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert_eq!(
-            hooks_path, "/dev/null",
-            "Hooks should be disabled by default"
-        );
-    }
-
-    /// # Create Worktree Hooks Enabled with run_hooks Flag
-    ///
-    /// Tests that git hooks are NOT disabled when run_hooks=true.
+    /// Tests that worktree_exists detects when a directory already exists at the worktree path.
     ///
     /// ## Test Scenario
-    /// - Creates a worktree with run_hooks=true
-    /// - Verifies that core.hooksPath is NOT set to /dev/null
+    /// - Creates a directory at the worktree path manually
+    /// - Verifies worktree_exists detects this as a conflict
     ///
     /// ## Expected Outcome
-    /// - The worktree does NOT have core.hooksPath set to /dev/null
-    #[test]
-    fn test_create_worktree_hooks_enabled_with_flag() {
-        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
-
-        // Create target branch
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "-b", "target-branch"])
-            .output()
-            .unwrap();
-
-        create_commit_with_message(&repo_path, "Target branch commit");
-
-        // Push the target branch to origin
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["push", "origin", "target-branch"])
-            .output()
-            .unwrap();
-
-        Command::new("git")
-            .current_dir(&repo_path)
-            .args(["checkout", "main"])
-            .output()
-            .unwrap();
-
-        // Create worktree with hooks enabled
-        let worktree_path = create_worktree(&repo_path, "target-branch", "2.0.0", true).unwrap();
-
-        // Verify hooks are NOT disabled
-        let output = Command::new("git")
-            .current_dir(&worktree_path)
-            .args(["config", "--get", "core.hooksPath"])
-            .output()
-            .unwrap();
-
-        let hooks_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        assert!(
-            hooks_path.is_empty() || hooks_path != "/dev/null",
-            "Hooks should NOT be disabled when run_hooks=true"
-        );
-    }
-
-    /// # Create Worktree Branch Exists
-    ///
-    /// Tests worktree creation when the target branch already exists.
-    ///
-    /// ## Test Scenario
-    /// - Attempts to create worktree for an existing branch
-    /// - Tests error handling for branch name conflicts
-    ///
-    /// ## Expected Outcome
-    /// - System handles existing branch names gracefully
-    /// - Appropriate error or alternative solution is provided
+    /// - worktree_exists returns true when directory exists
+    /// - This check prevents create_worktree from being called with conflicting path
     #[test]
     fn test_create_worktree_branch_exists() {
         let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
@@ -2286,15 +2250,14 @@ mod tests {
             .output()
             .unwrap();
 
-        // This should fail because worktree path already exists
-        let result = create_worktree(&repo_path, "target-branch", "1.0.0", false);
-        assert!(result.is_err());
-
-        if let Err(RepositorySetupError::WorktreeExists(path)) = result {
-            assert!(path.contains("next-1.0.0"));
-        } else {
-            panic!("Expected WorktreeExists error, got: {:?}", result);
-        }
+        // worktree_exists should detect this path conflict
+        // In production, this check happens in CheckPrerequisites step
+        // before create_worktree is called
+        let exists = worktree_exists(&repo_path, "1.0.0").unwrap();
+        assert!(
+            exists,
+            "worktree_exists should detect existing directory at worktree path"
+        );
     }
 
     /// # Create Worktree with Existing Branch Name
@@ -2452,17 +2415,17 @@ mod tests {
         }
     }
 
-    /// # Create Worktree Path Exists
+    /// # Create Worktree Path Exists - Detection via worktree_exists
     ///
-    /// Tests worktree creation when the target path already exists.
+    /// Tests that worktree_exists properly detects when the target path already exists.
     ///
     /// ## Test Scenario
-    /// - Attempts to create worktree at an existing filesystem path
-    /// - Tests path conflict detection and resolution
+    /// - Creates a directory at the worktree path manually
+    /// - Verifies worktree_exists detects this as an existing worktree
     ///
     /// ## Expected Outcome
-    /// - Path conflicts are detected and handled appropriately
-    /// - Error handling prevents overwriting existing paths
+    /// - worktree_exists returns true when the worktree directory exists
+    /// - This check should be performed before calling create_worktree (in CheckPrerequisites)
     #[test]
     fn test_create_worktree_path_exists() {
         let (_temp_dir, repo_path) = setup_test_repo();
@@ -2486,15 +2449,11 @@ mod tests {
         let worktree_path = repo_path.join("next-1.0.0");
         std::fs::create_dir(&worktree_path).unwrap();
 
-        // This should fail because path already exists
-        let result = create_worktree(&repo_path, "target-branch", "1.0.0", false);
-        assert!(result.is_err());
-
-        if let Err(RepositorySetupError::WorktreeExists(_)) = result {
-            // Expected error
-        } else {
-            panic!("Expected WorktreeExists error");
-        }
+        // worktree_exists should detect this path conflict
+        // Note: In production, this check happens in CheckPrerequisites step
+        // before create_worktree is called
+        let exists = worktree_exists(&repo_path, "1.0.0").unwrap();
+        assert!(exists, "worktree_exists should detect existing directory");
     }
 
     /// # Force Remove Worktree Non-Existent
@@ -4407,5 +4366,209 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// # Worktree Exists - Returns False When Not Present
+    ///
+    /// Tests that worktree_exists returns false when no worktree exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository with no worktrees
+    /// - Checks for a worktree that doesn't exist
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok(false) when worktree doesn't exist
+    #[test]
+    fn test_worktree_exists_returns_false_when_not_present() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Check for non-existent worktree
+        let result = worktree_exists(&repo_path, "v1.0.0");
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "Should return false for non-existent worktree"
+        );
+    }
+
+    /// # Worktree Exists - Returns True When Directory Exists
+    ///
+    /// Tests that worktree_exists returns true when the worktree directory exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository
+    /// - Manually creates a directory that would be the worktree path
+    /// - Checks for worktree existence
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok(true) when worktree directory exists on disk
+    #[test]
+    fn test_worktree_exists_returns_true_when_directory_exists() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create the worktree directory manually
+        let worktree_path = repo_path.join("next-v1.0.0");
+        std::fs::create_dir(&worktree_path).unwrap();
+
+        // Check for worktree
+        let result = worktree_exists(&repo_path, "v1.0.0");
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap(),
+            "Should return true when worktree directory exists"
+        );
+    }
+
+    /// # Worktree Exists - Returns True When Git Worktree Exists
+    ///
+    /// Tests that worktree_exists returns true when a git worktree is registered.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository with origin
+    /// - Creates an actual git worktree
+    /// - Checks for worktree existence
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok(true) when worktree is registered in git
+    #[test]
+    fn test_worktree_exists_returns_true_when_git_worktree_exists() {
+        let (_test_dir, repo_path, _origin_dir, _origin_path) = setup_test_repo_with_origin();
+
+        // Create target branch
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "-b", "target-branch"])
+            .output()
+            .unwrap();
+
+        create_commit_with_message(&repo_path, "Target branch commit");
+
+        // Push to origin
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["push", "-u", "origin", "target-branch"])
+            .output()
+            .unwrap();
+
+        // Go back to main
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["checkout", "main"])
+            .output()
+            .unwrap();
+
+        // Create actual worktree
+        let worktree_result = create_worktree(&repo_path, "target-branch", "v1.0.0", false);
+        assert!(worktree_result.is_ok());
+
+        // Check for worktree
+        let result = worktree_exists(&repo_path, "v1.0.0");
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap(),
+            "Should return true for existing git worktree"
+        );
+    }
+
+    /// # Branch Exists - Returns False When Not Present
+    ///
+    /// Tests that branch_exists returns false when no branch exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository
+    /// - Checks for a branch that doesn't exist
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok(false) when branch doesn't exist
+    #[test]
+    fn test_branch_exists_returns_false_when_not_present() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Check for non-existent branch
+        let result = branch_exists(&repo_path, "patch/main-v1.0.0");
+        assert!(result.is_ok());
+        assert!(
+            !result.unwrap(),
+            "Should return false for non-existent branch"
+        );
+    }
+
+    /// # Branch Exists - Returns True When Branch Exists
+    ///
+    /// Tests that branch_exists returns true when the branch exists.
+    ///
+    /// ## Test Scenario
+    /// - Creates a test repository
+    /// - Creates a branch with the expected name pattern
+    /// - Checks for branch existence
+    ///
+    /// ## Expected Outcome
+    /// - Returns Ok(true) when branch exists
+    #[test]
+    fn test_branch_exists_returns_true_when_branch_exists() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create branch with patch naming pattern
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["branch", "patch/main-v1.0.0"])
+            .output()
+            .unwrap();
+
+        // Check for branch
+        let result = branch_exists(&repo_path, "patch/main-v1.0.0");
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "Should return true for existing branch");
+    }
+
+    /// # Branch Exists - Works With Slashes In Name
+    ///
+    /// Tests that branch_exists correctly handles branch names with slashes.
+    ///
+    /// ## Test Scenario
+    /// - Creates branches with various slash patterns
+    /// - Verifies they are correctly detected
+    ///
+    /// ## Expected Outcome
+    /// - Branches with slashes are correctly detected
+    #[test]
+    fn test_branch_exists_handles_slashes_in_name() {
+        let (_temp_dir, repo_path) = setup_test_repo();
+
+        // Create initial commit
+        create_commit_with_message(&repo_path, "Initial commit");
+
+        // Create branches with various naming patterns
+        for branch in &[
+            "patch/production-v1.0.0",
+            "patch/release/v2.0.0-beta",
+            "feature/deep/nested/branch",
+        ] {
+            Command::new("git")
+                .current_dir(&repo_path)
+                .args(["branch", branch])
+                .output()
+                .unwrap();
+        }
+
+        // Verify each branch is detected
+        assert!(branch_exists(&repo_path, "patch/production-v1.0.0").unwrap());
+        assert!(branch_exists(&repo_path, "patch/release/v2.0.0-beta").unwrap());
+        assert!(branch_exists(&repo_path, "feature/deep/nested/branch").unwrap());
+
+        // Verify non-existent branches are not detected
+        assert!(!branch_exists(&repo_path, "patch/nonexistent-v1.0.0").unwrap());
     }
 }

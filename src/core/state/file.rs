@@ -733,6 +733,7 @@ pub fn lock_path_for_repo(repo_path: &Path) -> Result<PathBuf> {
 ///
 /// The lock is automatically released when the guard is dropped.
 /// Uses a simple PID-based locking mechanism with stale lock detection.
+#[derive(Debug)]
 pub struct LockGuard {
     path: PathBuf,
 }

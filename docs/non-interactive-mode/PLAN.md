@@ -82,7 +82,7 @@ Core operations should work with `MergeConfig` directly for type safety.
 │                           CLI Entry Point                                    │
 │                        (src/bin/mergers.rs)                                  │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  merge run           │  merge continue  │  merge abort  │  merge complete   │
+│  merge -n            │  merge continue  │  merge abort  │  merge complete   │
 │  --non-interactive   │                  │               │  --next-state     │
 │  --version           │                  │               │                   │
 │  --select-by-state   │                  │               │                   │
@@ -135,8 +135,7 @@ Core operations should work with `MergeConfig` directly for type safety.
 
 ```
 mergers merge                                    # Interactive TUI (default)
-mergers merge run [OPTIONS]                      # Start new merge (explicit)
-mergers merge run --non-interactive [OPTIONS]   # Non-interactive start
+mergers merge -n [OPTIONS]                       # Non-interactive start
 
 mergers merge continue [OPTIONS]                 # Continue after conflict
 mergers merge abort [OPTIONS]                    # Abort in-progress merge
@@ -146,11 +145,11 @@ mergers merge complete [OPTIONS]                 # Tag PRs and update work items
 
 ### Subcommand Arguments
 
-#### `merge run` (Start New Merge)
+#### `merge -n` (Start New Merge Non-Interactively)
 
 ```
 USAGE:
-    mergers merge run [OPTIONS]
+    mergers merge -n [OPTIONS]
 
 OPTIONS:
     --non-interactive, -n       Run without TUI (for CI/AI agents)
@@ -451,7 +450,7 @@ At any point:
 ```
    User/AI Agent                          mergers                    Repository
         │                                    │                           │
-        │  mergers merge run -n              │                           │
+        │  mergers merge -n                  │                           │
         │  --version v1.2.3                  │                           │
         │  --select-by-state "Ready"         │                           │
         │ ──────────────────────────────────►│                           │
@@ -620,7 +619,7 @@ Interactive mode will also use state files:
 
 **Key deliverables:**
 - [ ] Add subcommand routing for merge mode
-- [ ] Handle `merge run` (interactive vs non-interactive)
+- [ ] Handle `merge -n` (non-interactive mode)
 - [ ] Handle `merge continue`
 - [ ] Handle `merge abort`
 - [ ] Handle `merge status`
@@ -712,7 +711,7 @@ dirs = "5.0"           # For XDG directories
 
 ```bash
 # === START NEW MERGE ===
-mergers merge run -n \
+mergers merge -n \
   --version v1.2.3 \
   --select-by-state "Ready for Next,Approved" \
   --output json

@@ -16,7 +16,7 @@ use mergers::{
     core::runner::{MergeRunnerConfig, NonInteractiveRunner, OutputFormat, RunResult},
     logging::{init_logging, parse_early_log_config},
     models::{
-        MergeAbortArgs, MergeCompleteArgs, MergeContinueArgs, MergeRunArgs, MergeStatusArgs,
+        MergeAbortArgs, MergeArgs, MergeCompleteArgs, MergeContinueArgs, MergeStatusArgs,
         MergeSubcommand,
     },
     parsed_property::ParsedProperty,
@@ -46,11 +46,6 @@ async fn main() -> Result<()> {
         Some(Commands::Merge(merge_args)) => {
             // Check for subcommand
             match &merge_args.subcommand {
-                Some(MergeSubcommand::Run(run_args)) if run_args.non_interactive => {
-                    // Non-interactive merge mode
-                    let result = run_non_interactive_merge(run_args).await;
-                    handle_run_result(result);
-                }
                 Some(MergeSubcommand::Continue(cont_args)) => {
                     let result = run_continue(cont_args).await;
                     handle_run_result(result);
@@ -67,7 +62,12 @@ async fn main() -> Result<()> {
                     let result = run_complete(complete_args).await;
                     handle_run_result(result);
                 }
-                // No subcommand, or Run without -n → TUI mode
+                // No subcommand with -n flag → non-interactive merge mode
+                None if merge_args.ni.non_interactive => {
+                    let result = run_non_interactive_merge(merge_args).await;
+                    handle_run_result(result);
+                }
+                // No subcommand and no -n → TUI mode
                 _ => {
                     run_interactive_tui(args).await?;
                 }
@@ -141,8 +141,8 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
 }
 
 /// Runs a non-interactive merge operation.
-async fn run_non_interactive_merge(args: &MergeRunArgs) -> RunResult {
-    let config = match build_runner_config_from_run_args(args) {
+async fn run_non_interactive_merge(args: &MergeArgs) -> RunResult {
+    let config = match build_runner_config_from_merge_args(args) {
         Ok(c) => c,
         Err(e) => {
             return RunResult::error(
@@ -226,8 +226,8 @@ async fn run_complete(args: &MergeCompleteArgs) -> RunResult {
         .await
 }
 
-/// Builds MergeRunnerConfig from MergeRunArgs with full config resolution.
-fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerConfig> {
+/// Builds MergeRunnerConfig from MergeArgs with full config resolution.
+fn build_runner_config_from_merge_args(args: &MergeArgs) -> Result<MergeRunnerConfig> {
     let shared = &args.shared;
 
     // Determine local_repo path (positional arg takes precedence over --local-repo flag)
@@ -348,9 +348,19 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         .unwrap_or_else(|| "Next Merged".to_string());
     let local_repo = merged.local_repo.map(|p| PathBuf::from(p.value().clone()));
     let run_hooks = merged.run_hooks.map(|p| *p.value()).unwrap_or(false);
+    let max_concurrent_network = merged
+        .max_concurrent_network
+        .map(|p| *p.value())
+        .unwrap_or(100);
+    let max_concurrent_processing = merged
+        .max_concurrent_processing
+        .map(|p| *p.value())
+        .unwrap_or(10);
+    let since = shared.since.clone();
 
     // Version is required for non-interactive mode
     let version = args
+        .ni
         .version
         .clone()
         .ok_or_else(|| anyhow::anyhow!("version is required for non-interactive mode"))?;
@@ -365,12 +375,15 @@ fn build_runner_config_from_run_args(args: &MergeRunArgs) -> Result<MergeRunnerC
         version,
         tag_prefix,
         work_item_state,
-        select_by_states: args.select_by_state.clone(),
+        select_by_states: args.ni.select_by_state.clone(),
         local_repo,
         run_hooks,
-        output_format: args.output,
-        quiet: args.quiet,
+        output_format: args.ni.output,
+        quiet: args.ni.quiet,
         hooks_config: merged.hooks,
+        max_concurrent_network,
+        max_concurrent_processing,
+        since,
     })
 }
 
@@ -415,6 +428,14 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         .unwrap_or_else(|| "Next Merged".to_string());
     let local_repo = merged.local_repo.map(|p| PathBuf::from(p.value().clone()));
     let run_hooks = merged.run_hooks.map(|p| *p.value()).unwrap_or(false);
+    let max_concurrent_network = merged
+        .max_concurrent_network
+        .map(|p| *p.value())
+        .unwrap_or(100);
+    let max_concurrent_processing = merged
+        .max_concurrent_processing
+        .map(|p| *p.value())
+        .unwrap_or(10);
 
     Ok(MergeRunnerConfig {
         organization,
@@ -432,5 +453,8 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         output_format: output,
         quiet,
         hooks_config: merged.hooks,
+        max_concurrent_network,
+        max_concurrent_processing,
+        since: None, // Not needed for continue/abort/status/complete
     })
 }

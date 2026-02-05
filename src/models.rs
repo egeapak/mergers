@@ -283,11 +283,39 @@ pub struct SharedArgs {
     pub log_format: Option<String>,
 }
 
+/// Arguments specific to non-interactive mode.
+/// Flattened into MergeArgs so these flags are available on `mergers merge` directly.
+#[derive(ClapArgs, Clone, Default, Debug)]
+pub struct NonInteractiveArgs {
+    /// Run in non-interactive mode (for CI/AI agents)
+    #[arg(short = 'n', long, help_heading = "Non-Interactive Mode")]
+    pub non_interactive: bool,
+
+    /// Merge branch version (required with --non-interactive)
+    #[arg(long, help_heading = "Non-Interactive Mode")]
+    pub version: Option<String>,
+
+    /// Comma-separated work item states for PR filtering
+    #[arg(long, help_heading = "Non-Interactive Mode")]
+    pub select_by_state: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
+}
+
 /// Arguments specific to merge mode
 #[derive(ClapArgs, Clone)]
 pub struct MergeArgs {
     #[command(flatten)]
     pub shared: SharedArgs,
+
+    #[command(flatten)]
+    pub ni: NonInteractiveArgs,
 
     /// State to set work items to after successful merge [default: Next Merged]
     #[arg(long, help_heading = "Merge Options")]
@@ -350,52 +378,6 @@ impl std::fmt::Display for OutputFormat {
             OutputFormat::Text => write!(f, "text"),
             OutputFormat::Json => write!(f, "json"),
             OutputFormat::Ndjson => write!(f, "ndjson"),
-        }
-    }
-}
-
-/// Arguments for the `merge run` subcommand.
-#[derive(ClapArgs, Clone, Debug)]
-pub struct MergeRunArgs {
-    #[command(flatten)]
-    pub shared: SharedArgs,
-
-    /// State to set work items to after successful merge [default: Next Merged]
-    #[arg(long, help_heading = "Merge Options")]
-    pub work_item_state: Option<String>,
-
-    /// Run git hooks during cherry-pick operations (hooks are skipped by default)
-    #[arg(long, help_heading = "Merge Options")]
-    pub run_hooks: bool,
-
-    /// Run in non-interactive mode (for CI/AI agents)
-    #[arg(short = 'n', long, help_heading = "Non-Interactive Mode")]
-    pub non_interactive: bool,
-
-    /// Merge branch version (required with --non-interactive)
-    #[arg(long, help_heading = "Non-Interactive Mode")]
-    pub version: Option<String>,
-
-    /// Comma-separated work item states for PR filtering
-    #[arg(long, help_heading = "Non-Interactive Mode")]
-    pub select_by_state: Option<String>,
-
-    /// Output format: text, json, ndjson
-    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
-    pub output: OutputFormat,
-
-    /// Suppress progress output
-    #[arg(short, long, help_heading = "Output Options")]
-    pub quiet: bool,
-}
-
-impl From<MergeRunArgs> for MergeArgs {
-    fn from(args: MergeRunArgs) -> Self {
-        MergeArgs {
-            shared: args.shared,
-            work_item_state: args.work_item_state,
-            run_hooks: args.run_hooks,
-            subcommand: None,
         }
     }
 }
@@ -463,15 +445,6 @@ pub struct MergeCompleteArgs {
 /// Subcommands for the merge mode.
 #[derive(Subcommand, Clone, Debug)]
 pub enum MergeSubcommand {
-    /// Start a new merge operation
-    #[command(
-        about = "Start a new merge operation",
-        long_about = "Start a new merge operation, either interactively (TUI) or non-interactively.\n\n\
-            In non-interactive mode (-n), PRs are filtered by work item state and cherry-picked\n\
-            automatically. On conflict, the process exits with code 2 for resolution."
-    )]
-    Run(Box<MergeRunArgs>),
-
     /// Continue merge after resolving conflicts
     #[command(
         about = "Continue merge after resolving conflicts",
@@ -991,6 +964,7 @@ impl Args {
         let mode_command = command.unwrap_or_else(|| {
             Commands::Merge(MergeArgs {
                 shared: SharedArgs::default(),
+                ni: NonInteractiveArgs::default(),
                 work_item_state: None,
                 run_hooks: false,
                 subcommand: None,
@@ -1365,6 +1339,7 @@ mod tests {
                     log_file: None,
                     log_format: None,
                 },
+                ni: NonInteractiveArgs::default(),
                 work_item_state: Some("Done".to_string()),
                 run_hooks: false,
                 subcommand: None,
@@ -2348,6 +2323,7 @@ mod tests {
                 pat: Some("test-pat".to_string()),
                 ..Default::default()
             },
+            ni: NonInteractiveArgs::default(),
             work_item_state: None,
             run_hooks: false,
             subcommand: None,
@@ -2406,6 +2382,7 @@ mod tests {
                 project: Some("merge-proj".to_string()),
                 ..Default::default()
             },
+            ni: NonInteractiveArgs::default(),
             work_item_state: None,
             run_hooks: false,
             subcommand: None,
@@ -2551,6 +2528,603 @@ mod tests {
             );
         } else {
             panic!("Expected default config");
+        }
+    }
+
+    /// # Merge with Non-Interactive Flag and Positional Path
+    ///
+    /// Tests `mergers merge -n --version v1.0 /path/to/repo` where the
+    /// positional path appears after the non-interactive flags.
+    ///
+    /// ## Test Scenario
+    /// - Path is placed after flags on the `merge` command
+    /// - Non-interactive flags are directly on MergeArgs (flattened)
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in MergeArgs.shared.path
+    /// - Non-interactive flag is in MergeArgs.ni.non_interactive
+    #[test]
+    fn test_merge_non_interactive_with_positional_path() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.path,
+                Some("/path/to/repo".to_string()),
+                "MergeArgs.shared.path should capture the positional path"
+            );
+            assert!(
+                merge_args.ni.non_interactive,
+                "Non-interactive flag should be set"
+            );
+            assert_eq!(
+                merge_args.ni.version,
+                Some("v1.0".to_string()),
+                "Version should be captured"
+            );
+            assert!(
+                merge_args.subcommand.is_none(),
+                "No subcommand when using non-interactive mode directly"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge with Path Before Non-Interactive Flags
+    ///
+    /// Tests `mergers merge /path/to/repo -n --version v1.0` where the
+    /// positional path appears before the flags.
+    ///
+    /// ## Test Scenario
+    /// - Path is placed before non-interactive flags
+    /// - All flags should still be captured
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in MergeArgs.shared.path
+    /// - Non-interactive flags are correctly parsed
+    #[test]
+    fn test_merge_path_before_flags() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "/path/to/repo",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.path,
+                Some("/path/to/repo".to_string()),
+                "MergeArgs.shared.path should capture the path"
+            );
+            assert!(
+                merge_args.ni.non_interactive,
+                "Non-interactive flag should be set"
+            );
+            assert_eq!(
+                merge_args.ni.version,
+                Some("v1.0".to_string()),
+                "Version should be captured"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge with --local-repo Flag
+    ///
+    /// Tests `mergers merge -n --version v1.0 --local-repo /path/to/repo`
+    /// using the explicit flag instead of positional argument.
+    ///
+    /// ## Test Scenario
+    /// - Uses --local-repo flag instead of positional path
+    /// - Flag should be captured in MergeArgs.shared.local_repo
+    ///
+    /// ## Expected Outcome
+    /// - local_repo is set, path is None
+    /// - Non-interactive mode should use local_repo
+    #[test]
+    fn test_merge_with_local_repo_flag() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.path, None,
+                "Positional path should be None when using --local-repo flag"
+            );
+            assert_eq!(
+                merge_args.shared.local_repo,
+                Some("/path/to/repo".to_string()),
+                "--local-repo flag should be captured"
+            );
+            assert!(merge_args.ni.non_interactive);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge with --since Parameter
+    ///
+    /// Tests that --since is correctly parsed in `merge -n` non-interactive mode.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge -n --version v1.0 --since 6mo`
+    /// - Verifies --since is captured in MergeArgs.shared.since
+    ///
+    /// ## Expected Outcome
+    /// - since parameter is correctly parsed and available
+    #[test]
+    fn test_merge_with_since_parameter() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--since",
+            "6mo",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.since,
+                Some("6mo".to_string()),
+                "--since should be captured in MergeArgs"
+            );
+            assert!(merge_args.ni.non_interactive);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge with All Non-Interactive Parameters
+    ///
+    /// Tests that all parameters specific to non-interactive mode are parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with every possible parameter set
+    /// - Verifies each parameter is correctly captured
+    ///
+    /// ## Expected Outcome
+    /// - All parameters are correctly parsed and available
+    #[test]
+    fn test_merge_all_parameters() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v2.0.0",
+            "--organization",
+            "my-org",
+            "--project",
+            "my-project",
+            "--repository",
+            "my-repo",
+            "--pat",
+            "secret-token",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release",
+            "--tag-prefix",
+            "released-",
+            "--work-item-state",
+            "Done",
+            "--select-by-state",
+            "Ready for Next",
+            "--since",
+            "2w",
+            "--max-concurrent-network",
+            "50",
+            "--max-concurrent-processing",
+            "5",
+            "--run-hooks",
+            "--output",
+            "json",
+            "--quiet",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            // Shared args
+            assert_eq!(merge_args.shared.path, Some("/path/to/repo".to_string()));
+            assert_eq!(merge_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("my-project".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("secret-token".to_string()));
+            assert_eq!(merge_args.shared.dev_branch, Some("develop".to_string()));
+            assert_eq!(merge_args.shared.target_branch, Some("release".to_string()));
+            assert_eq!(merge_args.shared.tag_prefix, Some("released-".to_string()));
+            assert_eq!(merge_args.shared.since, Some("2w".to_string()));
+            assert_eq!(merge_args.shared.max_concurrent_network, Some(50));
+            assert_eq!(merge_args.shared.max_concurrent_processing, Some(5));
+
+            // Merge-specific args
+            assert_eq!(merge_args.work_item_state, Some("Done".to_string()));
+            assert!(merge_args.run_hooks);
+
+            // Non-interactive args (ni)
+            assert_eq!(
+                merge_args.ni.select_by_state,
+                Some("Ready for Next".to_string())
+            );
+            assert_eq!(merge_args.ni.version, Some("v2.0.0".to_string()));
+            assert!(merge_args.ni.non_interactive);
+            assert!(merge_args.ni.quiet);
+            assert_eq!(merge_args.ni.output, OutputFormat::Json);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Shorthand Non-Interactive Flag via MergeArgsParser
+    ///
+    /// Tests that `mergers /path -n --since 6mo` now works because `-n` is
+    /// flattened into MergeArgs via NonInteractiveArgs.
+    ///
+    /// ## Test Scenario
+    /// - Parses args with -n using MergeArgsParser fallback
+    /// - This validates the fix for the original bug
+    ///
+    /// ## Expected Outcome
+    /// - Parsing succeeds
+    /// - Path, -n, --since, and version are all captured correctly
+    #[test]
+    fn test_shorthand_non_interactive_flag_via_parser() {
+        // MergeArgsParser wraps MergeArgs which now HAS -n flag (flattened)
+        let result = MergeArgsParser::try_parse_from([
+            "mergers",
+            "/path/to/repo",
+            "-n",
+            "--version",
+            "v1.0",
+            "--since",
+            "6mo",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        assert!(result.is_ok(), "Should succeed: -n flag is now available");
+
+        let parser = result.unwrap();
+        assert_eq!(
+            parser.merge_args.shared.path,
+            Some("/path/to/repo".to_string())
+        );
+        assert!(parser.merge_args.ni.non_interactive);
+        assert_eq!(parser.merge_args.ni.version, Some("v1.0".to_string()));
+        assert_eq!(parser.merge_args.shared.since, Some("6mo".to_string()));
+    }
+
+    /// # Merge Effective Path Precedence
+    ///
+    /// Tests path resolution from either positional arg or --local-repo flag.
+    ///
+    /// ## Test Scenario
+    /// - Tests positional path takes precedence over --local-repo
+    /// - Tests --local-repo works when positional is absent
+    /// - Tests None when neither is provided
+    ///
+    /// ## Expected Outcome
+    /// - Positional path takes precedence
+    /// - Falls back to --local-repo
+    /// - Returns None when neither is set
+    #[test]
+    fn test_merge_effective_path_precedence() {
+        // Case 1: Both positional and --local-repo set → positional wins
+        let args_both = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/from/flag",
+            "/from/positional",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_both.command {
+            let effective = merge_args
+                .shared
+                .path
+                .as_ref()
+                .or(merge_args.shared.local_repo.as_ref());
+            assert_eq!(
+                effective,
+                Some(&"/from/positional".to_string()),
+                "Positional path should take precedence over --local-repo"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+
+        // Case 2: Only --local-repo → flag is used
+        let args_flag_only = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--local-repo",
+            "/from/flag",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_flag_only.command {
+            let effective = merge_args
+                .shared
+                .path
+                .as_ref()
+                .or(merge_args.shared.local_repo.as_ref());
+            assert_eq!(
+                effective,
+                Some(&"/from/flag".to_string()),
+                "--local-repo should be used when positional is absent"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+
+        // Case 3: Neither → None
+        let args_none = Args::parse_from([
+            "mergers",
+            "merge",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args_none.command {
+            let effective = merge_args
+                .shared
+                .path
+                .as_ref()
+                .or(merge_args.shared.local_repo.as_ref());
+            assert_eq!(
+                effective, None,
+                "Should be None when neither positional nor --local-repo is set"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Fallback Parse with Default Mode
+    ///
+    /// Tests that `mergers /path -n --version v1.0` works via parse_with_default_mode
+    /// which tries normal parse first, then falls back to MergeArgsParser.
+    ///
+    /// ## Test Scenario
+    /// - Simulates the actual CLI invocation pattern `mergers /path -n --version v1.0`
+    /// - Uses Args::parse_with_default_mode() to test the fallback mechanism
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in MergeArgs.shared.path
+    /// - Non-interactive flag and version are captured in MergeArgs.ni
+    #[test]
+    fn test_fallback_parse_shorthand_invocation() {
+        // This simulates: mergers /path/to/repo -n --version v1.0 ...
+        // which should work via the MergeArgsParser fallback
+        let parser = MergeArgsParser::try_parse_from([
+            "mergers",
+            "/path/to/repo",
+            "-n",
+            "--version",
+            "v1.0",
+            "--organization",
+            "test-org",
+            "--project",
+            "test-proj",
+            "--repository",
+            "test-repo",
+            "--pat",
+            "test-pat",
+            "--since",
+            "6mo",
+        ]);
+
+        assert!(parser.is_ok(), "Fallback parser should succeed");
+        let parser = parser.unwrap();
+
+        // Verify path is captured
+        assert_eq!(
+            parser.merge_args.shared.path,
+            Some("/path/to/repo".to_string()),
+            "Path should be captured as positional argument"
+        );
+
+        // Verify non-interactive args
+        assert!(
+            parser.merge_args.ni.non_interactive,
+            "-n flag should set non_interactive"
+        );
+        assert_eq!(
+            parser.merge_args.ni.version,
+            Some("v1.0".to_string()),
+            "--version should be captured"
+        );
+
+        // Verify shared args
+        assert_eq!(
+            parser.merge_args.shared.since,
+            Some("6mo".to_string()),
+            "--since should be captured"
+        );
+        assert_eq!(
+            parser.merge_args.shared.organization,
+            Some("test-org".to_string())
+        );
+    }
+
+    /// # All Invocation Patterns Work Consistently
+    ///
+    /// Tests multiple equivalent invocation patterns to ensure they all
+    /// parse correctly with the new flattened structure.
+    ///
+    /// ## Test Scenario
+    /// - Pattern 1: `mergers merge -n --version v1.0 /path`
+    /// - Pattern 2: `mergers merge /path -n --version v1.0`
+    /// - Pattern 3: `mergers /path -n --version v1.0` (via fallback)
+    ///
+    /// ## Expected Outcome
+    /// - All patterns capture the same path and flags
+    #[test]
+    fn test_all_invocation_patterns_consistent() {
+        let required_args = [
+            "--organization",
+            "org",
+            "--project",
+            "proj",
+            "--repository",
+            "repo",
+            "--pat",
+            "pat",
+        ];
+
+        // Pattern 1: mergers merge -n --version v1.0 /path
+        let args1 = Args::parse_from(
+            ["mergers", "merge", "-n", "--version", "v1.0"]
+                .iter()
+                .chain(required_args.iter())
+                .chain(["/path/to/repo"].iter()),
+        );
+
+        // Pattern 2: mergers merge /path -n --version v1.0
+        let args2 = Args::parse_from(
+            [
+                "mergers",
+                "merge",
+                "/path/to/repo",
+                "-n",
+                "--version",
+                "v1.0",
+            ]
+            .iter()
+            .chain(required_args.iter()),
+        );
+
+        // Extract MergeArgs from both patterns
+        let merge_args1 = match args1.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge command"),
+        };
+        let merge_args2 = match args2.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge command"),
+        };
+
+        // Pattern 3: mergers /path -n --version v1.0 (via MergeArgsParser)
+        let parser3 = MergeArgsParser::try_parse_from(
+            ["mergers", "/path/to/repo", "-n", "--version", "v1.0"]
+                .iter()
+                .chain(required_args.iter()),
+        )
+        .expect("Fallback parser should work");
+        let merge_args3 = &parser3.merge_args;
+
+        // Verify all patterns capture the same values
+        for (name, merge_args) in [
+            ("Pattern 1", &merge_args1),
+            ("Pattern 2", &merge_args2),
+            ("Pattern 3", merge_args3),
+        ] {
+            assert_eq!(
+                merge_args.shared.path,
+                Some("/path/to/repo".to_string()),
+                "{}: path mismatch",
+                name
+            );
+            assert!(
+                merge_args.ni.non_interactive,
+                "{}: non_interactive should be true",
+                name
+            );
+            assert_eq!(
+                merge_args.ni.version,
+                Some("v1.0".to_string()),
+                "{}: version mismatch",
+                name
+            );
         }
     }
 }

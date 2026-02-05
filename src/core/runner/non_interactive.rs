@@ -13,7 +13,7 @@ use crate::api::AzureDevOpsClient;
 use crate::core::ExitCode;
 use crate::core::output::{
     ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, ProgressEvent, ProgressSummary,
-    StatusInfo, SummaryInfo, SummaryItem, SummaryResult,
+    StatusInfo, SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
 };
 use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 use crate::git;
@@ -50,8 +50,17 @@ impl<W: Write> NonInteractiveRunner<W> {
     ///
     /// This is the main entry point for starting a merge.
     pub async fn run(&mut self) -> RunResult {
+        tracing::info!("Starting non-interactive merge");
+        tracing::debug!(
+            "Config: version={}, target_branch={}, dev_branch={}",
+            self.config.version,
+            self.config.target_branch,
+            self.config.dev_branch
+        );
+
         // Validate required fields
         if self.config.version.is_empty() {
+            tracing::error!("Version is required but not provided");
             return RunResult::error(
                 ExitCode::GeneralError,
                 "Version is required for non-interactive mode",
@@ -59,9 +68,14 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
 
         // Create the API client
+        tracing::debug!("Creating Azure DevOps API client");
         let client = match self.create_client() {
-            Ok(c) => c,
+            Ok(c) => {
+                tracing::info!("API client created successfully");
+                c
+            }
             Err(e) => {
+                tracing::error!("Failed to create API client: {}", e);
                 return RunResult::error(
                     ExitCode::GeneralError,
                     format!("Failed to create API client: {}", e),
@@ -70,12 +84,22 @@ impl<W: Write> NonInteractiveRunner<W> {
         };
 
         // Create the merge engine
-        let engine = self.create_engine(Arc::clone(&client));
+        tracing::debug!("Creating merge engine");
+        let mut engine = self.create_engine(Arc::clone(&client));
 
         // Load PRs
+        tracing::info!("Loading pull requests from Azure DevOps...");
         let mut prs = match engine.load_pull_requests().await {
-            Ok(prs) => prs,
+            Ok(prs) => {
+                tracing::info!("Loaded {} pull requests", prs.len());
+                tracing::debug!(
+                    "PR IDs: {:?}",
+                    prs.iter().map(|pr| pr.pr.id).collect::<Vec<_>>()
+                );
+                prs
+            }
             Err(e) => {
+                tracing::error!("Failed to load PRs: {}", e);
                 self.emit_error(&format!("Failed to load PRs: {}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
@@ -83,8 +107,11 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Select PRs by work item states if configured
         if let Some(ref states) = self.config.select_by_states {
+            tracing::info!("Selecting PRs by work item states: {:?}", states);
             let count = engine.select_prs_by_states(&mut prs, states);
+            tracing::debug!("{} PRs matched the specified states", count);
             if count == 0 {
+                tracing::warn!("No PRs matched the specified work item states");
                 self.emit_error("No PRs matched the specified work item states");
                 return RunResult::error(
                     ExitCode::NoPRsMatched,
@@ -92,6 +119,7 @@ impl<W: Write> NonInteractiveRunner<W> {
                 );
             }
         } else {
+            tracing::debug!("Selecting all PRs with merge commits");
             // Select all PRs with merge commits
             for pr in &mut prs {
                 pr.selected = pr.pr.last_merge_commit.is_some();
@@ -99,24 +127,41 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
 
         let selected_count = prs.iter().filter(|pr| pr.selected).count();
+        tracing::info!("{} PRs selected for merge", selected_count);
         if selected_count == 0 {
+            tracing::warn!("No PRs selected for merge");
             self.emit_error("No PRs selected for merge");
             return RunResult::error(ExitCode::NoPRsMatched, "No PRs selected for merge");
         }
 
         // Set up the repository
+        tracing::info!("Setting up repository...");
+        tracing::debug!("local_repo={:?}", self.config.local_repo);
         let (repo_path, is_worktree) = match engine.setup_repository() {
-            Ok((path, is_worktree)) => (path, is_worktree),
+            Ok((path, is_worktree)) => {
+                tracing::info!(
+                    "Repository set up successfully at {} (worktree={})",
+                    path.display(),
+                    is_worktree
+                );
+                (path, is_worktree)
+            }
             Err(e) => {
+                tracing::error!("Failed to set up repository: {}", e);
                 self.emit_error(&format!("Failed to set up repository: {}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
 
         // Acquire lock
+        tracing::debug!("Acquiring repository lock");
         let _lock = match acquire_lock(&repo_path) {
-            Ok(Some(lock)) => lock,
+            Ok(Some(lock)) => {
+                tracing::info!("Repository lock acquired");
+                lock
+            }
             Ok(None) => {
+                tracing::warn!("Another merge operation is in progress");
                 self.emit_error("Another merge operation is in progress");
                 return RunResult::error(
                     ExitCode::Locked,
@@ -124,6 +169,7 @@ impl<W: Write> NonInteractiveRunner<W> {
                 );
             }
             Err(e) => {
+                tracing::error!("Failed to acquire lock: {}", e);
                 self.emit_error(&format!("Failed to acquire lock: {}", e));
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
@@ -153,6 +199,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
 
         // Run dependency analysis
+        tracing::info!("Starting dependency analysis for {} PRs", selected_count);
         self.emit_event(ProgressEvent::DependencyAnalysisStart {
             pr_count: selected_count,
         });
@@ -194,42 +241,47 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         }
 
-        // Create state file
+        // Create state file using StateManager-backed method
         let base_repo_path = if is_worktree {
             self.config.local_repo.clone()
         } else {
             None
         };
 
-        let mut state =
-            engine.create_state_file(repo_path.clone(), base_repo_path, is_worktree, &prs);
+        // Create state file - this stores state in engine's internal StateManager
+        let state_path =
+            match engine.create_state_file(repo_path.clone(), base_repo_path, is_worktree, &prs) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.emit_error(&format!("Failed to create state file: {}", e));
+                    return RunResult::error(ExitCode::GeneralError, e.to_string());
+                }
+            };
+
+        // Get total PRs from state manager for the start event
+        let total_prs = engine
+            .state_manager()
+            .state_file()
+            .map(|s| s.cherry_pick_items.len())
+            .unwrap_or(0);
 
         // Emit start event
         self.emit_event(ProgressEvent::Start {
-            total_prs: state.cherry_pick_items.len(),
+            total_prs,
             version: self.config.version.clone(),
             target_branch: self.config.target_branch.clone(),
         });
 
-        // Save initial state
-        if let Err(e) = state.save_for_repo() {
-            self.emit_error(&format!("Failed to save state: {}", e));
-            return RunResult::error(ExitCode::GeneralError, e.to_string());
-        }
-
-        // Process cherry-picks
-        let process_result = engine.process_cherry_picks(&mut state, |event| {
+        // Process cherry-picks using internal state manager
+        let process_result = engine.process_cherry_picks(|event| {
             self.emit_event(event);
         });
 
         // Save state after cherry-picks
-        let state_path = match state.save_for_repo() {
-            Ok(path) => path,
-            Err(e) => {
-                self.emit_error(&format!("Failed to save state: {}", e));
-                return RunResult::error(ExitCode::GeneralError, e.to_string());
-            }
-        };
+        if let Err(e) = engine.state_manager_mut().save() {
+            self.emit_error(&format!("Failed to save state: {}", e));
+            return RunResult::error(ExitCode::GeneralError, e.to_string());
+        }
 
         // Handle process result
         match process_result {
@@ -253,8 +305,13 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         }
 
-        // All cherry-picks complete
-        let counts = engine.create_summary_counts(&state);
+        // All cherry-picks complete - get counts from state manager
+        let counts = engine
+            .state_manager()
+            .state_file()
+            .map(|state| engine.create_summary_counts(state))
+            .unwrap_or_else(|| SummaryCounts::new(0, 0, 0, 0));
+
         self.emit_event(ProgressEvent::Complete {
             successful: counts.successful,
             failed: counts.failed,
@@ -350,16 +407,24 @@ impl<W: Write> NonInteractiveRunner<W> {
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
         };
-        let engine = self.create_engine(client);
+        let mut engine = self.create_engine(client);
 
-        // Continue processing
-        let process_result = engine.process_cherry_picks(&mut state, |event| {
+        // Set the loaded state file on the engine's state manager
+        // The lock guard remains local to ensure it stays alive for the operation
+        engine.state_manager_mut().set_state_file(state);
+
+        // Continue processing using internal state manager
+        let process_result = engine.process_cherry_picks(|event| {
             self.emit_event(event);
         });
 
-        // Save state
-        let state_path = match state.save_for_repo() {
-            Ok(path) => path,
+        // Save state via state manager
+        let state_path = match engine.state_manager_mut().save() {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.emit_error("No state file to save");
+                return RunResult::error(ExitCode::GeneralError, "No state file to save");
+            }
             Err(e) => {
                 return RunResult::error(ExitCode::GeneralError, e.to_string());
             }
@@ -386,7 +451,13 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         }
 
-        let counts = engine.create_summary_counts(&state);
+        // Get counts from state manager
+        let counts = engine
+            .state_manager()
+            .state_file()
+            .map(|state| engine.create_summary_counts(state))
+            .unwrap_or_else(|| SummaryCounts::new(0, 0, 0, 0));
+
         self.emit_event(ProgressEvent::Complete {
             successful: counts.successful,
             failed: counts.failed,
@@ -758,6 +829,9 @@ impl<W: Write> NonInteractiveRunner<W> {
             self.config.run_hooks,
             self.config.local_repo.clone(),
             self.config.hooks_config.clone(),
+            self.config.max_concurrent_network,
+            self.config.max_concurrent_processing,
+            self.config.since.clone(),
         )
     }
 
@@ -828,6 +902,9 @@ mod tests {
             output_format: OutputFormat::Text,
             quiet: false,
             hooks_config: None,
+            max_concurrent_network: 100,
+            max_concurrent_processing: 10,
+            since: None,
         }
     }
 

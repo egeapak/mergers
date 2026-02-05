@@ -42,6 +42,12 @@ pub struct MergeRunnerConfig {
     pub quiet: bool,
     /// User-defined hooks configuration.
     pub hooks_config: Option<HooksConfig>,
+    /// Maximum concurrent network operations.
+    pub max_concurrent_network: usize,
+    /// Maximum concurrent processing operations.
+    pub max_concurrent_processing: usize,
+    /// Filter PRs by date (e.g., "1mo", "2w", "2025-01-15").
+    pub since: Option<String>,
 }
 
 /// Result of a merge operation.

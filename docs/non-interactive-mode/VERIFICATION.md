@@ -189,7 +189,7 @@ This document provides comprehensive verification checklists for testing the non
 - Local repo or worktree capability
 
 **Steps:**
-1. Run `mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next"`
+1. Run `mergers merge -n --version v1.0.0 --select-by-state "Ready for Next"`
 2. Observe progress output
 3. Check exit code
 4. Verify worktree has hooks disabled (core.hooksPath=/dev/null)
@@ -208,7 +208,7 @@ This document provides comprehensive verification checklists for testing the non
 - Same as Scenario 1
 
 **Steps:**
-1. Run `mergers merge run -n --version v1.0.0 --select-by-state "Ready for Next" --run-hooks`
+1. Run `mergers merge -n --version v1.0.0 --select-by-state "Ready for Next" --run-hooks`
 2. Check state file and worktree
 
 **Expected Results:**

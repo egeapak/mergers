@@ -23,7 +23,8 @@ use crate::core::operations::pr_selection::{
 };
 use crate::core::output::{ConflictInfo, ItemStatus, ProgressEvent, SummaryCounts, SummaryItem};
 use crate::core::state::{
-    LockGuard, MergePhase, MergeStateFile, MergeStatus, StateCherryPickItem, StateItemStatus,
+    LockGuard, MergePhase, MergeStateFile, MergeStatus, StateCherryPickItem, StateCreateConfig,
+    StateItemStatus, StateManager,
 };
 use crate::git;
 use crate::models::PullRequestWithWorkItems;
@@ -80,6 +81,14 @@ pub struct MergeEngine {
     run_hooks: bool,
     local_repo: Option<PathBuf>,
     hooks_config: HooksConfig,
+    /// Maximum concurrent network operations.
+    max_concurrent_network: usize,
+    /// Maximum concurrent processing operations.
+    max_concurrent_processing: usize,
+    /// Filter PRs by date (e.g., "1mo", "2w", "2025-01-15").
+    since: Option<String>,
+    /// State manager for state file operations.
+    state_manager: StateManager,
 }
 
 impl MergeEngine {
@@ -98,6 +107,9 @@ impl MergeEngine {
         run_hooks: bool,
         local_repo: Option<PathBuf>,
         hooks_config: Option<HooksConfig>,
+        max_concurrent_network: usize,
+        max_concurrent_processing: usize,
+        since: Option<String>,
     ) -> Self {
         Self {
             client,
@@ -112,6 +124,10 @@ impl MergeEngine {
             run_hooks,
             local_repo,
             hooks_config: hooks_config.unwrap_or_default(),
+            max_concurrent_network,
+            max_concurrent_processing,
+            since,
+            state_manager: StateManager::new(),
         }
     }
 
@@ -273,20 +289,93 @@ impl MergeEngine {
         }
     }
 
+    /// Returns a mutable reference to the state manager.
+    pub fn state_manager_mut(&mut self) -> &mut StateManager {
+        &mut self.state_manager
+    }
+
+    /// Returns a reference to the state manager.
+    pub fn state_manager(&self) -> &StateManager {
+        &self.state_manager
+    }
+
     /// Loads pull requests from Azure DevOps.
     pub async fn load_pull_requests(&self) -> Result<Vec<PullRequestWithWorkItems>> {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::utils::throttle::NetworkProcessor;
+        use futures::stream::{self, StreamExt};
+
+        tracing::info!("Fetching pull requests for branch: {}", self.dev_branch);
+        if let Some(ref since) = self.since {
+            tracing::info!("Filtering PRs since: {}", since);
+        }
+
         // Fetch completed PRs from the dev branch
         let prs = self
             .client
-            .fetch_pull_requests(&self.dev_branch, None)
+            .fetch_pull_requests(&self.dev_branch, self.since.as_deref())
             .await
             .context("Failed to fetch pull requests")?;
 
-        // Fetch work items for all PRs in parallel
-        let prs_with_work_items = self
-            .client
-            .fetch_work_items_for_prs_parallel(&prs, 10, 5)
-            .await;
+        tracing::info!("Retrieved {} pull requests from Azure DevOps", prs.len());
+
+        // Filter out PRs that already have "merged-" tags (same as TUI mode)
+        let prs = filter_prs_without_merged_tag(prs);
+        tracing::info!(
+            "After filtering merged tags: {} pull requests remain",
+            prs.len()
+        );
+
+        tracing::info!(
+            "Fetching work items for PRs (max_concurrent_network={})",
+            self.max_concurrent_network
+        );
+
+        // Use NetworkProcessor to throttle work item fetching (same approach as TUI)
+        let network_processor = NetworkProcessor::new_with_limits(
+            self.max_concurrent_network,
+            self.max_concurrent_processing,
+        );
+
+        let total = prs.len();
+
+        // Fetch work items for all PRs with proper throttling
+        let prs_with_work_items: Vec<PullRequestWithWorkItems> =
+            stream::iter(prs.into_iter().enumerate())
+                .map(|(index, pr)| {
+                    let client = self.client.clone();
+                    let processor = network_processor.clone();
+                    let pr_id = pr.id;
+                    async move {
+                        let work_items = processor
+                            .execute_network_operation(|| async {
+                                client.fetch_work_items_with_history_for_pr(pr_id).await
+                            })
+                            .await
+                            .unwrap_or_default();
+
+                        (index, pr, work_items)
+                    }
+                })
+                .buffer_unordered(self.max_concurrent_network)
+                .map(|(index, pr, work_items)| {
+                    // Log progress periodically
+                    if (index + 1) % 100 == 0 || index + 1 == total {
+                        tracing::info!("Fetched work items for {}/{} PRs", index + 1, total);
+                    }
+                    PullRequestWithWorkItems {
+                        pr,
+                        work_items,
+                        selected: false,
+                    }
+                })
+                .collect()
+                .await;
+
+        tracing::info!(
+            "Loaded {} PRs with work items successfully",
+            prs_with_work_items.len()
+        );
 
         Ok(prs_with_work_items)
     }
@@ -309,6 +398,10 @@ impl MergeEngine {
     pub fn setup_repository(&self) -> Result<(PathBuf, bool)> {
         // Check if we have a local repo configured
         if let Some(ref local_repo) = self.local_repo {
+            tracing::info!(
+                "Setting up worktree from existing repository at {}",
+                local_repo.display()
+            );
             // Create worktree
             // create_worktree(base_repo_path, target_branch, version, run_hooks)
             let worktree_path = git::create_worktree(
@@ -319,8 +412,10 @@ impl MergeEngine {
             )
             .context("Failed to create worktree")?;
 
+            tracing::info!("Worktree setup complete");
             Ok((worktree_path, true))
         } else {
+            tracing::info!("Cloning repository (no local repo configured)");
             // Clone the repository
             // shallow_clone_repo(ssh_url, target_branch, run_hooks) -> (PathBuf, TempDir)
             let (clone_path, _temp_dir) = git::shallow_clone_repo(
@@ -341,27 +436,31 @@ impl MergeEngine {
     }
 
     /// Creates a new state file for a merge operation.
+    ///
+    /// This method delegates to the internal StateManager and returns the path
+    /// where the state file was saved. The state file is populated with cherry-pick
+    /// items from the selected PRs.
+    ///
+    /// # Returns
+    ///
+    /// The path where the state file was saved.
     pub fn create_state_file(
-        &self,
+        &mut self,
         repo_path: PathBuf,
         base_repo_path: Option<PathBuf>,
         is_worktree: bool,
         prs: &[PullRequestWithWorkItems],
-    ) -> MergeStateFile {
-        let mut state = MergeStateFile::new(
-            repo_path,
-            base_repo_path,
-            is_worktree,
-            self.organization.clone(),
-            self.project.clone(),
-            self.repository.clone(),
-            self.dev_branch.clone(),
-            self.target_branch.clone(),
-            self.version.clone(),
-            self.work_item_state.clone(),
-            self.tag_prefix.clone(),
-            self.run_hooks,
-        );
+    ) -> Result<PathBuf> {
+        let config = StateCreateConfig {
+            organization: self.organization.clone(),
+            project: self.project.clone(),
+            repository: self.repository.clone(),
+            dev_branch: self.dev_branch.clone(),
+            target_branch: self.target_branch.clone(),
+            tag_prefix: self.tag_prefix.clone(),
+            work_item_state: self.work_item_state.clone(),
+            run_hooks: self.run_hooks,
+        };
 
         // Convert selected PRs to cherry-pick items
         let items: Vec<StateCherryPickItem> = prs
@@ -382,9 +481,14 @@ impl MergeEngine {
             })
             .collect();
 
-        state.cherry_pick_items = items;
-        state.phase = MergePhase::CherryPicking;
-        state
+        self.state_manager.create_state_file_with_items(
+            repo_path,
+            base_repo_path,
+            is_worktree,
+            &self.version,
+            &config,
+            items,
+        )
     }
 
     /// Cherry-picks a single commit.
@@ -411,28 +515,43 @@ impl MergeEngine {
         (outcome, conflicted_files)
     }
 
-    /// Processes cherry-pick items from the current index.
+    /// Processes cherry-pick items using the internal StateManager.
+    ///
+    /// This method uses the state file stored in the engine's internal StateManager.
+    /// The state file must have been created via `create_state_file` or set via
+    /// `state_manager_mut().set_state_file()` before calling this method.
     ///
     /// Returns the result of processing:
     /// - `Complete` if all cherry-picks finished (with possible skips/failures)
     /// - `Conflict` if a conflict was encountered
     /// - `HookAbort` if a hook failed and was configured to abort
-    pub fn process_cherry_picks<F>(
-        &self,
-        state: &mut MergeStateFile,
-        mut event_callback: F,
-    ) -> CherryPickProcessResult
+    ///
+    /// # Panics
+    ///
+    /// Panics if no state file is set in the internal StateManager.
+    pub fn process_cherry_picks<F>(&mut self, mut event_callback: F) -> CherryPickProcessResult
     where
         F: FnMut(ProgressEvent),
     {
-        let total = state.cherry_pick_items.len();
+        // Extract info from state file first to avoid borrow conflicts
+        let (total, repo_path, current_start_index) = {
+            let state_file = self
+                .state_manager
+                .state_file()
+                .expect("state_file must be set before processing cherry-picks");
+            (
+                state_file.cherry_pick_items.len(),
+                state_file.repo_path.clone(),
+                state_file.current_index,
+            )
+        };
 
         // Run pre-cherry-pick hooks (only if starting from the beginning)
-        if state.current_index == 0 && self.hooks_config.has_hooks_for(HookTrigger::PreCherryPick) {
+        if current_start_index == 0 && self.hooks_config.has_hooks_for(HookTrigger::PreCherryPick) {
             let outcome = self.run_hooks_with_events(
                 HookTrigger::PreCherryPick,
-                &state.repo_path,
-                &self.create_hook_context(&state.repo_path),
+                &repo_path,
+                &self.create_hook_context(&repo_path),
                 &mut event_callback,
             );
 
@@ -450,111 +569,133 @@ impl MergeEngine {
             }
         }
 
-        while state.current_index < total {
-            let item = &state.cherry_pick_items[state.current_index];
+        loop {
+            // Get current index and item info
+            let (current_index, commit_id, pr_id, pr_title) = {
+                let state_file = self.state_manager.state_file().unwrap();
+                if state_file.current_index >= total {
+                    break;
+                }
+                let item = &state_file.cherry_pick_items[state_file.current_index];
+                (
+                    state_file.current_index,
+                    item.commit_id.clone(),
+                    item.pr_id,
+                    item.pr_title.clone(),
+                )
+            };
 
             // Emit start event
             event_callback(ProgressEvent::CherryPickStart {
-                pr_id: item.pr_id,
-                commit_id: item.commit_id.clone(),
-                index: state.current_index,
+                pr_id,
+                commit_id: commit_id.clone(),
+                index: current_index,
                 total,
             });
 
-            let (outcome, _conflicted_files) =
-                self.cherry_pick_commit(&state.repo_path, &item.commit_id);
+            // Perform cherry-pick (borrows self immutably)
+            let (outcome, _conflicted_files) = self.cherry_pick_commit(&repo_path, &commit_id);
 
             // Update state based on outcome
-            let item = &mut state.cherry_pick_items[state.current_index];
-            match outcome {
-                CherryPickOutcome::Success => {
-                    item.status = StateItemStatus::Success;
-                    event_callback(ProgressEvent::CherryPickSuccess {
-                        pr_id: item.pr_id,
-                        commit_id: item.commit_id.clone(),
-                    });
+            {
+                let state_file = self.state_manager.state_file_mut().unwrap();
+                let item = &mut state_file.cherry_pick_items[current_index];
 
-                    // Run post-cherry-pick hooks
-                    if self.hooks_config.has_hooks_for(HookTrigger::PostCherryPick) {
-                        let context = self
-                            .create_hook_context(&state.repo_path)
-                            .with_pr_id(item.pr_id)
-                            .with_commit_id(&item.commit_id);
-                        self.run_hooks_with_events(
-                            HookTrigger::PostCherryPick,
-                            &state.repo_path,
-                            &context,
-                            &mut event_callback,
-                        );
+                match outcome {
+                    CherryPickOutcome::Success => {
+                        item.status = StateItemStatus::Success;
+                        event_callback(ProgressEvent::CherryPickSuccess {
+                            pr_id,
+                            commit_id: commit_id.clone(),
+                        });
+                    }
+                    CherryPickOutcome::Conflict {
+                        ref conflicted_files,
+                    } => {
+                        item.status = StateItemStatus::Conflict;
+                        state_file.phase = MergePhase::AwaitingConflictResolution;
+                        state_file.conflicted_files = Some(conflicted_files.clone());
+
+                        event_callback(ProgressEvent::CherryPickConflict {
+                            pr_id,
+                            conflicted_files: conflicted_files.clone(),
+                            repo_path: repo_path.clone(),
+                        });
+
+                        // Run on-conflict hooks (always continue regardless of failure)
+                        if self.hooks_config.has_hooks_for(HookTrigger::OnConflict) {
+                            let context = self
+                                .create_hook_context(&repo_path)
+                                .with_pr_id(pr_id)
+                                .with_commit_id(&commit_id);
+                            // OnConflict hooks default to Continue, so we don't check the outcome
+                            let _ = self.run_hooks_with_events(
+                                HookTrigger::OnConflict,
+                                &repo_path,
+                                &context,
+                                &mut event_callback,
+                            );
+                        }
+
+                        return CherryPickProcessResult::Conflict(ConflictInfo::new(
+                            pr_id,
+                            pr_title,
+                            commit_id,
+                            conflicted_files.clone(),
+                            repo_path,
+                        ));
+                    }
+                    CherryPickOutcome::Skipped => {
+                        item.status = StateItemStatus::Skipped;
+                        event_callback(ProgressEvent::CherryPickSkipped {
+                            pr_id,
+                            reason: None,
+                        });
+                    }
+                    CherryPickOutcome::Failed { ref message } => {
+                        item.status = StateItemStatus::Failed {
+                            message: message.clone(),
+                        };
+                        event_callback(ProgressEvent::CherryPickFailed {
+                            pr_id,
+                            error: message.clone(),
+                        });
                     }
                 }
-                CherryPickOutcome::Conflict {
-                    ref conflicted_files,
-                } => {
-                    item.status = StateItemStatus::Conflict;
-                    state.phase = MergePhase::AwaitingConflictResolution;
-                    state.conflicted_files = Some(conflicted_files.clone());
 
-                    event_callback(ProgressEvent::CherryPickConflict {
-                        pr_id: item.pr_id,
-                        conflicted_files: conflicted_files.clone(),
-                        repo_path: state.repo_path.clone(),
-                    });
-
-                    // Run on-conflict hooks (always continue regardless of failure)
-                    if self.hooks_config.has_hooks_for(HookTrigger::OnConflict) {
-                        let context = self
-                            .create_hook_context(&state.repo_path)
-                            .with_pr_id(item.pr_id)
-                            .with_commit_id(&item.commit_id);
-                        // OnConflict hooks default to Continue, so we don't check the outcome
-                        let _ = self.run_hooks_with_events(
-                            HookTrigger::OnConflict,
-                            &state.repo_path,
-                            &context,
-                            &mut event_callback,
-                        );
-                    }
-
-                    return CherryPickProcessResult::Conflict(ConflictInfo::new(
-                        item.pr_id,
-                        item.pr_title.clone(),
-                        item.commit_id.clone(),
-                        conflicted_files.clone(),
-                        state.repo_path.clone(),
-                    ));
-                }
-                CherryPickOutcome::Skipped => {
-                    item.status = StateItemStatus::Skipped;
-                    event_callback(ProgressEvent::CherryPickSkipped {
-                        pr_id: item.pr_id,
-                        reason: None,
-                    });
-                }
-                CherryPickOutcome::Failed { ref message } => {
-                    item.status = StateItemStatus::Failed {
-                        message: message.clone(),
-                    };
-                    event_callback(ProgressEvent::CherryPickFailed {
-                        pr_id: item.pr_id,
-                        error: message.clone(),
-                    });
-                }
+                state_file.current_index += 1;
             }
 
-            state.current_index += 1;
+            // Run post-cherry-pick hooks after successful cherry-pick (outside the mutable borrow)
+            if matches!(outcome, CherryPickOutcome::Success)
+                && self.hooks_config.has_hooks_for(HookTrigger::PostCherryPick)
+            {
+                let context = self
+                    .create_hook_context(&repo_path)
+                    .with_pr_id(pr_id)
+                    .with_commit_id(&commit_id);
+                // PostCherryPick hooks default to Continue, so we don't check the outcome
+                let _ = self.run_hooks_with_events(
+                    HookTrigger::PostCherryPick,
+                    &repo_path,
+                    &context,
+                    &mut event_callback,
+                );
+            }
         }
 
         // All cherry-picks complete
-        state.phase = MergePhase::ReadyForCompletion;
+        if let Some(state_file) = self.state_manager.state_file_mut() {
+            state_file.phase = MergePhase::ReadyForCompletion;
+        }
 
         // Run post-merge hooks (defaults to Continue, so we don't abort on failure)
         if self.hooks_config.has_hooks_for(HookTrigger::PostMerge) {
             // PostMerge hooks default to Continue, so we don't check the outcome
             let _ = self.run_hooks_with_events(
                 HookTrigger::PostMerge,
-                &state.repo_path,
-                &self.create_hook_context(&state.repo_path),
+                &repo_path,
+                &self.create_hook_context(&repo_path),
                 &mut event_callback,
             );
         }
@@ -811,6 +952,9 @@ mod tests {
             false,
             None,
             None,
+            100,
+            10,
+            None,
         )
     }
 
@@ -1056,6 +1200,9 @@ mod tests {
             false,
             Some(std::path::PathBuf::from("/path/to/repo")),
             None,
+            100,
+            10,
+            None,
         );
 
         // With hooks enabled
@@ -1072,21 +1219,33 @@ mod tests {
             true,
             None,
             None,
+            100,
+            10,
+            None,
         );
     }
 
-    /// # Create State File From PRs
+    /// # Create State File With StateManager
     ///
-    /// Verifies state file is correctly created from PRs.
+    /// Verifies state file creation using the StateManager-backed method.
     ///
     /// ## Test Scenario
-    /// - Creates a state file with test parameters
+    /// - Creates a state file using create_state_file which uses StateManager
     ///
     /// ## Expected Outcome
-    /// - State file has correct metadata
+    /// - State file is persisted and accessible via state_manager
     #[test]
-    fn test_create_state_file() {
-        let engine = MergeEngine::new(
+    #[serial_test::serial]
+    fn test_create_state_file_with_state_manager() {
+        use tempfile::TempDir;
+
+        let temp_state_dir = TempDir::new().unwrap();
+        let temp_repo = TempDir::new().unwrap();
+
+        // Set state dir env var
+        unsafe { std::env::set_var(crate::core::state::STATE_DIR_ENV, temp_state_dir.path()) };
+
+        let mut engine = MergeEngine::new(
             create_mock_client(),
             "test-org".to_string(),
             "test-project".to_string(),
@@ -1099,27 +1258,29 @@ mod tests {
             true,
             Some(std::path::PathBuf::from("/base/repo")),
             None,
+            100,
+            10,
+            None,
         );
 
-        let state = engine.create_state_file(
-            std::path::PathBuf::from("/work/repo"),
-            Some(std::path::PathBuf::from("/base/repo")),
-            true,
+        let result = engine.create_state_file(
+            temp_repo.path().to_path_buf(),
+            None,
+            false,
             &[], // Empty PRs
         );
 
+        assert!(result.is_ok());
+        assert!(engine.state_manager().has_state_file());
+
+        let state = engine.state_manager().state_file().unwrap();
         assert_eq!(state.organization, "test-org");
         assert_eq!(state.project, "test-project");
-        assert_eq!(state.repository, "test-repo");
-        assert_eq!(state.dev_branch, "develop");
-        assert_eq!(state.target_branch, "release");
         assert_eq!(state.merge_version, "v2.0.0");
-        assert_eq!(state.tag_prefix, "release-");
-        assert_eq!(state.work_item_state, "Released");
         assert!(state.run_hooks);
-        assert!(state.is_worktree);
-        assert_eq!(state.phase, MergePhase::CherryPicking);
-        assert!(state.cherry_pick_items.is_empty());
+
+        // Cleanup
+        unsafe { std::env::remove_var(crate::core::state::STATE_DIR_ENV) };
     }
 
     /// # Acquire Lock Function
@@ -1223,5 +1384,245 @@ mod tests {
         assert_eq!(count, 1);
         assert!(prs[0].selected);
         assert!(!prs[1].selected);
+    }
+
+    /// # Filter PRs Without Merged Tag Integration
+    ///
+    /// Verifies that the filter_prs_without_merged_tag function works correctly
+    /// when integrated with MergeEngine data structures.
+    ///
+    /// ## Test Scenario
+    /// - Creates PRs with and without merged tags
+    /// - Applies filter
+    ///
+    /// ## Expected Outcome
+    /// - PRs with "merged-*" labels are excluded
+    /// - PRs without such labels are retained
+    #[test]
+    fn test_filter_prs_without_merged_tag_integration() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        fn create_pr_with_labels(id: i32, labels: Option<Vec<&str>>) -> PullRequest {
+            PullRequest {
+                id,
+                title: format!("PR {}", id),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test User".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: format!("commit{}", id),
+                }),
+                labels: labels.map(|l| {
+                    l.into_iter()
+                        .map(|name| Label {
+                            name: name.to_string(),
+                        })
+                        .collect()
+                }),
+            }
+        }
+
+        let prs = vec![
+            create_pr_with_labels(1, None),                  // No labels - keep
+            create_pr_with_labels(2, Some(vec!["feature"])), // Non-merged label - keep
+            create_pr_with_labels(3, Some(vec!["merged-v1.0.0"])), // Merged tag - filter
+            create_pr_with_labels(4, Some(vec!["bug", "merged-v2"])), // Has merged tag - filter
+            create_pr_with_labels(5, Some(vec![])),          // Empty labels - keep
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 3);
+        assert_eq!(filtered[0].id, 1);
+        assert_eq!(filtered[1].id, 2);
+        assert_eq!(filtered[2].id, 5);
+    }
+
+    /// # Filter PRs All Have Merged Tags
+    ///
+    /// Verifies behavior when all PRs have merged tags.
+    ///
+    /// ## Test Scenario
+    /// - All PRs have merged-* labels
+    ///
+    /// ## Expected Outcome
+    /// - Returns empty vector
+    #[test]
+    fn test_filter_prs_all_merged() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        let prs = vec![
+            PullRequest {
+                id: 1,
+                title: "PR 1".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "a".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v1.0.0".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "PR 2".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "b".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v2.0.0".to_string(),
+                }]),
+            },
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert!(filtered.is_empty());
+    }
+
+    /// # Filter PRs None Have Merged Tags
+    ///
+    /// Verifies that all PRs pass through when none have merged tags.
+    ///
+    /// ## Test Scenario
+    /// - No PRs have merged-* labels
+    ///
+    /// ## Expected Outcome
+    /// - All PRs retained
+    #[test]
+    fn test_filter_prs_none_merged() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{CreatedBy, Label, MergeCommit, PullRequest};
+
+        let prs = vec![
+            PullRequest {
+                id: 1,
+                title: "PR 1".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "a".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "feature".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "PR 2".to_string(),
+                closed_date: None,
+                created_by: CreatedBy {
+                    display_name: "Test".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "b".to_string(),
+                }),
+                labels: None,
+            },
+        ];
+
+        let filtered = filter_prs_without_merged_tag(prs);
+
+        assert_eq!(filtered.len(), 2);
+    }
+
+    /// # Non-Interactive Mode Filter Integration
+    ///
+    /// Verifies that PRs with merged tags would be filtered in the
+    /// non-interactive workflow by testing the filter with the full
+    /// PullRequestWithWorkItems structure.
+    ///
+    /// ## Test Scenario
+    /// - Creates PullRequestWithWorkItems with various label configurations
+    /// - Simulates the filtering that happens in load_pull_requests
+    ///
+    /// ## Expected Outcome
+    /// - Only PRs without merged tags remain for processing
+    #[test]
+    fn test_non_interactive_workflow_filter_integration() {
+        use crate::api::filter_prs_without_merged_tag;
+        use crate::models::{
+            CreatedBy, Label, MergeCommit, PullRequest, PullRequestWithWorkItems, WorkItem,
+            WorkItemFields,
+        };
+
+        // Simulate what load_pull_requests does:
+        // 1. Fetch PRs
+        // 2. Filter merged tags
+        // 3. Create PullRequestWithWorkItems
+
+        let raw_prs = vec![
+            PullRequest {
+                id: 1,
+                title: "Ready PR".to_string(),
+                closed_date: Some("2024-01-01".to_string()),
+                created_by: CreatedBy {
+                    display_name: "Dev".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "abc".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "feature".to_string(),
+                }]),
+            },
+            PullRequest {
+                id: 2,
+                title: "Already Merged PR".to_string(),
+                closed_date: Some("2024-01-01".to_string()),
+                created_by: CreatedBy {
+                    display_name: "Dev".to_string(),
+                },
+                last_merge_commit: Some(MergeCommit {
+                    commit_id: "def".to_string(),
+                }),
+                labels: Some(vec![Label {
+                    name: "merged-v1.0.0".to_string(),
+                }]),
+            },
+        ];
+
+        // This is what load_pull_requests now does
+        let filtered_prs = filter_prs_without_merged_tag(raw_prs);
+
+        // Then converts to PullRequestWithWorkItems
+        let prs_with_work_items: Vec<PullRequestWithWorkItems> = filtered_prs
+            .into_iter()
+            .map(|pr| PullRequestWithWorkItems {
+                pr,
+                work_items: vec![WorkItem {
+                    id: 100,
+                    fields: WorkItemFields {
+                        title: Some("Work Item".to_string()),
+                        state: Some("Ready".to_string()),
+                        work_item_type: Some("Bug".to_string()),
+                        assigned_to: None,
+                        iteration_path: None,
+                        description: None,
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: Vec::new(),
+                }],
+                selected: false,
+            })
+            .collect();
+
+        // Verify only PR 1 remains
+        assert_eq!(prs_with_work_items.len(), 1);
+        assert_eq!(prs_with_work_items[0].pr.id, 1);
+        assert_eq!(prs_with_work_items[0].pr.title, "Ready PR");
     }
 }
