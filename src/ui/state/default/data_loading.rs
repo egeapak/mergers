@@ -1569,6 +1569,62 @@ mod tests {
         });
     }
 
+    /// # Data Loading State - Initializing with Local Repo
+    ///
+    /// Tests the initial state when local repo is available.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with has_local_repo = true
+    /// - All 4 steps should show as pending including dependency analysis
+    ///
+    /// ## Expected Outcome
+    /// - All 4 steps pending (gray circles)
+    /// - Dependency analysis step visible and pending
+    #[test]
+    fn test_loading_initializing_with_local_repo() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState {
+                state: LoadingState::Initializing,
+                receiver: None,
+                has_local_repo: Some(true),
+            };
+            harness.render_state(&mut state);
+
+            assert_snapshot!("initializing_with_local_repo", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Initializing without Local Repo
+    ///
+    /// Tests the initial state when no local repo is available.
+    ///
+    /// ## Test Scenario
+    /// - Creates state with has_local_repo = false
+    /// - Dependency analysis step should show as skipped from the start
+    ///
+    /// ## Expected Outcome
+    /// - Steps 1-3 pending (gray circles)
+    /// - Step 4 (Dependencies) shown as skipped (dash)
+    #[test]
+    fn test_loading_initializing_without_local_repo() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = DataLoadingState {
+                state: LoadingState::Initializing,
+                receiver: None,
+                has_local_repo: Some(false),
+            };
+            harness.render_state(&mut state);
+
+            assert_snapshot!("initializing_without_local_repo", harness.backend());
+        });
+    }
+
     // ========================================================================
     // Running State Tests - Step Progress
     // ========================================================================
@@ -1663,6 +1719,90 @@ mod tests {
         });
     }
 
+    /// # Data Loading State - Fetch Work Items Progress 0%
+    ///
+    /// Tests the display with work items fetch at 0% progress (just started).
+    ///
+    /// ## Test Scenario
+    /// - PRs fetch completed, work items step in progress with 0/10
+    ///
+    /// ## Expected Outcome
+    /// - Step 1 completed, Step 2 in-progress showing "0/10"
+    #[test]
+    fn test_loading_step_fetch_work_items_progress_0() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_running_state_with_progress(
+                true,
+                &[LoadingStep::FetchPullRequests],
+                Some(LoadingStep::FetchWorkItems),
+                Some((0, 10)),
+                None,
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("step_fetch_work_items_progress_0", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetch Work Items Progress 100%
+    ///
+    /// Tests the display with work items fetch at 100% (all fetched, step not yet completed).
+    ///
+    /// ## Test Scenario
+    /// - PRs fetch completed, work items step in progress with 10/10
+    ///
+    /// ## Expected Outcome
+    /// - Step 1 completed, Step 2 in-progress showing "10/10"
+    #[test]
+    fn test_loading_step_fetch_work_items_progress_100() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_running_state_with_progress(
+                true,
+                &[LoadingStep::FetchPullRequests],
+                Some(LoadingStep::FetchWorkItems),
+                Some((10, 10)),
+                None,
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("step_fetch_work_items_progress_100", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetch Work Items Completed
+    ///
+    /// Tests the display when work items step is fully completed.
+    ///
+    /// ## Test Scenario
+    /// - Both PRs and work items fetch completed, no current step running
+    ///
+    /// ## Expected Outcome
+    /// - Steps 1-2 completed (green checkmarks), Steps 3-4 pending
+    #[test]
+    fn test_loading_step_fetch_work_items_completed() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_running_state_with_progress(
+                true,
+                &[LoadingStep::FetchPullRequests, LoadingStep::FetchWorkItems],
+                None,
+                None,
+                None,
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("step_fetch_work_items_completed", harness.backend());
+        });
+    }
+
     /// # Data Loading State - Fetch Commit Info Started
     ///
     /// Tests the display when fetch commit info step starts.
@@ -1704,6 +1844,38 @@ mod tests {
             harness.render_state(&mut state);
 
             assert_snapshot!("step_fetch_commits_progress", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Fetch Commit Info Completed
+    ///
+    /// Tests the display when commit info step is fully completed.
+    ///
+    /// ## Test Scenario
+    /// - Steps 1-3 completed, Step 4 still pending
+    ///
+    /// ## Expected Outcome
+    /// - Steps 1-3 show green checkmarks, Step 4 pending
+    #[test]
+    fn test_loading_step_fetch_commits_completed() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_running_state_with_progress(
+                true,
+                &[
+                    LoadingStep::FetchPullRequests,
+                    LoadingStep::FetchWorkItems,
+                    LoadingStep::FetchCommitInfo,
+                ],
+                None,
+                None,
+                None,
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("step_fetch_commits_completed", harness.backend());
         });
     }
 
@@ -1757,6 +1929,39 @@ mod tests {
             harness.render_state(&mut state);
 
             assert_snapshot!("step_analyze_deps_skipped", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Analyze Dependencies Completed
+    ///
+    /// Tests the display when dependency analysis step completes (all 4 steps done, running state).
+    ///
+    /// ## Test Scenario
+    /// - All 4 steps completed, but AllComplete message not yet received
+    ///
+    /// ## Expected Outcome
+    /// - All 4 steps show green checkmarks, still in Running state
+    #[test]
+    fn test_loading_step_analyze_deps_completed() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_running_state_with_progress(
+                true,
+                &[
+                    LoadingStep::FetchPullRequests,
+                    LoadingStep::FetchWorkItems,
+                    LoadingStep::FetchCommitInfo,
+                    LoadingStep::AnalyzeDependencies,
+                ],
+                None,
+                None,
+                None,
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("step_analyze_deps_completed", harness.backend());
         });
     }
 
@@ -1888,6 +2093,89 @@ mod tests {
         });
     }
 
+    /// # Data Loading State - Error Network Timeout
+    ///
+    /// Tests the display when a network timeout error occurs.
+    ///
+    /// ## Test Scenario
+    /// - Network timeout on work items step (step 2), PRs already fetched
+    ///
+    /// ## Expected Outcome
+    /// - Step 1 completed, Step 2 shows error
+    /// - Error message shows timeout details with retry option
+    #[test]
+    fn test_loading_error_network_timeout() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_error_state(
+                true,
+                LoadingError::NetworkTimeout("Request timed out after 30s".to_string()),
+                &[LoadingStep::FetchPullRequests],
+                Some(LoadingStep::FetchWorkItems),
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("error_network_timeout", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Error API Error on Step 3
+    ///
+    /// Tests the display when API error occurs during commit info fetch.
+    ///
+    /// ## Test Scenario
+    /// - Steps 1-2 completed, API error on step 3
+    ///
+    /// ## Expected Outcome
+    /// - Steps 1-2 completed, Step 3 shows error
+    /// - Error message with retry option
+    #[test]
+    fn test_loading_error_api_at_step3() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_error_state(
+                true,
+                LoadingError::ApiError("HTTP 503 Service Unavailable".to_string()),
+                &[LoadingStep::FetchPullRequests, LoadingStep::FetchWorkItems],
+                Some(LoadingStep::FetchCommitInfo),
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("error_api_at_step3", harness.backend());
+        });
+    }
+
+    /// # Data Loading State - Error Generic
+    ///
+    /// Tests the display when a generic error occurs.
+    ///
+    /// ## Test Scenario
+    /// - Generic/unknown error during first step
+    ///
+    /// ## Expected Outcome
+    /// - Error message with retry option
+    #[test]
+    fn test_loading_error_generic() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            let mut state = create_error_state(
+                true,
+                LoadingError::Other("Unexpected deserialization error".to_string()),
+                &[],
+                Some(LoadingStep::FetchPullRequests),
+            );
+            harness.render_state(&mut state);
+
+            assert_snapshot!("error_generic", harness.backend());
+        });
+    }
+
     // ========================================================================
     // Key Handling Tests
     // ========================================================================
@@ -1981,6 +2269,37 @@ mod tests {
         assert!(matches!(result, StateChange::Keep));
         // After retry, should be in Running state again
         assert!(matches!(state.state, LoadingState::Running { .. }));
+    }
+
+    /// # Data Loading State - Error State Skip
+    ///
+    /// Tests that 's' key skips on skippable error (LocalRepoNotFound).
+    ///
+    /// ## Test Scenario
+    /// - Error on dependency analysis step (skippable)
+    /// - Press 's' to skip
+    ///
+    /// ## Expected Outcome
+    /// - Should transition back to Running state with deps step skipped
+    #[tokio::test]
+    async fn test_data_loading_error_skip() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+
+        let mut state = create_error_state(
+            true,
+            LoadingError::LocalRepoNotFound("/path/to/repo".to_string()),
+            &[
+                LoadingStep::FetchPullRequests,
+                LoadingStep::FetchWorkItems,
+                LoadingStep::FetchCommitInfo,
+            ],
+            Some(LoadingStep::AnalyzeDependencies),
+        );
+
+        let result =
+            ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
+        assert!(matches!(result, StateChange::Keep));
     }
 
     /// # Data Loading State - Error State Escape
