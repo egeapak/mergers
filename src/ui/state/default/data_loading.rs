@@ -2638,4 +2638,109 @@ mod tests {
         // Should still be in Error state (skip only works for AnalyzeDependencies)
         assert!(matches!(state.state, LoadingState::Error { .. }));
     }
+
+    /// # Handle Out-of-Bounds PR Index Gracefully
+    ///
+    /// Tests that work items/commit updates with invalid indices don't crash.
+    ///
+    /// ## Test Scenario
+    /// - Apply work items update with pr_index > PR list length
+    /// - Apply commit info update with pr_index > PR list length
+    ///
+    /// ## Expected Outcome
+    /// - No panic, updates are silently ignored
+    #[test]
+    fn test_out_of_bounds_index_handled_gracefully() {
+        // This test verifies the defensive bounds checking works
+        let mut data = LoadingStepData::default();
+
+        // Work items update with out-of-bounds index
+        let wi_result = LoadingStepResult {
+            work_items_update: Some(WorkItemsResult {
+                pr_index: 999, // Way out of bounds
+                work_items: Vec::new(),
+            }),
+            ..Default::default()
+        };
+        // Should not panic, should increment counter
+        data.merge_result(&wi_result);
+        assert_eq!(data.work_items_fetched, 1); // Still counted
+
+        // Commit info with out-of-bounds index
+        let ci_result = LoadingStepResult {
+            commit_info_update: Some(CommitInfoResult {
+                pr_index: 999,
+                merge_commit: crate::models::MergeCommit {
+                    commit_id: "abc".to_string(),
+                },
+            }),
+            ..Default::default()
+        };
+        data.merge_result(&ci_result);
+        assert_eq!(data.commits_fetched, 1); // Still counted
+    }
+
+    /// # LoadingStepData - All Fields Together
+    ///
+    /// Tests that merge_result correctly handles a result with multiple fields set.
+    #[test]
+    fn test_step_data_merge_result_comprehensive() {
+        let mut data = LoadingStepData::default();
+
+        // First: PRs fetched
+        let pr_result = LoadingStepResult {
+            prs: Some(vec![make_test_pr(1), make_test_pr(2), make_test_pr(3)]),
+            ..Default::default()
+        };
+        data.merge_result(&pr_result);
+        assert_eq!(data.total_prs, 3);
+        assert_eq!(data.work_items_total, 3);
+
+        // Then: Work items (3 PRs)
+        for _ in 0..3 {
+            let wi_result = LoadingStepResult {
+                work_items_update: Some(WorkItemsResult {
+                    pr_index: 0,
+                    work_items: Vec::new(),
+                }),
+                ..Default::default()
+            };
+            data.merge_result(&wi_result);
+        }
+        assert_eq!(data.work_items_fetched, 3);
+
+        // Then: Commit info (2 commits)
+        for _ in 0..2 {
+            let ci_result = LoadingStepResult {
+                commit_info_update: Some(CommitInfoResult {
+                    pr_index: 0,
+                    merge_commit: crate::models::MergeCommit {
+                        commit_id: "abc".to_string(),
+                    },
+                }),
+                ..Default::default()
+            };
+            data.merge_result(&ci_result);
+        }
+        assert_eq!(data.commits_fetched, 2);
+
+        // Finally: Dependency graph
+        let graph = PRDependencyGraph {
+            nodes: std::collections::HashMap::new(),
+            topological_order: Vec::new(),
+        };
+        let dep_result = LoadingStepResult {
+            dependency_graph: Some(graph),
+            ..Default::default()
+        };
+        data.merge_result(&dep_result);
+        assert!(data.dependency_graph.is_some());
+
+        // Final state check
+        assert_eq!(data.total_prs, 3);
+        assert_eq!(data.work_items_fetched, 3);
+        assert_eq!(data.work_items_total, 3);
+        assert_eq!(data.commits_fetched, 2);
+        assert!(data.dependency_graph.is_some());
+    }
 }
