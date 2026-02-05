@@ -159,11 +159,12 @@ impl WorkItemCache {
         // Use XDG_CACHE_HOME if set, otherwise ~/.cache
         let cache_dir = std::env::var("XDG_CACHE_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+            .or_else(|_| {
                 dirs::home_dir()
-                    .expect("Could not determine home directory")
-                    .join(".cache")
-            });
+                    .map(|d| d.join(".cache"))
+                    .ok_or(std::env::VarError::NotPresent)
+            })
+            .map_err(|_| anyhow::anyhow!("Could not determine home directory for cache path"))?;
 
         Ok(cache_dir.join("mergers").join("work_items.json"))
     }

@@ -297,7 +297,7 @@ async fn run_release_notes(args: &ReleaseNotesArgs) -> Result<()> {
         .or(config_project)
         .unwrap_or_else(|| "project".to_string());
 
-    let base_url = format!("https://{}.visualstudio.com/{}", organization, project);
+    let base_url = format!("https://dev.azure.com/{}/{}", organization, project);
     let entries = release_notes::generate_entries(&commits, &work_items_map, &base_url);
 
     // Format output

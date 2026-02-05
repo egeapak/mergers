@@ -23,6 +23,10 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// Compiled regex for extracting work item IDs from commit messages.
+static TASK_ID_REGEX: OnceLock<Regex> = OnceLock::new();
 
 /// Represents a release note entry with task ID, title, and optional PR info.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -130,7 +134,8 @@ pub fn get_commits_in_range(
 ///
 /// Returns a vector of unique task IDs found in the message, preserving order.
 pub fn extract_task_ids(commit_message: &str) -> Vec<i32> {
-    let re = Regex::new(r"rwi:#(\d+)").expect("Invalid regex pattern");
+    let re =
+        TASK_ID_REGEX.get_or_init(|| Regex::new(r"rwi:#(\d+)").expect("Invalid regex pattern"));
 
     let mut ids: Vec<i32> = re
         .captures_iter(commit_message)
