@@ -294,6 +294,7 @@ impl ModeState for CompletionState {
         summary_text.push(Line::from("↑/↓ Navigate"));
         summary_text.push(Line::from("'p' Open PR in browser"));
         summary_text.push(Line::from("'w' Open work items"));
+        summary_text.push(Line::from("'r' Export release notes"));
         summary_text.push(Line::from(format!(
             "'t' Tag PRs & update work items to '{}'",
             app.work_item_state()
@@ -351,6 +352,9 @@ impl ModeState for CompletionState {
                 }
                 StateChange::Keep
             }
+            KeyCode::Char('r') => StateChange::Change(MergeState::ReleaseNotesExport(
+                crate::ui::state::ReleaseNotesExportState::new(app),
+            )),
             KeyCode::Char('t') => StateChange::Change(MergeState::PostCompletion(
                 crate::ui::state::PostCompletionState::new(),
             )),

@@ -205,6 +205,13 @@ fn cleanup_examples() -> &'static str {
     EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/cleanup.txt")))
 }
 
+/// Release-notes command examples
+fn release_notes_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/release-notes.txt")))
+}
+
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
 pub struct SharedArgs {
@@ -382,6 +389,106 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
+// ============================================================================
+// Release Notes CLI Arguments
+// ============================================================================
+
+/// Output format for release-notes command.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Serialize)]
+pub enum ReleaseNotesOutputFormat {
+    /// Markdown table format.
+    #[default]
+    Markdown,
+    /// JSON array of task objects.
+    Json,
+    /// Plain text list.
+    Plain,
+}
+
+impl std::fmt::Display for ReleaseNotesOutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReleaseNotesOutputFormat::Markdown => write!(f, "markdown"),
+            ReleaseNotesOutputFormat::Json => write!(f, "json"),
+            ReleaseNotesOutputFormat::Plain => write!(f, "plain"),
+        }
+    }
+}
+
+/// Task grouping category based on commit message prefix.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum TaskGroup {
+    /// Feature additions (feat:, feature:)
+    Feature,
+    /// Bug fixes (fix:, bugfix:)
+    Fix,
+    /// Code refactoring (refactor:)
+    Refactor,
+    /// Other changes
+    #[default]
+    Other,
+}
+
+impl std::fmt::Display for TaskGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskGroup::Feature => write!(f, "Features"),
+            TaskGroup::Fix => write!(f, "Fixes"),
+            TaskGroup::Refactor => write!(f, "Refactors"),
+            TaskGroup::Other => write!(f, "Other"),
+        }
+    }
+}
+
+/// Arguments for the release-notes command.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct ReleaseNotesArgs {
+    /// Repository path or alias (e.g., th, gk). Uses current directory if not specified.
+    pub path_or_alias: Option<String>,
+
+    /// Azure DevOps organization name
+    #[arg(short, long, help_heading = "Azure DevOps Connection")]
+    pub organization: Option<String>,
+
+    /// Azure DevOps project name
+    #[arg(short, long, help_heading = "Azure DevOps Connection")]
+    pub project: Option<String>,
+
+    /// Personal Access Token for Azure DevOps API authentication
+    #[arg(short = 't', long, help_heading = "Azure DevOps Connection")]
+    pub pat: Option<String>,
+
+    /// Output format: markdown, json, plain
+    #[arg(long, value_enum, default_value_t = ReleaseNotesOutputFormat::Markdown, help_heading = "Output Options")]
+    pub output: ReleaseNotesOutputFormat,
+
+    /// Copy output to clipboard
+    #[arg(long, help_heading = "Output Options")]
+    pub copy: bool,
+
+    /// Group tasks by commit type (feat, fix, refactor)
+    #[arg(long, help_heading = "Output Options")]
+    pub group: bool,
+
+    /// Include PR links in output
+    #[arg(long, help_heading = "Output Options")]
+    pub include_prs: bool,
+
+    /// Starting version/tag for range (inclusive)
+    #[arg(long, help_heading = "Version Range")]
+    pub from: Option<String>,
+
+    /// Ending version/tag for range (inclusive, defaults to HEAD)
+    #[arg(long, help_heading = "Version Range")]
+    pub to: Option<String>,
+
+    /// Skip cache and fetch fresh data from API
+    #[arg(long, help_heading = "Cache Options")]
+    pub no_cache: bool,
+}
+
 /// Arguments for the `merge continue` subcommand.
 #[derive(ClapArgs, Clone, Debug)]
 pub struct MergeContinueArgs {
@@ -554,25 +661,60 @@ pub enum Commands {
         after_help = cleanup_examples()
     )]
     Cleanup(CleanupArgs),
+
+    /// Generate release notes from version commits
+    #[command(
+        visible_alias = "rn",
+        long_about = "Generate release notes from git commits.\n\n\
+            Extracts work item references (rwi:#XXXXX) from commit messages\n\
+            and fetches their titles from Azure DevOps to create formatted\n\
+            release notes.\n\n\
+            Features:\n  \
+            • Supports version ranges (--from / --to)\n  \
+            • Groups tasks by type (feat, fix, refactor)\n  \
+            • Caches work item titles locally\n  \
+            • Multiple output formats (markdown, json, plain)\n  \
+            • Clipboard support (--copy)",
+        after_help = release_notes_examples()
+    )]
+    ReleaseNotes(ReleaseNotesArgs),
 }
 
 impl Commands {
-    /// Extract shared arguments from any command variant
+    /// Extract shared arguments from any command variant.
+    ///
+    /// Note: ReleaseNotes command doesn't use SharedArgs and will panic if accessed.
+    /// This is intentional as ReleaseNotes has its own argument handling.
     pub fn shared_args(&self) -> &SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args(),
             Commands::Migrate(args) => args.shared_args(),
             Commands::Cleanup(args) => args.shared_args(),
+            Commands::ReleaseNotes(_) => {
+                panic!("ReleaseNotes command does not use SharedArgs")
+            }
         }
     }
 
-    /// Extract mutable shared arguments from any command variant
+    /// Extract mutable shared arguments from any command variant.
+    ///
+    /// Note: ReleaseNotes command doesn't use SharedArgs and will panic if accessed.
+    /// This is intentional as ReleaseNotes has its own argument handling.
     pub fn shared_args_mut(&mut self) -> &mut SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args_mut(),
             Commands::Migrate(args) => args.shared_args_mut(),
             Commands::Cleanup(args) => args.shared_args_mut(),
+            Commands::ReleaseNotes(_) => {
+                panic!("ReleaseNotes command does not use SharedArgs")
+            }
         }
+    }
+
+    /// Check if this command is the ReleaseNotes command.
+    #[must_use]
+    pub fn is_release_notes(&self) -> bool {
+        matches!(self, Commands::ReleaseNotes(_))
     }
 }
 
@@ -1042,6 +1184,8 @@ impl Args {
             // UI settings are not set via CLI, only via config file
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            // repo_aliases are not set via CLI, only via config file
+            repo_aliases: None,
         };
 
         // Merge configs: file < git_remote < env < cli
@@ -1140,6 +1284,10 @@ impl Args {
                     shared: shared_config,
                     cleanup: CleanupModeConfig { target },
                 })
+            }
+            Commands::ReleaseNotes(_) => {
+                // ReleaseNotes command doesn't use AppConfig - it has its own handling
+                unreachable!("ReleaseNotes command should not go through resolve_config")
             }
         }
     }

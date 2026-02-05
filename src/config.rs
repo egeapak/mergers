@@ -46,6 +46,8 @@ struct ConfigFile {
     // UI Settings
     pub show_dependency_highlights: Option<bool>,
     pub show_work_item_highlights: Option<bool>,
+    // Release Notes Settings
+    pub repo_aliases: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +68,9 @@ pub struct Config {
     // UI Settings
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
+    // Release Notes Settings
+    /// Repository aliases for release-notes command (e.g., "th" -> "/path/to/telehealth")
+    pub repo_aliases: Option<ParsedProperty<std::collections::HashMap<String, String>>>,
 }
 
 impl Default for Config {
@@ -87,6 +92,8 @@ impl Default for Config {
             // UI Settings - both enabled by default
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            // Release Notes Settings
+            repo_aliases: None,
         }
     }
 }
@@ -153,6 +160,9 @@ impl Config {
             show_work_item_highlights: config_file
                 .show_work_item_highlights
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            repo_aliases: config_file
+                .repo_aliases
+                .map(|v| ParsedProperty::File(v.clone(), config_path.clone(), format!("{:?}", v))),
         })
     }
 
@@ -203,6 +213,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                repo_aliases: None,
             };
         }
 
@@ -229,6 +240,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                repo_aliases: None,
             };
         }
 
@@ -293,6 +305,8 @@ impl Config {
                         .ok()
                         .map(|v| ParsedProperty::Env(v, s.clone()))
                 }),
+            // repo_aliases is configured via file only, not environment variables
+            repo_aliases: None,
         }
     }
 
@@ -346,6 +360,7 @@ impl Config {
             show_work_item_highlights: other
                 .show_work_item_highlights
                 .or(self.show_work_item_highlights),
+            repo_aliases: other.repo_aliases.or(self.repo_aliases),
         }
     }
 
@@ -402,6 +417,12 @@ show_dependency_highlights = true
 
 # Show work item relationship highlighting in PR selection (optional, defaults to true)
 show_work_item_highlights = true
+
+# Repository aliases for release-notes command
+# Maps short names to full paths for quick access
+# [repo_aliases]
+# th = "/path/to/telehealth-backend"
+# gk = "/path/to/gatekeeper-backend"
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
@@ -784,6 +805,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let other = Config {
@@ -802,6 +824,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let merged = base.merge(other);
@@ -883,6 +906,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let empty2 = Config {
@@ -901,6 +925,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1345,6 +1370,7 @@ invalid toml syntax here [
             run_hooks: Some(ParsedProperty::Default(false)),
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            repo_aliases: None,
         };
 
         // Test serialization to TOML (serializes with enum variant info)
@@ -1660,6 +1686,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            repo_aliases: None,
         };
 
         let override_config = Config {
@@ -1678,6 +1705,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(false)),
             show_work_item_highlights: None, // Should keep base value
+            repo_aliases: None,
         };
 
         let merged = base.merge(override_config);
