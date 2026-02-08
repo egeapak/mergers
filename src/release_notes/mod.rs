@@ -1,32 +1,23 @@
-//! Release notes generation from version commits.
+//! Release notes generation from Azure DevOps pull requests and work items.
 //!
-//! This module extracts work item references from git commit messages
-//! and generates formatted release notes by fetching work item titles
-//! from Azure DevOps.
+//! This module generates formatted release notes by fetching PR data
+//! and associated work items from Azure DevOps, using PR labels (tags)
+//! as the source of truth for version tracking.
 //!
 //! # Features
 //!
-//! - Extract task IDs from `rwi:#XXXXX` patterns in commit messages
-//! - Support version ranges (--from / --to)
+//! - PR label/tag-based version tracking
 //! - Group tasks by type (feat, fix, refactor)
 //! - Multiple output formats (markdown, json, plain)
-//! - Work item title caching
+//! - Work item caching
 
 pub mod cache;
 
 use crate::models::{
-    CherryPickItem, CherryPickStatus, PullRequestWithWorkItems, ReleaseNotesOutputFormat,
-    TaskGroup, WorkItem,
+    CherryPickItem, CherryPickStatus, PullRequestWithWorkItems, ReleaseNotesOutputFormat, TaskGroup,
 };
 use anyhow::{Context, Result};
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-use std::process::Command;
-use std::sync::OnceLock;
-
-/// Compiled regex for extracting work item IDs from commit messages.
-static TASK_ID_REGEX: OnceLock<Regex> = OnceLock::new();
 
 /// Represents a release note entry with task ID, title, and optional PR info.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -37,116 +28,6 @@ pub struct ReleaseNoteEntry {
     pub group: TaskGroup,
     pub pr_id: Option<i32>,
     pub pr_url: Option<String>,
-}
-
-/// Represents a commit with extracted task information.
-#[derive(Debug, Clone)]
-pub struct CommitEntry {
-    pub hash: String,
-    pub message: String,
-    pub task_ids: Vec<i32>,
-    pub group: TaskGroup,
-}
-
-/// Get the last commit message from a git repository.
-///
-/// Returns the full commit message body of the most recent commit.
-pub fn get_last_commit_message(repo_path: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["log", "-1", "--format=%B"])
-        .output()
-        .context("Failed to execute git log")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "Failed to get commit message: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Get commits in a range between two tags/refs.
-///
-/// # Arguments
-///
-/// * `repo_path` - Path to the git repository
-/// * `from` - Starting ref (tag, branch, or commit)
-/// * `to` - Ending ref (defaults to HEAD if None)
-///
-/// # Returns
-///
-/// Vector of CommitEntry objects for commits in the range.
-pub fn get_commits_in_range(
-    repo_path: &Path,
-    from: &str,
-    to: Option<&str>,
-) -> Result<Vec<CommitEntry>> {
-    let to_ref = to.unwrap_or("HEAD");
-    let range = format!("{}..{}", from, to_ref);
-
-    let output = Command::new("git")
-        .current_dir(repo_path)
-        .args(["log", &range, "--format=%H|%s|%b", "--no-merges"])
-        .output()
-        .context("Failed to execute git log for range")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "Failed to get commits in range: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let mut commits = Vec::new();
-
-    for entry in output_str.split("\n\n") {
-        if entry.trim().is_empty() {
-            continue;
-        }
-
-        let parts: Vec<&str> = entry.splitn(3, '|').collect();
-        if parts.len() >= 2 {
-            let hash = parts[0].trim().to_string();
-            let subject = parts[1].trim().to_string();
-            let body = parts.get(2).map(|s| s.trim()).unwrap_or("");
-
-            let full_message = format!("{}\n{}", subject, body);
-            let task_ids = extract_task_ids(&full_message);
-            let group = determine_task_group(&subject);
-
-            commits.push(CommitEntry {
-                hash,
-                message: full_message,
-                task_ids,
-                group,
-            });
-        }
-    }
-
-    Ok(commits)
-}
-
-/// Extract task IDs from commit message using "rwi:#XXXXX" pattern.
-///
-/// Returns a vector of unique task IDs found in the message, preserving order.
-pub fn extract_task_ids(commit_message: &str) -> Vec<i32> {
-    let re =
-        TASK_ID_REGEX.get_or_init(|| Regex::new(r"rwi:#(\d+)").expect("Invalid regex pattern"));
-
-    let mut ids: Vec<i32> = re
-        .captures_iter(commit_message)
-        .filter_map(|cap| cap.get(1).and_then(|m| m.as_str().parse().ok()))
-        .collect();
-
-    // Remove duplicates while preserving order
-    let mut seen = std::collections::HashSet::new();
-    ids.retain(|id| seen.insert(*id));
-
-    ids
 }
 
 /// Determine task group based on commit message prefix.
@@ -177,56 +58,12 @@ pub fn determine_task_group(commit_message: &str) -> TaskGroup {
 /// or other special characters. This function encodes them so that
 /// `[text](url)` renders correctly in markdown previews.
 fn encode_url_for_markdown(url: &str) -> String {
-    url.replace(' ', "%20")
-        .replace('(', "%28")
-        .replace(')', "%29")
-}
+    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
-/// Generate release note entries from commits and work items.
-///
-/// # Arguments
-///
-/// * `commits` - Vector of commit entries with task IDs
-/// * `work_items_map` - Map of work item ID to WorkItem
-/// * `base_url` - Base URL for Azure DevOps (e.g., "https://org.visualstudio.com/project")
-///
-/// # Returns
-///
-/// Vector of ReleaseNoteEntry objects.
-pub fn generate_entries(
-    commits: &[CommitEntry],
-    work_items_map: &HashMap<i32, WorkItem>,
-    base_url: &str,
-) -> Vec<ReleaseNoteEntry> {
-    let mut entries = Vec::new();
-    let mut seen_task_ids = std::collections::HashSet::new();
+    const MARKDOWN_ENCODE_SET: &AsciiSet =
+        &CONTROLS.add(b' ').add(b'(').add(b')').add(b'[').add(b']');
 
-    for commit in commits {
-        for &task_id in &commit.task_ids {
-            // Skip duplicates
-            if !seen_task_ids.insert(task_id) {
-                continue;
-            }
-
-            let title = work_items_map
-                .get(&task_id)
-                .and_then(|wi| wi.fields.title.clone())
-                .unwrap_or_else(|| "(Title not found)".to_string());
-
-            let url = encode_url_for_markdown(&format!("{}/_workitems/edit/{}", base_url, task_id));
-
-            entries.push(ReleaseNoteEntry {
-                task_id,
-                title,
-                url,
-                group: commit.group,
-                pr_id: None,
-                pr_url: None,
-            });
-        }
-    }
-
-    entries
+    utf8_percent_encode(url, MARKDOWN_ENCODE_SET).to_string()
 }
 
 /// Format entries as a markdown table.
@@ -371,63 +208,6 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Resolve repository path from alias or path.
-///
-/// # Arguments
-///
-/// * `path_or_alias` - Optional path or alias (e.g., "th", "/path/to/repo")
-/// * `aliases` - Map of alias names to paths from config
-///
-/// # Returns
-///
-/// Resolved PathBuf to the repository.
-pub fn resolve_repo_path(
-    path_or_alias: Option<&str>,
-    aliases: &Option<HashMap<String, String>>,
-) -> Result<std::path::PathBuf> {
-    match path_or_alias {
-        None => {
-            // Use current directory
-            std::env::current_dir().context("Failed to get current directory")
-        }
-        Some(input) => {
-            // Check if it's an alias
-            if let Some(alias_map) = aliases
-                && let Some(path) = alias_map.get(input)
-            {
-                return Ok(std::path::PathBuf::from(path));
-            }
-
-            // Treat as path
-            let path = std::path::PathBuf::from(input);
-            if path.exists() {
-                Ok(path)
-            } else {
-                anyhow::bail!(
-                    "Path '{}' does not exist. If this is an alias, configure it in ~/.config/mergers/config.toml under [repo_aliases]",
-                    input
-                )
-            }
-        }
-    }
-}
-
-/// Get all unique task IDs from a list of commits.
-pub fn collect_task_ids(commits: &[CommitEntry]) -> Vec<i32> {
-    let mut ids = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for commit in commits {
-        for &id in &commit.task_ids {
-            if seen.insert(id) {
-                ids.push(id);
-            }
-        }
-    }
-
-    ids
-}
-
 /// Generate release notes markdown from TUI merge data.
 ///
 /// This function builds release notes directly from cherry-pick results
@@ -533,44 +313,99 @@ pub fn generate_from_merge_data(
     output
 }
 
+/// Build release note entries from PR + work item data.
+pub fn build_entries_from_prs(
+    prs: &[PullRequestWithWorkItems],
+    organization: &str,
+    project: &str,
+) -> Vec<ReleaseNoteEntry> {
+    let base_url = format!("https://dev.azure.com/{}/{}", organization, project);
+    let mut entries: Vec<ReleaseNoteEntry> = Vec::new();
+    let mut seen_task_ids = HashSet::new();
+
+    for pr_with_wi in prs {
+        let group = determine_task_group(&pr_with_wi.pr.title);
+
+        for wi in &pr_with_wi.work_items {
+            if !seen_task_ids.insert(wi.id) {
+                continue;
+            }
+
+            let title = wi
+                .fields
+                .title
+                .clone()
+                .unwrap_or_else(|| "(Title not found)".to_string());
+            let url = encode_url_for_markdown(&format!("{}/_workitems/edit/{}", base_url, wi.id));
+
+            entries.push(ReleaseNoteEntry {
+                task_id: wi.id,
+                title,
+                url,
+                group,
+                pr_id: Some(pr_with_wi.pr.id),
+                pr_url: Some(encode_url_for_markdown(&format!(
+                    "{}/_git/pullrequest/{}",
+                    base_url, pr_with_wi.pr.id
+                ))),
+            });
+        }
+    }
+
+    entries
+}
+
+/// Generate full release notes markdown from PR + work item data.
+pub fn generate_from_prs(
+    version: &str,
+    prs: &[PullRequestWithWorkItems],
+    organization: &str,
+    project: &str,
+) -> String {
+    let entries = build_entries_from_prs(prs, organization, project);
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    let mut output = format!("# Release Notes - {version}\n\n**Release Date:** {today}\n");
+
+    if entries.is_empty() {
+        output.push_str("\nNo changes included in this release.\n");
+        return output;
+    }
+
+    let mut groups: HashMap<TaskGroup, Vec<&ReleaseNoteEntry>> = HashMap::new();
+    for entry in &entries {
+        groups.entry(entry.group).or_default().push(entry);
+    }
+
+    for group in [
+        TaskGroup::Feature,
+        TaskGroup::Fix,
+        TaskGroup::Refactor,
+        TaskGroup::Other,
+    ] {
+        if let Some(group_entries) = groups.get(&group)
+            && !group_entries.is_empty()
+        {
+            output.push_str(&format!("\n## {}\n\n", group));
+            for entry in group_entries {
+                output.push_str(&format!(
+                    "- [{}]({}) {} \n",
+                    entry.task_id, entry.url, entry.title
+                ));
+            }
+        }
+    }
+
+    output.push_str(&format!(
+        "\n---\n\n*{} work item(s) included in this release.*\n",
+        entries.len()
+    ));
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_extract_task_ids_single() {
-        let message = "Version 1.0.0\n\nrwi:#12345";
-        let ids = extract_task_ids(message);
-        assert_eq!(ids, vec![12345]);
-    }
-
-    #[test]
-    fn test_extract_task_ids_multiple() {
-        let message = "Release notes\n\nrwi:#111\nrwi:#222\nrwi:#333";
-        let ids = extract_task_ids(message);
-        assert_eq!(ids, vec![111, 222, 333]);
-    }
-
-    #[test]
-    fn test_extract_task_ids_duplicates() {
-        let message = "rwi:#100\nrwi:#200\nrwi:#100";
-        let ids = extract_task_ids(message);
-        assert_eq!(ids, vec![100, 200]); // Duplicates removed
-    }
-
-    #[test]
-    fn test_extract_task_ids_none() {
-        let message = "No task references here";
-        let ids = extract_task_ids(message);
-        assert!(ids.is_empty());
-    }
-
-    #[test]
-    fn test_extract_task_ids_mixed_content() {
-        let message = "feat: Add login feature\n\nrwi:#12345\nSome text here\nrwi:#67890";
-        let ids = extract_task_ids(message);
-        assert_eq!(ids, vec![12345, 67890]);
-    }
 
     #[test]
     fn test_determine_task_group_feature() {
@@ -644,21 +479,5 @@ mod tests {
 
         let output = format_plain(&entries, false);
         assert_eq!(output, "#456: Another task");
-    }
-
-    #[test]
-    fn test_resolve_repo_path_with_alias() {
-        let mut aliases = HashMap::new();
-        aliases.insert("test".to_string(), "/tmp/test-repo".to_string());
-
-        let result = resolve_repo_path(Some("test"), &Some(aliases));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), std::path::PathBuf::from("/tmp/test-repo"));
-    }
-
-    #[test]
-    fn test_resolve_repo_path_current_dir() {
-        let result = resolve_repo_path(None, &None);
-        assert!(result.is_ok());
     }
 }

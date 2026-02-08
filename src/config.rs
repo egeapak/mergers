@@ -24,6 +24,7 @@
 use crate::{git_config, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -468,6 +469,42 @@ show_work_item_highlights = true
             .with_context(|| format!("Failed to write config to: {}", config_path.display()))?;
 
         Ok(())
+    }
+}
+
+/// Resolve repository path from alias or path.
+///
+/// # Arguments
+///
+/// * `path_or_alias` - Optional path or alias (e.g., "th", "/path/to/repo")
+/// * `aliases` - Map of alias names to paths from config
+///
+/// # Returns
+///
+/// Resolved PathBuf to the repository.
+pub fn resolve_repo_path(
+    path_or_alias: Option<&str>,
+    aliases: &Option<HashMap<String, String>>,
+) -> Result<PathBuf> {
+    match path_or_alias {
+        None => std::env::current_dir().context("Failed to get current directory"),
+        Some(input) => {
+            if let Some(alias_map) = aliases
+                && let Some(path) = alias_map.get(input)
+            {
+                return Ok(PathBuf::from(path));
+            }
+
+            let path = PathBuf::from(input);
+            if path.exists() {
+                Ok(path)
+            } else {
+                anyhow::bail!(
+                    "Path '{}' does not exist. If this is an alias, configure it in ~/.config/mergers/config.toml under [repo_aliases]",
+                    input
+                )
+            }
+        }
     }
 }
 
@@ -1760,5 +1797,40 @@ show_work_item_highlights = true
         // Verify directory and file were created
         assert!(mergers_dir.exists());
         assert!(mergers_dir.join("config.toml").exists());
+    }
+
+    /// # Resolve Repo Path With Alias
+    ///
+    /// Tests that resolve_repo_path correctly resolves aliases from config.
+    ///
+    /// ## Test Scenario
+    /// - Creates an alias map with "test" -> "/tmp/test-repo"
+    /// - Resolves "test" using the alias map
+    ///
+    /// ## Expected Outcome
+    /// - Path resolves to the alias target
+    #[test]
+    fn test_resolve_repo_path_with_alias() {
+        let mut aliases = HashMap::new();
+        aliases.insert("test".to_string(), "/tmp/test-repo".to_string());
+
+        let result = super::resolve_repo_path(Some("test"), &Some(aliases));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/tmp/test-repo"));
+    }
+
+    /// # Resolve Repo Path Current Directory
+    ///
+    /// Tests that resolve_repo_path falls back to current directory when no input.
+    ///
+    /// ## Test Scenario
+    /// - Calls resolve_repo_path with None path and None aliases
+    ///
+    /// ## Expected Outcome
+    /// - Returns the current working directory
+    #[test]
+    fn test_resolve_repo_path_current_dir() {
+        let result = super::resolve_repo_path(None, &None);
+        assert!(result.is_ok());
     }
 }

@@ -13,14 +13,16 @@ use std::sync::Arc;
 use mergers::{
     Args, AzureDevOpsClient, Commands, Config,
     config::Config as RawConfig,
-    core::runner::{MergeRunnerConfig, NonInteractiveRunner, OutputFormat, RunResult},
+    core::runner::{
+        MergeRunnerConfig, NonInteractiveRunner, OutputFormat, ReleaseNotesRunner,
+        ReleaseNotesRunnerConfig, RunResult,
+    },
     logging::{init_logging, parse_early_log_config},
     models::{
         MergeAbortArgs, MergeArgs, MergeCompleteArgs, MergeContinueArgs, MergeStatusArgs,
         MergeSubcommand, ReleaseNotesArgs,
     },
     parsed_property::ParsedProperty,
-    release_notes::{self, cache::WorkItemCache},
     ui::{App, run_app},
 };
 
@@ -150,169 +152,116 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
 
 /// Runs the release-notes command.
 async fn run_release_notes(args: &ReleaseNotesArgs) -> Result<()> {
-    use std::collections::HashMap;
+    let config = build_release_notes_runner_config(args)?;
+    let runner = ReleaseNotesRunner::new(config);
 
-    // Load config for aliases and defaults
+    let output = runner.run().await?;
+    println!("{}", output);
+
+    Ok(())
+}
+
+/// Builds a ReleaseNotesRunnerConfig from CLI args and config files.
+fn build_release_notes_runner_config(args: &ReleaseNotesArgs) -> Result<ReleaseNotesRunnerConfig> {
+    let shared = &args.shared;
+
     let file_config = RawConfig::load_from_file()?;
     let env_config = RawConfig::load_from_env();
-    let merged_config = file_config.merge(env_config);
 
-    // Get repo aliases from config
-    let repo_aliases: Option<HashMap<String, String>> =
-        merged_config.repo_aliases.map(|p| p.value().clone());
-
-    // Resolve repository path
-    let repo_path = release_notes::resolve_repo_path(args.path_or_alias.as_deref(), &repo_aliases)?;
-
-    // Get commits based on version range or last commit
-    let commits = if let Some(from) = &args.from {
-        release_notes::get_commits_in_range(&repo_path, from, args.to.as_deref())?
+    let git_config = if let Some(ref path_or_alias) = args.path_or_alias {
+        let repo_aliases: Option<std::collections::HashMap<String, String>> =
+            file_config.repo_aliases.as_ref().map(|p| p.value().clone());
+        if let Ok(resolved) = mergers::config::resolve_repo_path(Some(path_or_alias), &repo_aliases)
+        {
+            RawConfig::detect_from_git_remote(&resolved)
+        } else {
+            RawConfig::default()
+        }
     } else {
-        // Get single commit (last commit)
-        let message = release_notes::get_last_commit_message(&repo_path)?;
-        let task_ids = release_notes::extract_task_ids(&message);
-        let group = release_notes::determine_task_group(&message);
-
-        vec![release_notes::CommitEntry {
-            hash: String::new(),
-            message,
-            task_ids,
-            group,
-        }]
+        let cwd = std::env::current_dir().unwrap_or_default();
+        RawConfig::detect_from_git_remote(&cwd)
     };
 
-    // Collect all task IDs
-    let all_task_ids = release_notes::collect_task_ids(&commits);
+    let merged_config = RawConfig::default()
+        .merge(file_config)
+        .merge(git_config)
+        .merge(env_config);
 
-    if all_task_ids.is_empty() {
-        eprintln!("No work item references (rwi:#XXXXX) found in commit(s).");
-        return Ok(());
-    }
+    let cli_organization = shared.organization.clone();
+    let cli_project = shared.project.clone();
+    let cli_pat = shared.pat.clone();
+    let cli_repository = shared.repository.clone();
+    let cli_dev_branch = shared.dev_branch.clone();
+    let cli_tag_prefix = shared.tag_prefix.clone();
 
-    eprintln!("Found {} work item reference(s)", all_task_ids.len());
-
-    // Load cache (unless --no-cache is specified)
-    let mut cache = if args.no_cache {
-        WorkItemCache::default()
-    } else {
-        WorkItemCache::load().unwrap_or_default()
-    };
-
-    // Get cached titles
-    let cached_titles = cache.get_many(&all_task_ids);
-    let uncached_ids = cache.get_uncached_ids(&all_task_ids);
-
-    // Build work items map from cache
-    let mut work_items_map: HashMap<i32, mergers::models::WorkItem> = cached_titles
-        .into_iter()
-        .map(|(id, title)| {
-            (
-                id,
-                mergers::models::WorkItem {
-                    id,
-                    fields: mergers::models::WorkItemFields {
-                        title: Some(title),
-                        state: None,
-                        work_item_type: None,
-                        assigned_to: None,
-                        iteration_path: None,
-                        description: None,
-                        repro_steps: None,
-                        state_color: None,
-                    },
-                    history: vec![],
-                },
-            )
+    let organization = cli_organization
+        .or_else(|| {
+            merged_config
+                .organization
+                .as_ref()
+                .map(|p| p.value().clone())
         })
-        .collect();
+        .ok_or_else(|| anyhow::anyhow!("organization is required (use -o or config file)"))?;
 
-    // Extract Azure DevOps config values (used for both API calls and URL generation)
-    let config_organization = merged_config
-        .organization
-        .as_ref()
-        .map(|p| p.value().clone());
-    let config_project = merged_config.project.as_ref().map(|p| p.value().clone());
-    let config_pat = merged_config.pat.as_ref().map(|p| p.value().clone());
+    let project = cli_project
+        .or_else(|| merged_config.project.as_ref().map(|p| p.value().clone()))
+        .ok_or_else(|| anyhow::anyhow!("project is required (use -p or config file)"))?;
 
-    // Fetch uncached work items from API if needed
-    if !uncached_ids.is_empty() {
-        eprintln!(
-            "Fetching {} work item(s) from Azure DevOps...",
-            uncached_ids.len()
-        );
-
-        // Get Azure DevOps config
-        let organization = args
-            .organization
-            .clone()
-            .or(config_organization.clone())
-            .ok_or_else(|| anyhow::anyhow!("organization is required (use -o or config file)"))?;
-
-        let project = args
-            .project
-            .clone()
-            .or(config_project.clone())
-            .ok_or_else(|| anyhow::anyhow!("project is required (use -p or config file)"))?;
-
-        let pat = args.pat.clone().or(config_pat).ok_or_else(|| {
+    let pat = cli_pat
+        .or_else(|| merged_config.pat.as_ref().map(|p| p.value().clone()))
+        .ok_or_else(|| {
             anyhow::anyhow!("PAT is required (use -t, MERGERS_PAT env var, or config file)")
         })?;
 
-        // Create client and fetch work items
-        let client = AzureDevOpsClient::new(
-            organization.clone(),
-            project.clone(),
-            String::new(), // repository not needed for work items
-            pat,
-        )?;
+    let repository = cli_repository
+        .or_else(|| merged_config.repository.as_ref().map(|p| p.value().clone()))
+        .unwrap_or_default();
 
-        let fetched_items = client.fetch_work_items_by_ids(&uncached_ids).await?;
+    let dev_branch = cli_dev_branch
+        .or_else(|| merged_config.dev_branch.as_ref().map(|p| p.value().clone()))
+        .unwrap_or_else(|| "dev".to_string());
 
-        // Update cache and work items map
-        for wi in fetched_items {
-            if let Some(ref title) = wi.fields.title {
-                cache.set(wi.id, title);
-            }
-            work_items_map.insert(wi.id, wi);
-        }
+    let tag_prefix = cli_tag_prefix
+        .or_else(|| merged_config.tag_prefix.as_ref().map(|p| p.value().clone()))
+        .unwrap_or_else(|| "merged-".to_string());
 
-        // Save cache if not --no-cache
-        if !args.no_cache
-            && let Err(e) = cache.save()
-        {
-            eprintln!("Warning: Failed to save cache: {}", e);
-        }
-    }
+    let max_concurrent_network = shared
+        .max_concurrent_network
+        .or_else(|| {
+            merged_config
+                .max_concurrent_network
+                .as_ref()
+                .map(|p| *p.value())
+        })
+        .unwrap_or(100);
 
-    // Generate entries
-    let organization = args
-        .organization
-        .clone()
-        .or(config_organization)
-        .unwrap_or_else(|| "org".to_string());
+    let max_concurrent_processing = shared
+        .max_concurrent_processing
+        .or_else(|| {
+            merged_config
+                .max_concurrent_processing
+                .as_ref()
+                .map(|p| *p.value())
+        })
+        .unwrap_or(10);
 
-    let project = args
-        .project
-        .clone()
-        .or(config_project)
-        .unwrap_or_else(|| "project".to_string());
-
-    let base_url = format!("https://dev.azure.com/{}/{}", organization, project);
-    let entries = release_notes::generate_entries(&commits, &work_items_map, &base_url);
-
-    // Format output
-    let output = release_notes::format_output(&entries, args.output, args.group)?;
-
-    // Print output
-    println!("{}", output);
-
-    // Copy to clipboard if requested
-    if args.copy {
-        release_notes::copy_to_clipboard(&output)?;
-        eprintln!("Output copied to clipboard.");
-    }
-
-    Ok(())
+    Ok(ReleaseNotesRunnerConfig {
+        organization,
+        project,
+        repository,
+        pat,
+        dev_branch,
+        tag_prefix,
+        from_version: args.from.clone(),
+        to_version: args.to.clone(),
+        output_format: args.output,
+        grouped: args.group,
+        include_prs: args.include_prs,
+        copy_to_clipboard: args.copy,
+        no_cache: args.no_cache,
+        max_concurrent_network,
+        max_concurrent_processing,
+    })
 }
 
 /// Runs a non-interactive merge operation.

@@ -448,17 +448,8 @@ pub struct ReleaseNotesArgs {
     /// Repository path or alias (e.g., th, gk). Uses current directory if not specified.
     pub path_or_alias: Option<String>,
 
-    /// Azure DevOps organization name
-    #[arg(short, long, help_heading = "Azure DevOps Connection")]
-    pub organization: Option<String>,
-
-    /// Azure DevOps project name
-    #[arg(short, long, help_heading = "Azure DevOps Connection")]
-    pub project: Option<String>,
-
-    /// Personal Access Token for Azure DevOps API authentication
-    #[arg(short = 't', long, help_heading = "Azure DevOps Connection")]
-    pub pat: Option<String>,
+    #[command(flatten)]
+    pub shared: SharedArgs,
 
     /// Output format: markdown, json, plain
     #[arg(long, value_enum, default_value_t = ReleaseNotesOutputFormat::Markdown, help_heading = "Output Options")]
@@ -624,6 +615,16 @@ impl HasSharedArgs for CleanupArgs {
     }
 }
 
+impl HasSharedArgs for ReleaseNotesArgs {
+    fn shared_args(&self) -> &SharedArgs {
+        &self.shared
+    }
+
+    fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        &mut self.shared
+    }
+}
+
 /// Available commands
 #[derive(Subcommand, Clone)]
 pub enum Commands {
@@ -682,32 +683,22 @@ pub enum Commands {
 
 impl Commands {
     /// Extract shared arguments from any command variant.
-    ///
-    /// Note: ReleaseNotes command doesn't use SharedArgs and will panic if accessed.
-    /// This is intentional as ReleaseNotes has its own argument handling.
     pub fn shared_args(&self) -> &SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args(),
             Commands::Migrate(args) => args.shared_args(),
             Commands::Cleanup(args) => args.shared_args(),
-            Commands::ReleaseNotes(_) => {
-                panic!("ReleaseNotes command does not use SharedArgs")
-            }
+            Commands::ReleaseNotes(args) => args.shared_args(),
         }
     }
 
     /// Extract mutable shared arguments from any command variant.
-    ///
-    /// Note: ReleaseNotes command doesn't use SharedArgs and will panic if accessed.
-    /// This is intentional as ReleaseNotes has its own argument handling.
     pub fn shared_args_mut(&mut self) -> &mut SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args_mut(),
             Commands::Migrate(args) => args.shared_args_mut(),
             Commands::Cleanup(args) => args.shared_args_mut(),
-            Commands::ReleaseNotes(_) => {
-                panic!("ReleaseNotes command does not use SharedArgs")
-            }
+            Commands::ReleaseNotes(args) => args.shared_args_mut(),
         }
     }
 

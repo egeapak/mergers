@@ -18,6 +18,10 @@ const DEFAULT_CACHE_EXPIRY_DAYS: i64 = 7;
 pub struct CachedWorkItem {
     pub id: i32,
     pub title: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub work_item_type: Option<String>,
     pub cached_at: DateTime<Utc>,
 }
 
@@ -75,42 +79,44 @@ impl WorkItemCache {
         Ok(())
     }
 
-    /// Get a cached work item title if it exists and is not expired.
-    pub fn get(&self, id: i32) -> Option<&str> {
+    /// Get a cached work item if it exists and is not expired.
+    pub fn get(&self, id: i32) -> Option<&CachedWorkItem> {
         self.entries.get(&id).and_then(|entry| {
             if Self::is_expired(&entry.cached_at) {
                 None
             } else {
-                Some(entry.title.as_str())
+                Some(entry)
             }
         })
     }
 
-    /// Get multiple cached titles at once.
+    /// Get multiple cached work items at once.
     ///
-    /// Returns a map of ID to title for cached (non-expired) entries.
-    pub fn get_many(&self, ids: &[i32]) -> HashMap<i32, String> {
+    /// Returns a map of ID to CachedWorkItem for cached (non-expired) entries.
+    pub fn get_many(&self, ids: &[i32]) -> HashMap<i32, CachedWorkItem> {
         ids.iter()
-            .filter_map(|&id| self.get(id).map(|title| (id, title.to_string())))
+            .filter_map(|&id| self.get(id).map(|item| (id, item.clone())))
             .collect()
     }
 
-    /// Set a cached work item title.
-    pub fn set(&mut self, id: i32, title: &str) {
+    /// Set a cached work item.
+    pub fn set(&mut self, id: i32, title: &str, state: Option<&str>, work_item_type: Option<&str>) {
         self.entries.insert(
             id,
             CachedWorkItem {
                 id,
                 title: title.to_string(),
+                state: state.map(String::from),
+                work_item_type: work_item_type.map(String::from),
                 cached_at: Utc::now(),
             },
         );
     }
 
-    /// Set multiple cached work item titles.
-    pub fn set_many(&mut self, items: &[(i32, String)]) {
-        for (id, title) in items {
-            self.set(*id, title);
+    /// Set multiple cached work items.
+    pub fn set_many(&mut self, items: &[(i32, String, Option<String>, Option<String>)]) {
+        for (id, title, state, work_item_type) in items {
+            self.set(*id, title, state.as_deref(), work_item_type.as_deref());
         }
     }
 
@@ -188,31 +194,35 @@ mod tests {
     fn test_cache_set_and_get() {
         let (_temp, mut cache) = setup_temp_cache();
 
-        cache.set(123, "Test title");
-        assert_eq!(cache.get(123), Some("Test title"));
-        assert_eq!(cache.get(456), None);
+        cache.set(123, "Test title", None, None);
+        let item = cache.get(123).unwrap();
+        assert_eq!(item.title, "Test title");
+        assert!(cache.get(456).is_none());
     }
 
     #[test]
     fn test_cache_get_many() {
         let (_temp, mut cache) = setup_temp_cache();
 
-        cache.set(100, "Title 100");
-        cache.set(200, "Title 200");
+        cache.set(100, "Title 100", None, None);
+        cache.set(200, "Title 200", Some("Active"), Some("Bug"));
 
         let results = cache.get_many(&[100, 200, 300]);
         assert_eq!(results.len(), 2);
-        assert_eq!(results.get(&100), Some(&"Title 100".to_string()));
-        assert_eq!(results.get(&200), Some(&"Title 200".to_string()));
-        assert_eq!(results.get(&300), None);
+        assert_eq!(results.get(&100).unwrap().title, "Title 100");
+        let item200 = results.get(&200).unwrap();
+        assert_eq!(item200.title, "Title 200");
+        assert_eq!(item200.state.as_deref(), Some("Active"));
+        assert_eq!(item200.work_item_type.as_deref(), Some("Bug"));
+        assert!(!results.contains_key(&300));
     }
 
     #[test]
     fn test_cache_get_uncached_ids() {
         let (_temp, mut cache) = setup_temp_cache();
 
-        cache.set(100, "Title 100");
-        cache.set(200, "Title 200");
+        cache.set(100, "Title 100", None, None);
+        cache.set(200, "Title 200", None, None);
 
         let uncached = cache.get_uncached_ids(&[100, 200, 300, 400]);
         assert_eq!(uncached, vec![300, 400]);
@@ -222,16 +232,18 @@ mod tests {
     fn test_cache_save_and_load() {
         let (temp_dir, mut cache) = setup_temp_cache();
 
-        cache.set(123, "Saved title");
+        cache.set(123, "Saved title", Some("Active"), Some("Task"));
         cache.save().unwrap();
 
-        // Create a new cache and load from disk
         // SAFETY: We're in a test context and modifying env vars is acceptable
         unsafe {
             std::env::set_var("XDG_CACHE_HOME", temp_dir.path());
         }
         let loaded_cache = WorkItemCache::load().unwrap();
-        assert_eq!(loaded_cache.get(123), Some("Saved title"));
+        let item = loaded_cache.get(123).unwrap();
+        assert_eq!(item.title, "Saved title");
+        assert_eq!(item.state.as_deref(), Some("Active"));
+        assert_eq!(item.work_item_type.as_deref(), Some("Task"));
     }
 
     #[test]
@@ -244,12 +256,13 @@ mod tests {
             CachedWorkItem {
                 id: 999,
                 title: "Old entry".to_string(),
+                state: None,
+                work_item_type: None,
                 cached_at: Utc::now() - Duration::days(30),
             },
         );
 
-        // Add a fresh entry
-        cache.set(123, "Fresh entry");
+        cache.set(123, "Fresh entry", None, None);
 
         assert!(cache.entries.contains_key(&999));
         cache.prune_expired();
@@ -261,8 +274,8 @@ mod tests {
     fn test_cache_clear() {
         let (_temp, mut cache) = setup_temp_cache();
 
-        cache.set(100, "Title 100");
-        cache.set(200, "Title 200");
+        cache.set(100, "Title 100", None, None);
+        cache.set(200, "Title 200", None, None);
         assert_eq!(cache.len(), 2);
 
         cache.clear();
@@ -279,12 +292,13 @@ mod tests {
             CachedWorkItem {
                 id: 999,
                 title: "Expired entry".to_string(),
+                state: None,
+                work_item_type: None,
                 cached_at: Utc::now() - Duration::days(30),
             },
         );
 
-        // The entry exists in storage but should not be returned
-        assert_eq!(cache.get(999), None);
+        assert!(cache.get(999).is_none());
         assert!(!cache.contains(999));
     }
 }

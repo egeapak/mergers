@@ -18,6 +18,7 @@ use ratatui::{
 
 pub struct CompletionState {
     list_state: ListState,
+    show_tagging_warning: bool,
 }
 
 impl Default for CompletionState {
@@ -30,6 +31,7 @@ impl CompletionState {
     pub fn new() -> Self {
         let mut state = Self {
             list_state: ListState::default(),
+            show_tagging_warning: false,
         };
         state.list_state.select(Some(0));
         state
@@ -309,12 +311,78 @@ impl ModeState for CompletionState {
             )
             .wrap(Wrap { trim: true });
         f.render_widget(summary, content_chunks[1]);
+
+        if self.show_tagging_warning {
+            use ratatui::layout::Rect;
+            use ratatui::widgets::Clear;
+
+            let area = f.area();
+            let popup_width = 60u16.min(area.width.saturating_sub(4));
+            let popup_height = 7u16;
+            let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+            let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+            let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+            f.render_widget(Clear, popup_area);
+
+            let warning_text = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Tagging has not been completed yet.",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from("Continue to release notes export?"),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        "Enter",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(": Continue  "),
+                    Span::styled(
+                        "Esc",
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(": Cancel"),
+                ]),
+            ];
+
+            let popup = Paragraph::new(warning_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Warning")
+                        .border_style(Style::default().fg(Color::Yellow)),
+                )
+                .alignment(ratatui::layout::Alignment::Center);
+            f.render_widget(popup, popup_area);
+        }
     }
 
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
+        if self.show_tagging_warning {
+            return match code {
+                KeyCode::Enter => {
+                    self.show_tagging_warning = false;
+                    StateChange::Change(MergeState::ReleaseNotesExport(
+                        crate::ui::state::ReleaseNotesExportState::new(app),
+                    ))
+                }
+                KeyCode::Esc => {
+                    self.show_tagging_warning = false;
+                    StateChange::Keep
+                }
+                _ => StateChange::Keep,
+            };
+        }
+
         match code {
             KeyCode::Char('q') => {
-                // Mark state file as completed and clean up before exit
                 app.with_state_file_mut(|state_file| {
                     state_file.final_status = Some(MergeStatus::Success);
                     state_file.completed_at = Some(chrono::Utc::now());
@@ -342,19 +410,23 @@ impl ModeState for CompletionState {
             KeyCode::Char('w') => {
                 if let Some(i) = self.list_state.selected()
                     && let Some(item) = app.cherry_pick_items.get(i)
+                    && let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
+                    && !pr.work_items.is_empty()
                 {
-                    // Find the corresponding PR and open its work items
-                    if let Some(pr) = app.pull_requests.iter().find(|pr| pr.pr.id == item.pr_id)
-                        && !pr.work_items.is_empty()
-                    {
-                        app.open_work_items_in_browser(&pr.work_items);
-                    }
+                    app.open_work_items_in_browser(&pr.work_items);
                 }
                 StateChange::Keep
             }
-            KeyCode::Char('r') => StateChange::Change(MergeState::ReleaseNotesExport(
-                crate::ui::state::ReleaseNotesExportState::new(app),
-            )),
+            KeyCode::Char('r') => {
+                if app.tagging_completed {
+                    StateChange::Change(MergeState::ReleaseNotesExport(
+                        crate::ui::state::ReleaseNotesExportState::new(app),
+                    ))
+                } else {
+                    self.show_tagging_warning = true;
+                    StateChange::Keep
+                }
+            }
             KeyCode::Char('t') => StateChange::Change(MergeState::PostCompletion(
                 crate::ui::state::PostCompletionState::new(),
             )),

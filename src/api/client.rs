@@ -710,6 +710,33 @@ pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> 
         .collect()
 }
 
+/// Filter PRs that have a specific tag label.
+#[must_use]
+pub fn filter_prs_with_tag<'a>(prs: &'a [PullRequest], tag: &str) -> Vec<&'a PullRequest> {
+    prs.iter()
+        .filter(|pr| {
+            pr.labels
+                .as_ref()
+                .is_some_and(|labels| labels.iter().any(|label| label.name == tag))
+        })
+        .collect()
+}
+
+/// Extract all unique merged-* tag names from a list of PRs.
+#[must_use]
+pub fn extract_merged_tags(prs: &[PullRequest], tag_prefix: &str) -> Vec<String> {
+    let mut tags: Vec<String> = prs
+        .iter()
+        .filter_map(|pr| pr.labels.as_ref())
+        .flat_map(|labels| labels.iter())
+        .filter(|label| label.name.starts_with(tag_prefix))
+        .map(|label| label.name.clone())
+        .collect();
+    tags.sort_unstable();
+    tags.dedup();
+    tags
+}
+
 /// Generic Azure DevOps client that uses trait objects for operations.
 ///
 /// This struct enables dependency injection of mock implementations for testing.
