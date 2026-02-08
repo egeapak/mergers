@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Position},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
@@ -24,8 +24,11 @@ enum ReleaseNotesPhase {
 
 pub struct ReleaseNotesExportState {
     input: String,
+    cursor_pos: usize,
     default_path: String,
     phase: ReleaseNotesPhase,
+    suggestions: Vec<String>,
+    suggestion_index: Option<usize>,
 }
 
 impl ReleaseNotesExportState {
@@ -46,8 +49,11 @@ impl ReleaseNotesExportState {
 
         Self {
             input: String::new(),
+            cursor_pos: 0,
             default_path,
             phase: ReleaseNotesPhase::PathInput,
+            suggestions: Vec::new(),
+            suggestion_index: None,
         }
     }
 
@@ -84,16 +90,180 @@ impl ReleaseNotesExportState {
         Ok(path)
     }
 
+    fn insert_char(&mut self, c: char) {
+        self.input.insert(self.cursor_pos, c);
+        self.cursor_pos += c.len_utf8();
+    }
+
+    fn delete_char_before_cursor(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+        // Find the previous char boundary by iterating backwards from cursor_pos
+        let prev = self.input[..self.cursor_pos]
+            .char_indices()
+            .next_back()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+        self.input.drain(prev..self.cursor_pos);
+        self.cursor_pos = prev;
+    }
+
+    fn delete_char_at_cursor(&mut self) {
+        if self.cursor_pos >= self.input.len() {
+            return;
+        }
+        // Find the next char boundary after cursor_pos
+        let next = self.input[self.cursor_pos..]
+            .char_indices()
+            .nth(1)
+            .map(|(idx, _)| self.cursor_pos + idx)
+            .unwrap_or(self.input.len());
+        self.input.drain(self.cursor_pos..next);
+    }
+
+    fn move_cursor_left(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+        self.cursor_pos = self.input[..self.cursor_pos]
+            .char_indices()
+            .next_back()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+    }
+
+    fn move_cursor_right(&mut self) {
+        if self.cursor_pos >= self.input.len() {
+            return;
+        }
+        self.cursor_pos = self.input[self.cursor_pos..]
+            .char_indices()
+            .nth(1)
+            .map(|(idx, _)| self.cursor_pos + idx)
+            .unwrap_or(self.input.len());
+    }
+
+    fn clear_suggestions(&mut self) {
+        self.suggestions.clear();
+        self.suggestion_index = None;
+    }
+
+    fn handle_tab(&mut self, reverse: bool) {
+        // If already cycling through suggestions, advance/retreat the index
+        if !self.suggestions.is_empty() && self.suggestion_index.is_some() {
+            let len = self.suggestions.len();
+            let idx = self.suggestion_index.unwrap_or(0);
+            let next_idx = if reverse {
+                if idx == 0 { len - 1 } else { idx - 1 }
+            } else {
+                (idx + 1) % len
+            };
+            self.suggestion_index = Some(next_idx);
+            self.input = self.suggestions[next_idx].clone();
+            self.cursor_pos = self.input.len();
+            return;
+        }
+
+        // Compute completions from the filesystem
+        let path = Path::new(&self.input);
+
+        let (dir, prefix) = if self.input.ends_with('/') || self.input.ends_with('\\') {
+            // User typed a directory ending with separator - list its contents
+            (path.to_path_buf(), "")
+        } else if let Some(parent) = path.parent() {
+            // Split into directory + partial filename prefix
+            let file_prefix = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+            (
+                if parent.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    parent.to_path_buf()
+                },
+                file_prefix,
+            )
+        } else {
+            // No parent - use current directory
+            (PathBuf::from("."), self.input.as_str())
+        };
+
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => return,
+        };
+
+        let mut matches: Vec<String> = entries
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let name = entry.file_name();
+                let name_str = name.to_str()?;
+                if !prefix.is_empty() && !name_str.starts_with(prefix) {
+                    return None;
+                }
+                let full = dir.join(name_str);
+                let mut result = full.to_string_lossy().into_owned();
+                // Append '/' for directories to allow continued tab completion
+                if entry.file_type().ok()?.is_dir() {
+                    result.push('/');
+                }
+                Some(result)
+            })
+            .collect();
+
+        matches.sort_unstable();
+
+        match matches.len() {
+            0 => {}
+            1 => {
+                // Single match - complete directly, no cycling needed
+                self.input = matches.into_iter().next().unwrap();
+                self.cursor_pos = self.input.len();
+            }
+            _ => {
+                // Multiple matches - fill longest common prefix and store for cycling
+                let common = longest_common_prefix(&matches);
+                if common.len() > self.input.len() {
+                    // We can extend the input with the common prefix
+                    self.input = common;
+                    self.cursor_pos = self.input.len();
+                }
+                self.suggestions = matches;
+                self.suggestion_index = Some(0);
+                self.input.clone_from(&self.suggestions[0]);
+                self.cursor_pos = self.input.len();
+            }
+        }
+    }
+
+    fn cursor_display_pos(&self) -> usize {
+        // Count the number of characters (not bytes) before cursor_pos
+        self.input[..self.cursor_pos].chars().count()
+    }
+
     fn render_path_input(&self, f: &mut Frame) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(2)
-            .constraints([
+        let has_suggestions = !self.suggestions.is_empty();
+
+        let constraints = if has_suggestions {
+            vec![
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(3),
+                Constraint::Length(self.suggestions.len().min(8) as u16 + 2),
+                Constraint::Min(0),
+            ]
+        } else {
+            vec![
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Min(0),
-            ])
+            ]
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints(constraints)
             .split(f.area());
 
         let title = Paragraph::new("📝 Export Release Notes")
@@ -123,6 +293,11 @@ impl ReleaseNotesExportState {
         );
         f.render_widget(input_block, chunks[1]);
 
+        // Set cursor position inside the input box (border offset: +1 col, +1 row)
+        let cursor_x = chunks[1].x + 1 + self.cursor_display_pos() as u16;
+        let cursor_y = chunks[1].y + 1;
+        f.set_cursor_position(Position::new(cursor_x, cursor_y));
+
         // Default path info
         let default_info = Paragraph::new(Line::from(vec![
             Span::styled("Default: ", Style::default().fg(Color::Gray)),
@@ -131,16 +306,53 @@ impl ReleaseNotesExportState {
         .alignment(Alignment::Center);
         f.render_widget(default_info, chunks[2]);
 
+        // Autocomplete suggestions (only when present)
+        if has_suggestions {
+            let selected = self.suggestion_index.unwrap_or(0);
+            let suggestion_lines: Vec<Line> = self
+                .suggestions
+                .iter()
+                .enumerate()
+                .take(8)
+                .map(|(i, s)| {
+                    if i == selected {
+                        Line::from(Span::styled(
+                            s.as_str(),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ))
+                    } else {
+                        Line::from(Span::styled(s.as_str(), Style::default().fg(Color::Gray)))
+                    }
+                })
+                .collect();
+
+            let suggestions_block = Paragraph::new(suggestion_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Suggestions (Tab to cycle)")
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            );
+            f.render_widget(suggestions_block, chunks[3]);
+        }
+
         // Help text
+        let help_chunk = if has_suggestions {
+            chunks[4]
+        } else {
+            chunks[3]
+        };
         let key_style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
         let help_lines = vec![Line::from(vec![
             Span::styled("Enter", key_style),
-            Span::raw(": Export (default path) | "),
-            Span::raw("Type path + "),
-            Span::styled("Enter", key_style),
-            Span::raw(": Export to custom path | "),
+            Span::raw(": Export | "),
+            Span::styled("Tab", key_style),
+            Span::raw(": Autocomplete | "),
+            Span::styled("←→", key_style),
+            Span::raw(": Move cursor | "),
             Span::styled("Esc", key_style),
             Span::raw(": Go back"),
         ])];
@@ -148,7 +360,7 @@ impl ReleaseNotesExportState {
             .block(Block::default().borders(Borders::ALL).title("Help"))
             .wrap(Wrap { trim: true })
             .alignment(Alignment::Center);
-        f.render_widget(help, chunks[3]);
+        f.render_widget(help, help_chunk);
     }
 
     fn render_success(&self, f: &mut Frame, path: &Path) {
@@ -257,6 +469,27 @@ impl ReleaseNotesExportState {
     }
 }
 
+fn longest_common_prefix(strings: &[String]) -> String {
+    let Some(first) = strings.first() else {
+        return String::new();
+    };
+    let mut prefix_len = first.len();
+    for s in &strings[1..] {
+        prefix_len = prefix_len.min(s.len());
+        for (i, (a, b)) in first.bytes().zip(s.bytes()).enumerate() {
+            if a != b {
+                prefix_len = prefix_len.min(i);
+                break;
+            }
+        }
+    }
+    // Ensure we don't split a multi-byte char
+    while prefix_len > 0 && !first.is_char_boundary(prefix_len) {
+        prefix_len -= 1;
+    }
+    first[..prefix_len].to_string()
+}
+
 // ============================================================================
 // ModeState Implementation
 // ============================================================================
@@ -277,11 +510,46 @@ impl ModeState for ReleaseNotesExportState {
         match &self.phase {
             ReleaseNotesPhase::PathInput => match code {
                 KeyCode::Char(c) => {
-                    self.input.push(c);
+                    self.clear_suggestions();
+                    self.insert_char(c);
                     StateChange::Keep
                 }
                 KeyCode::Backspace => {
-                    self.input.pop();
+                    self.clear_suggestions();
+                    self.delete_char_before_cursor();
+                    StateChange::Keep
+                }
+                KeyCode::Delete => {
+                    self.clear_suggestions();
+                    self.delete_char_at_cursor();
+                    StateChange::Keep
+                }
+                KeyCode::Left => {
+                    self.clear_suggestions();
+                    self.move_cursor_left();
+                    StateChange::Keep
+                }
+                KeyCode::Right => {
+                    self.clear_suggestions();
+                    self.move_cursor_right();
+                    StateChange::Keep
+                }
+                KeyCode::Home => {
+                    self.clear_suggestions();
+                    self.cursor_pos = 0;
+                    StateChange::Keep
+                }
+                KeyCode::End => {
+                    self.clear_suggestions();
+                    self.cursor_pos = self.input.len();
+                    StateChange::Keep
+                }
+                KeyCode::Tab => {
+                    self.handle_tab(false);
+                    StateChange::Keep
+                }
+                KeyCode::BackTab => {
+                    self.handle_tab(true);
                     StateChange::Keep
                 }
                 KeyCode::Enter => {
@@ -379,6 +647,7 @@ mod tests {
 
             let mut state = ReleaseNotesExportState::new(harness.merge_app());
             state.input = "/custom/path/release_notes.md".to_string();
+            state.cursor_pos = state.input.len();
             harness.render_state(&mut state);
 
             assert_snapshot!("with_input", harness.backend());
@@ -467,13 +736,14 @@ mod tests {
 
     /// # Release Notes Export - Char Input
     ///
-    /// Tests that character input is accumulated.
+    /// Tests that character input is accumulated at cursor position.
     ///
     /// ## Test Scenario
     /// - Types characters into the path input
     ///
     /// ## Expected Outcome
     /// - Input string should contain the typed characters
+    /// - Cursor position should advance with each character
     #[tokio::test]
     async fn test_release_notes_export_char_input() {
         let config = create_test_config_default();
@@ -488,17 +758,19 @@ mod tests {
         ModeState::process_key(&mut state, KeyCode::Char('p'), harness.merge_app_mut()).await;
 
         assert_eq!(state.input, "/tmp");
+        assert_eq!(state.cursor_pos, 4);
     }
 
     /// # Release Notes Export - Backspace
     ///
-    /// Tests that backspace removes the last character.
+    /// Tests that backspace removes the character before cursor.
     ///
     /// ## Test Scenario
-    /// - Types some characters then presses backspace
+    /// - Sets input with cursor at end, presses backspace
     ///
     /// ## Expected Outcome
-    /// - Last character should be removed
+    /// - Character before cursor should be removed
+    /// - Cursor position should decrement
     #[tokio::test]
     async fn test_release_notes_export_backspace() {
         let config = create_test_config_default();
@@ -507,10 +779,12 @@ mod tests {
 
         let mut state = ReleaseNotesExportState::new(harness.merge_app());
         state.input = "/tmp/test".to_string();
+        state.cursor_pos = state.input.len();
 
         ModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
 
         assert_eq!(state.input, "/tmp/tes");
+        assert_eq!(state.cursor_pos, 8);
     }
 
     /// # Release Notes Export - Enter on Success Goes Back
@@ -655,5 +929,247 @@ mod tests {
         assert!(content.contains("# Release Notes - v1.0.0"));
         assert!(content.contains("**Release Date:**"));
         assert!(content.contains("work item(s) included in this release"));
+    }
+
+    /// # Release Notes Export - Cursor Movement Left/Right
+    ///
+    /// Tests that left and right arrow keys move the cursor correctly.
+    ///
+    /// ## Test Scenario
+    /// - Sets input with cursor at end
+    /// - Moves cursor left twice, then right once
+    ///
+    /// ## Expected Outcome
+    /// - Cursor should be at correct byte position after each movement
+    #[tokio::test]
+    async fn test_release_notes_export_cursor_movement() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp".to_string();
+        state.cursor_pos = 4;
+
+        ModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 3);
+
+        ModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 2);
+
+        ModeState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 3);
+    }
+
+    /// # Release Notes Export - Home and End Keys
+    ///
+    /// Tests that Home moves cursor to start and End moves to end.
+    ///
+    /// ## Test Scenario
+    /// - Sets input with cursor in the middle
+    /// - Presses Home, then End
+    ///
+    /// ## Expected Outcome
+    /// - Home should set cursor_pos to 0
+    /// - End should set cursor_pos to input length
+    #[tokio::test]
+    async fn test_release_notes_export_home_end() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp/test".to_string();
+        state.cursor_pos = 4;
+
+        ModeState::process_key(&mut state, KeyCode::Home, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 0);
+
+        ModeState::process_key(&mut state, KeyCode::End, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 9);
+    }
+
+    /// # Release Notes Export - Insert at Cursor Position
+    ///
+    /// Tests that characters are inserted at the cursor position, not appended.
+    ///
+    /// ## Test Scenario
+    /// - Sets input with cursor in the middle
+    /// - Types a character
+    ///
+    /// ## Expected Outcome
+    /// - Character should be inserted at cursor position
+    /// - Cursor should advance past the inserted character
+    #[tokio::test]
+    async fn test_release_notes_export_insert_at_cursor() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp".to_string();
+        state.cursor_pos = 1; // cursor after '/'
+
+        ModeState::process_key(&mut state, KeyCode::Char('u'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('s'), harness.merge_app_mut()).await;
+        ModeState::process_key(&mut state, KeyCode::Char('r'), harness.merge_app_mut()).await;
+
+        assert_eq!(state.input, "/usrtmp");
+        assert_eq!(state.cursor_pos, 4);
+    }
+
+    /// # Release Notes Export - Backspace at Cursor Mid-Position
+    ///
+    /// Tests that backspace removes the character before the cursor in mid-string.
+    ///
+    /// ## Test Scenario
+    /// - Sets input with cursor in the middle
+    /// - Presses backspace
+    ///
+    /// ## Expected Outcome
+    /// - Character before cursor should be removed
+    /// - Characters after cursor should remain intact
+    #[tokio::test]
+    async fn test_release_notes_export_backspace_mid_position() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp/test".to_string();
+        state.cursor_pos = 4; // cursor after 'p', before '/'
+
+        ModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
+
+        assert_eq!(state.input, "/tm/test");
+        assert_eq!(state.cursor_pos, 3);
+    }
+
+    /// # Release Notes Export - Delete Key
+    ///
+    /// Tests that Delete removes the character at the cursor position.
+    ///
+    /// ## Test Scenario
+    /// - Sets input with cursor in the middle
+    /// - Presses Delete
+    ///
+    /// ## Expected Outcome
+    /// - Character at cursor should be removed
+    /// - Cursor position should remain the same
+    #[tokio::test]
+    async fn test_release_notes_export_delete_key() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp/test".to_string();
+        state.cursor_pos = 4; // cursor before '/'
+
+        ModeState::process_key(&mut state, KeyCode::Delete, harness.merge_app_mut()).await;
+
+        assert_eq!(state.input, "/tmptest");
+        assert_eq!(state.cursor_pos, 4);
+    }
+
+    /// # Release Notes Export - Left at Start Does Nothing
+    ///
+    /// Tests that pressing Left at position 0 does not move cursor further.
+    ///
+    /// ## Test Scenario
+    /// - Sets cursor at position 0
+    /// - Presses Left
+    ///
+    /// ## Expected Outcome
+    /// - Cursor should remain at 0
+    #[tokio::test]
+    async fn test_release_notes_export_left_at_start() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp".to_string();
+        state.cursor_pos = 0;
+
+        ModeState::process_key(&mut state, KeyCode::Left, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 0);
+    }
+
+    /// # Release Notes Export - Right at End Does Nothing
+    ///
+    /// Tests that pressing Right at the end of input does not move cursor further.
+    ///
+    /// ## Test Scenario
+    /// - Sets cursor at input end
+    /// - Presses Right
+    ///
+    /// ## Expected Outcome
+    /// - Cursor should remain at input length
+    #[tokio::test]
+    async fn test_release_notes_export_right_at_end() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+        state.input = "/tmp".to_string();
+        state.cursor_pos = 4;
+
+        ModeState::process_key(&mut state, KeyCode::Right, harness.merge_app_mut()).await;
+        assert_eq!(state.cursor_pos, 4);
+    }
+
+    /// # Release Notes Export - Backspace on Empty Input
+    ///
+    /// Tests that backspace on empty input is a no-op.
+    ///
+    /// ## Test Scenario
+    /// - Empty input, cursor at 0
+    /// - Presses Backspace
+    ///
+    /// ## Expected Outcome
+    /// - Input should remain empty
+    /// - Cursor should remain at 0
+    #[tokio::test]
+    async fn test_release_notes_export_backspace_empty() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        harness.app.set_version(Some("v1.0.0".to_string()));
+
+        let mut state = ReleaseNotesExportState::new(harness.merge_app());
+
+        ModeState::process_key(&mut state, KeyCode::Backspace, harness.merge_app_mut()).await;
+
+        assert_eq!(state.input, "");
+        assert_eq!(state.cursor_pos, 0);
+    }
+
+    #[test]
+    fn test_longest_common_prefix() {
+        let strings = vec![
+            "/tmp/abc".to_string(),
+            "/tmp/abd".to_string(),
+            "/tmp/abe".to_string(),
+        ];
+        assert_eq!(super::longest_common_prefix(&strings), "/tmp/ab");
+    }
+
+    #[test]
+    fn test_longest_common_prefix_identical() {
+        let strings = vec!["/tmp/test".to_string(), "/tmp/test".to_string()];
+        assert_eq!(super::longest_common_prefix(&strings), "/tmp/test");
+    }
+
+    #[test]
+    fn test_longest_common_prefix_no_common() {
+        let strings = vec!["abc".to_string(), "xyz".to_string()];
+        assert_eq!(super::longest_common_prefix(&strings), "");
+    }
+
+    #[test]
+    fn test_longest_common_prefix_empty() {
+        let strings: Vec<String> = vec![];
+        assert_eq!(super::longest_common_prefix(&strings), "");
     }
 }

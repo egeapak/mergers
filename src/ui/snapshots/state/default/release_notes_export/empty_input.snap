@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/default/release_notes_export.rs
+assertion_line: 624
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -14,7 +15,7 @@ expression: harness.backend()
 "                                                                                                                        "
 "                                                                                                                        "
 "  ┌Help──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  "
-"  │              Enter: Export (default path) | Type path + Enter: Export to custom path | Esc: Go back              │  "
+"  │                        Enter: Export | Tab: Autocomplete | ←→: Move cursor | Esc: Go back                        │  "
 "  │                                                                                                                  │  "
 "  │                                                                                                                  │  "
 "  │                                                                                                                  │  "

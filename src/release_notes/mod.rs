@@ -258,7 +258,7 @@ pub fn format_markdown(entries: &[ReleaseNoteEntry], grouped: bool) -> String {
 
             for entry in group_entries {
                 output.push_str(&format!(
-                    "| [#{}]({}) | {} |\n",
+                    "| [{}]({}) | {} |\n",
                     entry.task_id, entry.url, entry.title
                 ));
             }
@@ -276,7 +276,7 @@ fn format_markdown_flat(entries: &[ReleaseNoteEntry]) -> String {
 
     for entry in entries {
         output.push_str(&format!(
-            "| [#{}]({}) | {} |\n",
+            "| [{}]({}) | {} |\n",
             entry.task_id, entry.url, entry.title
         ));
     }
@@ -517,7 +517,7 @@ pub fn generate_from_merge_data(
             output.push_str(&format!("\n## {}\n\n", group));
             for entry in group_entries {
                 output.push_str(&format!(
-                    "- [#{}]({}) {} \n",
+                    "- [{}]({}) {} \n",
                     entry.task_id, entry.url, entry.title
                 ));
             }
@@ -627,7 +627,7 @@ mod tests {
 
         let output = format_markdown(&entries, false);
         assert!(output.contains("| Task ID | Title |"));
-        assert!(output.contains("[#123](https://example.com/123)"));
+        assert!(output.contains("[123](https://example.com/123)"));
         assert!(output.contains("Test task"));
     }
 
