@@ -1,6 +1,6 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 5063
+assertion_line: 5216
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -24,7 +24,7 @@ expression: harness.backend()
 " │                                                                                                                    █ "
 " │                                 ┌ Settings ──────────────────────────────────────┐                                 █ "
 " │                                 │                                                │                                 █ "
-" │                                 │  Dependency analysis: Not available            │                                 ║ "
+" │                                 │  Dependency analysis: Skipped (not configured) │                                 ║ "
 " │                                 │                                                │                                 ║ "
 " │                                 │  [x] Show dependency highlights (no data)      │                                 ↓ "
 " └─────────────────────────────────│  [x] Show work item highlights                 │─────────────────────────────────┘ "

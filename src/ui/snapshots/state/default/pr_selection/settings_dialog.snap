@@ -1,5 +1,6 @@
 ---
 source: src/ui/state/default/pr_selection.rs
+assertion_line: 5034
 expression: harness.backend()
 ---
 "                                                                                                                        "
@@ -21,18 +22,18 @@ expression: harness.backend()
 " │                                                                                                                    █ "
 " │                                                                                                                    █ "
 " │                                                                                                                    █ "
-" │                                                                                                                    █ "
 " │                                 ┌ Settings ──────────────────────────────────────┐                                 █ "
+" │                                 │                                                │                                 █ "
+" │                                 │  Dependency analysis: Not available            │                                 ║ "
 " │                                 │                                                │                                 ║ "
-" │                                 │  [x] Show dependency highlights                │                                 ║ "
-" │                                 │  [x] Show work item highlights                 │                                 ↓ "
-" └─────────────────────────────────│                                                │─────────────────────────────────┘ "
+" │                                 │  [x] Show dependency highlights (no data)      │                                 ↓ "
+" └─────────────────────────────────│  [x] Show work item highlights                 │─────────────────────────────────┘ "
 " ┌Work Item (1/1)──────────────────│                                                │─────────────────────────────────┐ "
 " │Bug         #1001   Login button │                                                │                                 │ "
-" │● Closed          | Iteration: Pr│↑/↓: Navigate | Space/Enter: Toggle | Esc: Close│                                 │ "
-" └─────────────────────────────────│                                                │─────────────────────────────────┘ "
-" ┌History──────────────────────────└────────────────────────────────────────────────┘─────────────────────────────────┐ "
-" │No history available                                                                                                │ "
+" │● Closed          | Iteration: Pr│                                                │                                 │ "
+" └─────────────────────────────────│↑/↓: Navigate | Space/Enter: Toggle | Esc: Close│─────────────────────────────────┘ "
+" ┌History──────────────────────────│                                                │─────────────────────────────────┐ "
+" │No history available             └────────────────────────────────────────────────┘                                 │ "
 " └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Reproduction Steps (use ←/→ to navigate work items)─────────────────────────────────────────────────────────────────┐ "
 " │1. Navigate to login page                                                                                           │ "
