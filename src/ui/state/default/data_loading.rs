@@ -448,11 +448,12 @@ impl LoadingContext {
         }
     }
 
-    /// Returns whether dependency analysis is available (local repo exists)
-    pub fn has_local_repo(&self) -> bool {
-        self.local_repo
-            .as_ref()
-            .is_some_and(|p| Path::new(p).exists())
+    /// Returns whether the local_repo option was configured (regardless of path validity).
+    ///
+    /// Use this to decide whether to attempt dependency analysis. If configured but
+    /// the path is invalid, `analyze_dependencies_impl` will surface `LocalRepoNotFound`.
+    pub fn has_local_repo_configured(&self) -> bool {
+        self.local_repo.is_some()
     }
 }
 
@@ -583,7 +584,7 @@ impl DataLoadingState {
     /// Start the background loading task
     fn start_background_task(&mut self, app: &MergeApp) {
         let ctx = LoadingContext::from_app(app);
-        let has_local_repo = ctx.has_local_repo();
+        let has_local_repo = ctx.has_local_repo_configured();
         self.has_local_repo = Some(has_local_repo);
 
         let (tx, rx) = mpsc::channel::<LoadingProgressMessage>(32);
@@ -796,8 +797,8 @@ async fn run_loading_task(ctx: LoadingContext, tx: mpsc::Sender<LoadingProgressM
         )
     );
 
-    // Step 4: Analyze Dependencies (if local repo available)
-    if ctx.has_local_repo() {
+    // Step 4: Analyze Dependencies (only if local_repo option is configured)
+    if ctx.has_local_repo_configured() {
         send_or_return!(
             tx,
             LoadingProgressMessage::StepStarted(LoadingStep::AnalyzeDependencies)
@@ -822,14 +823,9 @@ async fn run_loading_task(ctx: LoadingContext, tx: mpsc::Sender<LoadingProgressM
                 );
             }
             Err(e) => {
-                // Dependency analysis errors are non-fatal, complete the step without graph
-                tracing::warn!("Dependency analysis failed (non-fatal): {:?}", e);
-                let _ = tx
-                    .send(LoadingProgressMessage::StepCompleted(
-                        LoadingStep::AnalyzeDependencies,
-                        LoadingStepResult::default(),
-                    ))
-                    .await;
+                // LocalRepoNotFound is skippable via 's' key in the error UI
+                let _ = tx.send(LoadingProgressMessage::Error(e)).await;
+                return;
             }
         }
     }
@@ -2742,5 +2738,63 @@ mod tests {
         assert_eq!(data.work_items_total, 3);
         assert_eq!(data.commits_fetched, 2);
         assert!(data.dependency_graph.is_some());
+    }
+
+    // ========================================================================
+    // LoadingContext::has_local_repo_configured tests
+    // ========================================================================
+
+    /// # Test: has_local_repo_configured returns false when None
+    ///
+    /// Verifies that `has_local_repo_configured()` returns false when
+    /// `local_repo` is not set.
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for None local_repo
+    #[test]
+    fn test_has_local_repo_configured_none() {
+        let ctx = LoadingContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "test_org".to_string(),
+                "test_project".to_string(),
+                "test_repo".to_string(),
+                "test_pat".to_string(),
+            )
+            .unwrap(),
+            dev_branch: "main".to_string(),
+            since: None,
+            local_repo: None,
+            max_concurrent_network: 4,
+            max_concurrent_processing: 4,
+        };
+        assert!(!ctx.has_local_repo_configured());
+    }
+
+    /// # Test: has_local_repo_configured returns true for any Some value
+    ///
+    /// Verifies that `has_local_repo_configured()` returns true when
+    /// `local_repo` is Some, regardless of whether the path exists on disk.
+    /// In contrast, `has_local_repo()` returns false if the path doesn't exist.
+    ///
+    /// ## Expected Outcome
+    /// - `has_local_repo_configured()` returns true
+    /// - `has_local_repo()` returns false (path doesn't exist)
+    #[test]
+    fn test_has_local_repo_configured_some_nonexistent_path() {
+        let ctx = LoadingContext {
+            client: crate::api::AzureDevOpsClient::new(
+                "test_org".to_string(),
+                "test_project".to_string(),
+                "test_repo".to_string(),
+                "test_pat".to_string(),
+            )
+            .unwrap(),
+            dev_branch: "main".to_string(),
+            since: None,
+            local_repo: Some("/nonexistent/path/to/repo".to_string()),
+            max_concurrent_network: 4,
+            max_concurrent_processing: 4,
+        };
+        assert!(ctx.has_local_repo_configured());
     }
 }

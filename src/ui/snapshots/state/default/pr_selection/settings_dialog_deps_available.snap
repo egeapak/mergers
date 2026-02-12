@@ -1,13 +1,13 @@
 ---
 source: src/ui/state/default/pr_selection.rs
-assertion_line: 5063
+assertion_line: 5250
 expression: harness.backend()
 ---
 "                                                                                                                        "
 " ┌Pull Requests───────────────────────────────────────────────────────────────────────────────────────────────────────┐ "
 " │      PR #     Date         Title                         Author            Work Items             PR Dependenc     ↑ "
-" │→     100      2024-01-10   Fix login bug                 Alice Johnson     #1001 (Closed)                          █ "
-" │      101      2024-01-12   Update user profile page desi Bob Wilson        #1002 (Active)                          █ "
+" │→     100      2024-01-10   Fix login bug                 Alice Johnson     #1001 (Closed)         1 P              █ "
+" │      101      2024-01-12   Update user profile page desi Bob Wilson        #1002 (Active)         1 F              █ "
 " │      102      2024-01-14   Add analytics tracking        Carol Martinez    #1003 (Resolved), #100                  █ "
 " │                                                                                                                    █ "
 " │                                                                                                                    █ "
@@ -22,18 +22,18 @@ expression: harness.backend()
 " │                                                                                                                    █ "
 " │                                                                                                                    █ "
 " │                                                                                                                    █ "
+" │                                                                                                                    █ "
 " │                                 ┌ Settings ──────────────────────────────────────┐                                 █ "
-" │                                 │                                                │                                 █ "
-" │                                 │  Dependency analysis: Not available            │                                 ║ "
 " │                                 │                                                │                                 ║ "
-" │                                 │  [x] Show dependency highlights (no data)      │                                 ↓ "
-" └─────────────────────────────────│  [x] Show work item highlights                 │─────────────────────────────────┘ "
+" │                                 │  [x] Show dependency highlights                │                                 ║ "
+" │                                 │  [x] Show work item highlights                 │                                 ↓ "
+" └─────────────────────────────────│                                                │─────────────────────────────────┘ "
 " ┌Work Item (1/1)──────────────────│                                                │─────────────────────────────────┐ "
 " │Bug         #1001   Login button │                                                │                                 │ "
-" │● Closed          | Iteration: Pr│                                                │                                 │ "
-" └─────────────────────────────────│↑/↓: Navigate | Space/Enter: Toggle | Esc: Close│─────────────────────────────────┘ "
-" ┌History──────────────────────────│                                                │─────────────────────────────────┐ "
-" │No history available             └────────────────────────────────────────────────┘                                 │ "
+" │● Closed          | Iteration: Pr│↑/↓: Navigate | Space/Enter: Toggle | Esc: Close│                                 │ "
+" └─────────────────────────────────│                                                │─────────────────────────────────┘ "
+" ┌History──────────────────────────└────────────────────────────────────────────────┘─────────────────────────────────┐ "
+" │No history available                                                                                                │ "
 " └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ "
 " ┌Reproduction Steps (use ←/→ to navigate work items)─────────────────────────────────────────────────────────────────┐ "
 " │1. Navigate to login page                                                                                           │ "

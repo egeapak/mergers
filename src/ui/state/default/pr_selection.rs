@@ -1100,9 +1100,12 @@ impl PullRequestSelectionState {
         use ratatui::text::{Line, Span};
         use ratatui::widgets::Clear;
 
-        // Create a centered popup area
+        let has_dependency_data = app.dependency_graph().is_some();
+        let show_dep_status = !has_dependency_data;
+
+        // Create a centered popup area (taller when showing dep status line)
         let popup_width = 50;
-        let popup_height = 10;
+        let popup_height: u16 = if show_dep_status { 12 } else { 10 };
         let popup_area = ratatui::layout::Rect {
             x: area.x + (area.width.saturating_sub(popup_width)) / 2,
             y: area.y + (area.height.saturating_sub(popup_height)) / 2,
@@ -1129,35 +1132,86 @@ impl PullRequestSelectionState {
         let inner_area = background_block.inner(popup_area);
 
         // Create layout for settings items and help
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // Spacer
-                Constraint::Length(1), // Setting 1: Dependency highlights
-                Constraint::Length(1), // Setting 2: Work item highlights
-                Constraint::Min(1),    // Spacer
-                Constraint::Length(2), // Help text
-            ])
-            .split(inner_area);
+        let chunks = if show_dep_status {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Spacer
+                    Constraint::Length(1), // Dependency analysis status
+                    Constraint::Length(1), // Spacer
+                    Constraint::Length(1), // Setting 1: Dependency highlights
+                    Constraint::Length(1), // Setting 2: Work item highlights
+                    Constraint::Min(1),    // Spacer
+                    Constraint::Length(2), // Help text
+                ])
+                .split(inner_area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Spacer
+                    Constraint::Length(1), // Setting 1: Dependency highlights
+                    Constraint::Length(1), // Setting 2: Work item highlights
+                    Constraint::Min(1),    // Spacer
+                    Constraint::Length(2), // Help text
+                ])
+                .split(inner_area)
+        };
+
+        // Indices into chunks for settings and help
+        let (settings_start, help_idx) = if show_dep_status {
+            // Render dependency analysis status line
+            let status_msg = if app.local_repo().is_none() {
+                "  Dependency analysis: Skipped (not configured)"
+            } else {
+                "  Dependency analysis: Not available"
+            };
+            let status_line = Paragraph::new(Line::from(Span::styled(
+                status_msg,
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            f.render_widget(status_line, chunks[1]);
+            (3, 6) // settings at idx 3,4; help at idx 6
+        } else {
+            (1, 4) // settings at idx 1,2; help at idx 4
+        };
 
         // Render settings
-        let settings = [
+        let dep_label = if has_dependency_data {
+            "Show dependency highlights"
+        } else {
+            "Show dependency highlights (no data)"
+        };
+        let settings: [(_, bool, bool); 2] = [
             (
-                "Show dependency highlights",
+                dep_label,
                 app.show_dependency_highlights(),
+                !has_dependency_data,
             ),
-            ("Show work item highlights", app.show_work_item_highlights()),
+            (
+                "Show work item highlights",
+                app.show_work_item_highlights(),
+                false,
+            ),
         ];
 
         let key_style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
 
-        for (i, (label, enabled)) in settings.iter().enumerate() {
+        for (i, (label, enabled, dimmed)) in settings.iter().enumerate() {
             let checkbox = if *enabled { "[x]" } else { "[ ]" };
             let is_selected = self.settings_selection == i;
 
-            let style = if is_selected {
+            let style = if *dimmed {
+                if is_selected {
+                    Style::default().bg(Color::DarkGray).fg(Color::Gray)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                }
+            } else if is_selected {
                 Style::default().bg(Color::DarkGray).fg(Color::White)
             } else {
                 Style::default().fg(Color::White)
@@ -1165,11 +1219,11 @@ impl PullRequestSelectionState {
 
             let line = Line::from(vec![
                 Span::styled(format!("  {} ", checkbox), style),
-                Span::styled(*label, style),
+                Span::styled(label.to_string(), style),
             ]);
 
             let widget = Paragraph::new(line);
-            f.render_widget(widget, chunks[i + 1]); // +1 to skip the spacer
+            f.render_widget(widget, chunks[settings_start + i]);
         }
 
         // Render help text
@@ -1184,7 +1238,7 @@ impl PullRequestSelectionState {
         let help_widget = Paragraph::new(help_line)
             .style(Style::default().fg(Color::Gray))
             .alignment(Alignment::Center);
-        f.render_widget(help_widget, chunks[4]);
+        f.render_widget(help_widget, chunks[help_idx]);
     }
 
     /// Convert mouse y-coordinate to table row index
@@ -2851,7 +2905,10 @@ mod tests {
     use crate::ui::{
         snapshot_testing::with_settings_and_module_path,
         state::typed::AppState,
-        testing::{TuiTestHarness, create_test_config_default, create_test_pull_requests},
+        testing::{
+            TuiTestHarness, create_test_config_all_defaults, create_test_config_default,
+            create_test_pull_requests,
+        },
     };
     use insta::assert_snapshot;
 
@@ -5126,5 +5183,71 @@ mod tests {
 
         assert!(state.show_settings_dialog);
         assert_eq!(state.settings_selection, 0);
+    }
+
+    /// # PR Selection - Settings Dialog Shows Deps Skipped Status
+    ///
+    /// Tests that the settings dialog shows dependency analysis skip status
+    /// when no dependency graph is available and local_repo is not configured.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state with settings dialog open
+    /// - No dependency graph set on app (no local_repo configured)
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - Settings dialog shows "Dependency analysis: Skipped (not configured)"
+    /// - Dependency highlights toggle is dimmed with "(no data)" suffix
+    #[test]
+    fn test_pr_selection_settings_dialog_deps_skipped() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_all_defaults();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            // No dependency graph set, local_repo is None (not configured)
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 0;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog_deps_skipped", harness.backend());
+        });
+    }
+
+    /// # PR Selection - Settings Dialog With Dependency Data Available
+    ///
+    /// Tests that the settings dialog does NOT show the skip status line
+    /// when dependency data is available.
+    ///
+    /// ## Test Scenario
+    /// - Creates PR selection state with settings dialog open
+    /// - Sets a dependency graph on the app
+    /// - Renders the state
+    ///
+    /// ## Expected Outcome
+    /// - No skip status line shown
+    /// - Dependency highlights toggle shows normal styling
+    #[test]
+    fn test_pr_selection_settings_dialog_deps_available() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
+            harness
+                .merge_app_mut()
+                .set_dependency_graph(crate::ui::testing::create_test_dependency_graph());
+
+            let mut selection_state = PullRequestSelectionState::new();
+            selection_state.show_settings_dialog = true;
+            selection_state.settings_selection = 0;
+            let mut state = MergeState::PullRequestSelection(selection_state);
+            harness.render_merge_state(&mut state);
+
+            assert_snapshot!("settings_dialog_deps_available", harness.backend());
+        });
     }
 }
