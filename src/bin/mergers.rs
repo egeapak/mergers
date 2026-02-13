@@ -14,8 +14,7 @@ use mergers::{
     Args, AzureDevOpsClient, Commands, Config,
     config::Config as RawConfig,
     core::runner::{
-        MergeRunnerConfig, NonInteractiveRunner, OutputFormat, ReleaseNotesRunner,
-        ReleaseNotesRunnerConfig, RunResult,
+        MergeRunnerConfig, NonInteractiveRunner, OutputFormat, ReleaseNotesRunner, RunResult,
     },
     logging::{init_logging, parse_early_log_config},
     models::{
@@ -78,7 +77,7 @@ async fn main() -> Result<()> {
         }
         // Release notes command (non-TUI)
         Some(Commands::ReleaseNotes(release_notes_args)) => {
-            if let Err(e) = run_release_notes(release_notes_args).await {
+            if let Err(e) = run_release_notes(release_notes_args.clone()).await {
                 eprintln!("Error: {}", e);
                 process::exit(1);
             }
@@ -151,9 +150,14 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
 }
 
 /// Runs the release-notes command.
-async fn run_release_notes(args: &ReleaseNotesArgs) -> Result<()> {
-    let config = ReleaseNotesRunnerConfig::from_args(args)?;
-    let runner = ReleaseNotesRunner::new(config);
+async fn run_release_notes(args: ReleaseNotesArgs) -> Result<()> {
+    let app_config = Args {
+        command: Some(Commands::ReleaseNotes(args)),
+        create_config: false,
+    }
+    .resolve_config()?;
+    let runner_config = app_config.into_release_notes_runner_config();
+    let runner = ReleaseNotesRunner::new(runner_config);
 
     let output = runner.run().await?;
     println!("{}", output);

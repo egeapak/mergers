@@ -54,15 +54,17 @@ pub fn determine_task_group(commit_message: &str) -> TaskGroup {
 
 /// Build Azure DevOps base URL with properly encoded org/project names.
 ///
-/// Uses `NON_ALPHANUMERIC` encoding on the variable parts (organization, project)
-/// to handle spaces, parentheses, brackets, and any other special characters
-/// that could break markdown link syntax or URL validity.
+/// Uses `url::Url` path segment encoding to handle spaces, parentheses, brackets,
+/// and any other special characters that could break markdown link syntax or URL validity.
 fn build_base_url(organization: &str, project: &str) -> String {
-    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-
-    let encoded_org = utf8_percent_encode(organization, NON_ALPHANUMERIC);
-    let encoded_project = utf8_percent_encode(project, NON_ALPHANUMERIC);
-    format!("https://dev.azure.com/{encoded_org}/{encoded_project}")
+    let mut url = url::Url::parse("https://dev.azure.com").expect("valid base URL");
+    url.path_segments_mut()
+        .expect("valid base URL")
+        .push(organization)
+        .push(project);
+    // Remove trailing slash added by push
+    let result = url.to_string();
+    result.trim_end_matches('/').to_string()
 }
 
 /// Format entries as a markdown table.

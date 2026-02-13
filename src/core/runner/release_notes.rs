@@ -5,8 +5,7 @@
 use anyhow::{Context, Result};
 
 use crate::api::{AzureDevOpsClient, extract_merged_tags, filter_prs_with_tag};
-use crate::config::{Config, resolve_repo_path};
-use crate::models::{ReleaseNotesArgs, ReleaseNotesOutputFormat};
+use crate::models::ReleaseNotesOutputFormat;
 use crate::release_notes;
 use crate::release_notes::cache::WorkItemCache;
 
@@ -29,87 +28,6 @@ pub struct ReleaseNotesRunnerConfig {
     pub max_concurrent_processing: usize,
 }
 
-impl ReleaseNotesRunnerConfig {
-    /// Build config from CLI args with full config resolution.
-    ///
-    /// Handles the complete config precedence chain: default < file < git < env < cli.
-    pub fn from_args(args: &ReleaseNotesArgs) -> Result<Self> {
-        let file_config = Config::load_from_file()?;
-        let env_config = Config::load_from_env();
-
-        // Resolve repo path (release notes supports path aliases)
-        let git_config = if let Some(ref path_or_alias) = args.path_or_alias {
-            let repo_aliases = file_config.repo_aliases.as_ref().map(|p| p.value().clone());
-            if let Ok(resolved) = resolve_repo_path(Some(path_or_alias), &repo_aliases) {
-                Config::detect_from_git_remote(&resolved)
-            } else {
-                Config::default()
-            }
-        } else {
-            let cwd = std::env::current_dir().unwrap_or_default();
-            Config::detect_from_git_remote(&cwd)
-        };
-
-        let cli_config = Config::from_shared_args(&args.shared);
-
-        let merged = Config::default()
-            .merge(file_config)
-            .merge(git_config)
-            .merge(env_config)
-            .merge(cli_config);
-
-        let organization = merged
-            .organization
-            .map(|p| p.value().clone())
-            .ok_or_else(|| anyhow::anyhow!("organization is required (use -o or config file)"))?;
-        let project = merged
-            .project
-            .map(|p| p.value().clone())
-            .ok_or_else(|| anyhow::anyhow!("project is required (use -p or config file)"))?;
-        let pat = merged.pat.map(|p| p.value().clone()).ok_or_else(|| {
-            anyhow::anyhow!("PAT is required (use -t, MERGERS_PAT env var, or config file)")
-        })?;
-        let repository = merged
-            .repository
-            .map(|p| p.value().clone())
-            .unwrap_or_default();
-        let dev_branch = merged
-            .dev_branch
-            .map(|p| p.value().clone())
-            .unwrap_or_else(|| "dev".to_string());
-        let tag_prefix = merged
-            .tag_prefix
-            .map(|p| p.value().clone())
-            .unwrap_or_else(|| "merged-".to_string());
-        let max_concurrent_network = merged
-            .max_concurrent_network
-            .map(|p| *p.value())
-            .unwrap_or(100);
-        let max_concurrent_processing = merged
-            .max_concurrent_processing
-            .map(|p| *p.value())
-            .unwrap_or(10);
-
-        Ok(ReleaseNotesRunnerConfig {
-            organization,
-            project,
-            repository,
-            pat,
-            dev_branch,
-            tag_prefix,
-            from_version: args.from.clone(),
-            to_version: args.to.clone(),
-            output_format: args.output,
-            grouped: args.group,
-            include_prs: args.include_prs,
-            copy_to_clipboard: args.copy,
-            no_cache: args.no_cache,
-            max_concurrent_network,
-            max_concurrent_processing,
-        })
-    }
-}
-
 /// Release notes runner.
 pub struct ReleaseNotesRunner {
     config: ReleaseNotesRunnerConfig,
@@ -128,7 +46,7 @@ impl ReleaseNotesRunner {
             self.config.pat.clone(),
         )?;
 
-        eprintln!("Fetching pull requests from Azure DevOps...");
+        tracing::info!("Fetching pull requests from Azure DevOps...");
         let all_prs = client
             .fetch_pull_requests(&self.config.dev_branch, None)
             .await?;
@@ -150,7 +68,7 @@ impl ReleaseNotesRunner {
             anyhow::bail!("No PRs found with tag '{}'", target_tag);
         }
 
-        eprintln!("Found {} PR(s) with tag '{}'", tagged_prs.len(), target_tag);
+        tracing::info!("Found {} PR(s) with tag '{}'", tagged_prs.len(), target_tag);
 
         let owned_prs: Vec<_> = tagged_prs.into_iter().cloned().collect();
         let prs_with_wi = client
@@ -176,7 +94,7 @@ impl ReleaseNotesRunner {
 
         if self.config.copy_to_clipboard {
             release_notes::copy_to_clipboard(&formatted)?;
-            eprintln!("Output copied to clipboard.");
+            tracing::info!("Output copied to clipboard");
         }
 
         Ok(formatted)
@@ -251,7 +169,7 @@ impl ReleaseNotesRunner {
             }
         }
         if let Err(e) = cache.save() {
-            eprintln!("Warning: Failed to save cache: {}", e);
+            tracing::warn!("Failed to save cache: {}", e);
         }
     }
 }

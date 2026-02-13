@@ -1746,7 +1746,6 @@ dependencies = [
  "futures",
  "insta",
  "libc",
- "percent-encoding",
  "ratatui",
  "rayon",
  "regex",
@@ -1766,6 +1765,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

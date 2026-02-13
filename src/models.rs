@@ -831,6 +831,18 @@ pub struct CleanupModeConfig {
     pub target: ParsedProperty<String>,
 }
 
+/// Configuration specific to release notes mode
+#[derive(Debug, Clone)]
+pub struct ReleaseNotesModeConfig {
+    pub from_version: Option<String>,
+    pub to_version: Option<String>,
+    pub output_format: ReleaseNotesOutputFormat,
+    pub grouped: bool,
+    pub include_prs: bool,
+    pub copy_to_clipboard: bool,
+    pub no_cache: bool,
+}
+
 // ============================================================================
 // Type-Safe App Configuration System
 // ============================================================================
@@ -969,14 +981,19 @@ pub enum AppConfig {
         shared: SharedConfig,
         cleanup: CleanupModeConfig,
     },
+    ReleaseNotes {
+        shared: SharedConfig,
+        release_notes: ReleaseNotesModeConfig,
+    },
 }
 
 impl AppConfig {
     pub fn shared(&self) -> &SharedConfig {
         match self {
-            AppConfig::Default { shared, .. } => shared,
-            AppConfig::Migration { shared, .. } => shared,
-            AppConfig::Cleanup { shared, .. } => shared,
+            AppConfig::Default { shared, .. }
+            | AppConfig::Migration { shared, .. }
+            | AppConfig::Cleanup { shared, .. }
+            | AppConfig::ReleaseNotes { shared, .. } => shared,
         }
     }
 
@@ -1034,6 +1051,44 @@ impl AppConfig {
         }
     }
 
+    /// Converts to ReleaseNotesRunnerConfig if this is a ReleaseNotes variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-ReleaseNotes variant.
+    /// Converts to ReleaseNotesRunnerConfig if this is a ReleaseNotes variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-ReleaseNotes variant.
+    pub fn into_release_notes_runner_config(
+        self,
+    ) -> crate::core::runner::release_notes::ReleaseNotesRunnerConfig {
+        match self {
+            AppConfig::ReleaseNotes {
+                shared,
+                release_notes,
+            } => crate::core::runner::release_notes::ReleaseNotesRunnerConfig {
+                organization: shared.organization.value().clone(),
+                project: shared.project.value().clone(),
+                repository: shared.repository.value().clone(),
+                pat: shared.pat.value().clone(),
+                dev_branch: shared.dev_branch.value().clone(),
+                tag_prefix: shared.tag_prefix.value().clone(),
+                from_version: release_notes.from_version,
+                to_version: release_notes.to_version,
+                output_format: release_notes.output_format,
+                grouped: release_notes.grouped,
+                include_prs: release_notes.include_prs,
+                copy_to_clipboard: release_notes.copy_to_clipboard,
+                no_cache: release_notes.no_cache,
+                max_concurrent_network: *shared.max_concurrent_network.value(),
+                max_concurrent_processing: *shared.max_concurrent_processing.value(),
+            },
+            _ => panic!("into_release_notes_runner_config called on non-ReleaseNotes variant"),
+        }
+    }
+
     /// Tries to convert to MergeConfig, returning None if not a Default variant.
     pub fn try_into_merge_config(self) -> Option<MergeConfig> {
         match self {
@@ -1076,9 +1131,10 @@ impl AppConfig {
 impl AppModeConfig for AppConfig {
     fn shared(&self) -> &SharedConfig {
         match self {
-            AppConfig::Default { shared, .. } => shared,
-            AppConfig::Migration { shared, .. } => shared,
-            AppConfig::Cleanup { shared, .. } => shared,
+            AppConfig::Default { shared, .. }
+            | AppConfig::Migration { shared, .. }
+            | AppConfig::Cleanup { shared, .. }
+            | AppConfig::ReleaseNotes { shared, .. } => shared,
         }
     }
 }
@@ -1116,12 +1172,31 @@ impl Args {
         // Load from environment variables
         let env_config = Config::load_from_env();
 
+        // For ReleaseNotes, resolve path_or_alias (supports repo aliases) into repo path
+        let release_notes_resolved_path = if let Commands::ReleaseNotes(ref rn_args) = mode_command
+        {
+            let repo_aliases = file_config.repo_aliases.as_ref().map(|p| p.value().clone());
+            if let Some(ref path_or_alias) = rn_args.path_or_alias {
+                crate::config::resolve_repo_path(Some(path_or_alias), &repo_aliases)
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            } else {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                Some(cwd.to_string_lossy().to_string())
+            }
+        } else {
+            None
+        };
+
         // Determine effective local_repo path for git detection
-        // CLI takes precedence, then env var, then config file
-        let effective_local_repo = cli_local_repo
-            .cloned()
-            .or_else(|| env_config.local_repo.as_ref().map(|p| p.value().clone()))
-            .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()));
+        // For ReleaseNotes: resolved path_or_alias takes precedence
+        // For others: CLI takes precedence, then env var, then config file
+        let effective_local_repo = release_notes_resolved_path.or_else(|| {
+            cli_local_repo
+                .cloned()
+                .or_else(|| env_config.local_repo.as_ref().map(|p| p.value().clone()))
+                .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()))
+        });
 
         // Try to detect from git remote if we have a local repo path from any source
         let git_config = if let Some(ref repo_path) = effective_local_repo {
@@ -1229,10 +1304,18 @@ impl Args {
                     cleanup: CleanupModeConfig { target },
                 })
             }
-            Commands::ReleaseNotes(_) => {
-                // ReleaseNotes command doesn't use AppConfig - it has its own handling
-                unreachable!("ReleaseNotes command should not go through resolve_config")
-            }
+            Commands::ReleaseNotes(rn_args) => Ok(AppConfig::ReleaseNotes {
+                shared: shared_config,
+                release_notes: ReleaseNotesModeConfig {
+                    from_version: rn_args.from.clone(),
+                    to_version: rn_args.to.clone(),
+                    output_format: rn_args.output,
+                    grouped: rn_args.group,
+                    include_prs: rn_args.include_prs,
+                    copy_to_clipboard: rn_args.copy,
+                    no_cache: rn_args.no_cache,
+                },
+            }),
         }
     }
 }
