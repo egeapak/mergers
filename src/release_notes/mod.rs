@@ -52,18 +52,17 @@ pub fn determine_task_group(commit_message: &str) -> TaskGroup {
     }
 }
 
-/// Encode characters in a URL that break markdown link syntax.
+/// Build Azure DevOps base URL with properly encoded org/project names.
 ///
-/// Azure DevOps organization and project names may contain spaces
-/// or other special characters. This function encodes them so that
-/// `[text](url)` renders correctly in markdown previews.
-fn encode_url_for_markdown(url: &str) -> String {
-    use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+/// Uses `NON_ALPHANUMERIC` encoding on the variable parts (organization, project)
+/// to handle spaces, parentheses, brackets, and any other special characters
+/// that could break markdown link syntax or URL validity.
+fn build_base_url(organization: &str, project: &str) -> String {
+    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
-    const MARKDOWN_ENCODE_SET: &AsciiSet =
-        &CONTROLS.add(b' ').add(b'(').add(b')').add(b'[').add(b']');
-
-    utf8_percent_encode(url, MARKDOWN_ENCODE_SET).to_string()
+    let encoded_org = utf8_percent_encode(organization, NON_ALPHANUMERIC);
+    let encoded_project = utf8_percent_encode(project, NON_ALPHANUMERIC);
+    format!("https://dev.azure.com/{encoded_org}/{encoded_project}")
 }
 
 /// Format entries as a markdown table.
@@ -210,9 +209,9 @@ pub fn copy_to_clipboard(text: &str) -> Result<()> {
 
 /// Generate release notes markdown from TUI merge data.
 ///
-/// This function builds release notes directly from cherry-pick results
-/// and their associated pull requests/work items, without requiring
-/// git commit parsing.
+/// This function builds release notes from cherry-pick results
+/// and their associated pull requests/work items. Only successfully
+/// cherry-picked PRs are included.
 ///
 /// # Arguments
 ///
@@ -228,89 +227,20 @@ pub fn generate_from_merge_data(
     organization: &str,
     project: &str,
 ) -> String {
-    let base_url = format!("https://dev.azure.com/{}/{}", organization, project);
-    let today = chrono::Local::now().format("%Y-%m-%d");
-
-    let mut output = format!("# Release Notes - {version}\n\n**Release Date:** {today}\n");
-
-    // Build work item entries from successful cherry-picks
     let successful_pr_ids: HashSet<i32> = cherry_pick_items
         .iter()
         .filter(|item| matches!(item.status, CherryPickStatus::Success))
         .map(|item| item.pr_id)
         .collect();
 
-    let mut entries: Vec<ReleaseNoteEntry> = Vec::new();
-    let mut seen_task_ids = HashSet::new();
+    let filtered: Vec<_> = pull_requests
+        .iter()
+        .filter(|pr| successful_pr_ids.contains(&pr.pr.id))
+        .cloned()
+        .collect();
 
-    for pr_with_wi in pull_requests {
-        if !successful_pr_ids.contains(&pr_with_wi.pr.id) {
-            continue;
-        }
-
-        let group = determine_task_group(&pr_with_wi.pr.title);
-
-        for wi in &pr_with_wi.work_items {
-            if !seen_task_ids.insert(wi.id) {
-                continue;
-            }
-
-            let title = wi
-                .fields
-                .title
-                .clone()
-                .unwrap_or_else(|| "(Title not found)".to_string());
-            let url = encode_url_for_markdown(&format!("{}/_workitems/edit/{}", base_url, wi.id));
-
-            entries.push(ReleaseNoteEntry {
-                task_id: wi.id,
-                title,
-                url,
-                group,
-                pr_id: None,
-                pr_url: None,
-            });
-        }
-    }
-
-    if entries.is_empty() {
-        output.push_str("\nNo changes included in this release.\n");
-        return output;
-    }
-
-    // Group entries by TaskGroup
-    let mut groups: HashMap<TaskGroup, Vec<&ReleaseNoteEntry>> = HashMap::new();
-    for entry in &entries {
-        groups.entry(entry.group).or_default().push(entry);
-    }
-
-    // Output groups in order: Features, Fixes, Refactors, Other
-    for group in [
-        TaskGroup::Feature,
-        TaskGroup::Fix,
-        TaskGroup::Refactor,
-        TaskGroup::Other,
-    ] {
-        if let Some(group_entries) = groups.get(&group)
-            && !group_entries.is_empty()
-        {
-            output.push_str(&format!("\n## {}\n\n", group));
-            for entry in group_entries {
-                output.push_str(&format!(
-                    "- [{}]({}) {} \n",
-                    entry.task_id, entry.url, entry.title
-                ));
-            }
-        }
-    }
-
-    // Summary
-    output.push_str(&format!(
-        "\n---\n\n*{} work item(s) included in this release.*\n",
-        entries.len()
-    ));
-
-    output
+    let entries = build_entries_from_prs(&filtered, organization, project);
+    format_release_notes_document(version, &entries)
 }
 
 /// Build release note entries from PR + work item data.
@@ -319,7 +249,7 @@ pub fn build_entries_from_prs(
     organization: &str,
     project: &str,
 ) -> Vec<ReleaseNoteEntry> {
-    let base_url = format!("https://dev.azure.com/{}/{}", organization, project);
+    let base_url = build_base_url(organization, project);
     let mut entries: Vec<ReleaseNoteEntry> = Vec::new();
     let mut seen_task_ids = HashSet::new();
 
@@ -336,7 +266,7 @@ pub fn build_entries_from_prs(
                 .title
                 .clone()
                 .unwrap_or_else(|| "(Title not found)".to_string());
-            let url = encode_url_for_markdown(&format!("{}/_workitems/edit/{}", base_url, wi.id));
+            let url = format!("{}/_workitems/edit/{}", base_url, wi.id);
 
             entries.push(ReleaseNoteEntry {
                 task_id: wi.id,
@@ -344,10 +274,10 @@ pub fn build_entries_from_prs(
                 url,
                 group,
                 pr_id: Some(pr_with_wi.pr.id),
-                pr_url: Some(encode_url_for_markdown(&format!(
+                pr_url: Some(format!(
                     "{}/_git/pullrequest/{}",
                     base_url, pr_with_wi.pr.id
-                ))),
+                )),
             });
         }
     }
@@ -363,6 +293,11 @@ pub fn generate_from_prs(
     project: &str,
 ) -> String {
     let entries = build_entries_from_prs(prs, organization, project);
+    format_release_notes_document(version, &entries)
+}
+
+/// Format entries into a full release notes document with header, grouped sections, and summary.
+fn format_release_notes_document(version: &str, entries: &[ReleaseNoteEntry]) -> String {
     let today = chrono::Local::now().format("%Y-%m-%d");
     let mut output = format!("# Release Notes - {version}\n\n**Release Date:** {today}\n");
 
@@ -372,7 +307,7 @@ pub fn generate_from_prs(
     }
 
     let mut groups: HashMap<TaskGroup, Vec<&ReleaseNoteEntry>> = HashMap::new();
-    for entry in &entries {
+    for entry in entries {
         groups.entry(entry.group).or_default().push(entry);
     }
 

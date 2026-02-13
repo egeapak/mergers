@@ -1130,54 +1130,7 @@ impl Args {
             Config::default()
         };
 
-        let cli_config = Config {
-            organization: shared
-                .organization
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            project: shared
-                .project
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            repository: shared
-                .repository
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            pat: shared
-                .pat
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            dev_branch: shared
-                .dev_branch
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            target_branch: shared
-                .target_branch
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            local_repo: cli_local_repo.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            work_item_state: None, // Will be set based on command
-            parallel_limit: shared
-                .parallel_limit
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_network: shared
-                .max_concurrent_network
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_processing: shared
-                .max_concurrent_processing
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            tag_prefix: shared
-                .tag_prefix
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            // run_hooks is handled separately per command (MergeArgs has it, not SharedArgs)
-            run_hooks: None,
-            // UI settings are not set via CLI, only via config file
-            show_dependency_highlights: None,
-            show_work_item_highlights: None,
-            // repo_aliases are not set via CLI, only via config file
-            repo_aliases: None,
-        };
+        let cli_config = Config::from_shared_args(shared);
 
         // Merge configs: file < git_remote < env < cli
         let merged_config = file_config

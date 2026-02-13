@@ -1,6 +1,6 @@
-//! Work item title caching for release notes.
+//! Work item caching for release notes.
 //!
-//! Caches work item titles locally to avoid repeated API calls.
+//! Caches work items locally to avoid repeated API calls.
 //! Cache entries expire after 7 days by default.
 
 use anyhow::{Context, Result};

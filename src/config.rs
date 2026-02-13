@@ -21,7 +21,7 @@
 //! let merged = config.merge(env_config);
 //! ```
 
-use crate::{git_config, parsed_property::ParsedProperty};
+use crate::{git_config, models::SharedArgs, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -469,6 +469,63 @@ show_work_item_highlights = true
             .with_context(|| format!("Failed to write config to: {}", config_path.display()))?;
 
         Ok(())
+    }
+
+    /// Build a Config from SharedArgs CLI values.
+    ///
+    /// Converts SharedArgs fields into `ParsedProperty::Cli` variants.
+    /// Command-specific fields (work_item_state, run_hooks, etc.) are left as None
+    /// and should be set by the caller if needed.
+    pub fn from_shared_args(shared: &SharedArgs) -> Self {
+        let cli_local_repo = shared.path.as_ref().or(shared.local_repo.as_ref());
+        Config {
+            organization: shared
+                .organization
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            project: shared
+                .project
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            repository: shared
+                .repository
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            pat: shared
+                .pat
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            dev_branch: shared
+                .dev_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            target_branch: shared
+                .target_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            local_repo: cli_local_repo.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            parallel_limit: shared
+                .parallel_limit
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_network: shared
+                .max_concurrent_network
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_processing: shared
+                .max_concurrent_processing
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            tag_prefix: shared
+                .tag_prefix
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            // Command-specific fields: not set from SharedArgs
+            work_item_state: None,
+            run_hooks: None,
+            // UI settings: not set via CLI
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
+            // Repo aliases: not set via CLI
+            repo_aliases: None,
+        }
     }
 }
 

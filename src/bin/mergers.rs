@@ -152,116 +152,13 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
 
 /// Runs the release-notes command.
 async fn run_release_notes(args: &ReleaseNotesArgs) -> Result<()> {
-    let config = build_release_notes_runner_config(args)?;
+    let config = ReleaseNotesRunnerConfig::from_args(args)?;
     let runner = ReleaseNotesRunner::new(config);
 
     let output = runner.run().await?;
     println!("{}", output);
 
     Ok(())
-}
-
-/// Builds a ReleaseNotesRunnerConfig from CLI args and config files.
-fn build_release_notes_runner_config(args: &ReleaseNotesArgs) -> Result<ReleaseNotesRunnerConfig> {
-    let shared = &args.shared;
-
-    let file_config = RawConfig::load_from_file()?;
-    let env_config = RawConfig::load_from_env();
-
-    let git_config = if let Some(ref path_or_alias) = args.path_or_alias {
-        let repo_aliases: Option<std::collections::HashMap<String, String>> =
-            file_config.repo_aliases.as_ref().map(|p| p.value().clone());
-        if let Ok(resolved) = mergers::config::resolve_repo_path(Some(path_or_alias), &repo_aliases)
-        {
-            RawConfig::detect_from_git_remote(&resolved)
-        } else {
-            RawConfig::default()
-        }
-    } else {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        RawConfig::detect_from_git_remote(&cwd)
-    };
-
-    let merged_config = RawConfig::default()
-        .merge(file_config)
-        .merge(git_config)
-        .merge(env_config);
-
-    let cli_organization = shared.organization.clone();
-    let cli_project = shared.project.clone();
-    let cli_pat = shared.pat.clone();
-    let cli_repository = shared.repository.clone();
-    let cli_dev_branch = shared.dev_branch.clone();
-    let cli_tag_prefix = shared.tag_prefix.clone();
-
-    let organization = cli_organization
-        .or_else(|| {
-            merged_config
-                .organization
-                .as_ref()
-                .map(|p| p.value().clone())
-        })
-        .ok_or_else(|| anyhow::anyhow!("organization is required (use -o or config file)"))?;
-
-    let project = cli_project
-        .or_else(|| merged_config.project.as_ref().map(|p| p.value().clone()))
-        .ok_or_else(|| anyhow::anyhow!("project is required (use -p or config file)"))?;
-
-    let pat = cli_pat
-        .or_else(|| merged_config.pat.as_ref().map(|p| p.value().clone()))
-        .ok_or_else(|| {
-            anyhow::anyhow!("PAT is required (use -t, MERGERS_PAT env var, or config file)")
-        })?;
-
-    let repository = cli_repository
-        .or_else(|| merged_config.repository.as_ref().map(|p| p.value().clone()))
-        .unwrap_or_default();
-
-    let dev_branch = cli_dev_branch
-        .or_else(|| merged_config.dev_branch.as_ref().map(|p| p.value().clone()))
-        .unwrap_or_else(|| "dev".to_string());
-
-    let tag_prefix = cli_tag_prefix
-        .or_else(|| merged_config.tag_prefix.as_ref().map(|p| p.value().clone()))
-        .unwrap_or_else(|| "merged-".to_string());
-
-    let max_concurrent_network = shared
-        .max_concurrent_network
-        .or_else(|| {
-            merged_config
-                .max_concurrent_network
-                .as_ref()
-                .map(|p| *p.value())
-        })
-        .unwrap_or(100);
-
-    let max_concurrent_processing = shared
-        .max_concurrent_processing
-        .or_else(|| {
-            merged_config
-                .max_concurrent_processing
-                .as_ref()
-                .map(|p| *p.value())
-        })
-        .unwrap_or(10);
-
-    Ok(ReleaseNotesRunnerConfig {
-        organization,
-        project,
-        repository,
-        pat,
-        dev_branch,
-        tag_prefix,
-        from_version: args.from.clone(),
-        to_version: args.to.clone(),
-        output_format: args.output,
-        grouped: args.group,
-        include_prs: args.include_prs,
-        copy_to_clipboard: args.copy,
-        no_cache: args.no_cache,
-        max_concurrent_network,
-        max_concurrent_processing,
-    })
 }
 
 /// Runs a non-interactive merge operation.
@@ -370,60 +267,16 @@ fn build_runner_config_from_merge_args(args: &MergeArgs) -> Result<MergeRunnerCo
         RawConfig::default()
     };
 
-    // CLI config from args
-    let cli_config = RawConfig {
-        organization: shared
-            .organization
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        project: shared
-            .project
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        repository: shared
-            .repository
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        pat: shared
-            .pat
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        dev_branch: shared
-            .dev_branch
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        target_branch: shared
-            .target_branch
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        work_item_state: args
-            .work_item_state
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        parallel_limit: shared
-            .parallel_limit
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        max_concurrent_network: shared
-            .max_concurrent_network
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        max_concurrent_processing: shared
-            .max_concurrent_processing
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        tag_prefix: shared
-            .tag_prefix
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        run_hooks: Some(ParsedProperty::Cli(
-            args.run_hooks,
-            args.run_hooks.to_string(),
-        )),
-        // UI settings are not set via CLI, only via config file
-        show_dependency_highlights: None,
-        show_work_item_highlights: None,
-        // repo_aliases are not set via CLI, only via config file
-        repo_aliases: None,
-    };
+    // Build CLI config from shared args, then add merge-specific overrides
+    let mut cli_config = RawConfig::from_shared_args(shared);
+    cli_config.work_item_state = args
+        .work_item_state
+        .as_ref()
+        .map(|v| ParsedProperty::Cli(v.clone(), v.clone()));
+    cli_config.run_hooks = Some(ParsedProperty::Cli(
+        args.run_hooks,
+        args.run_hooks.to_string(),
+    ));
 
     // Merge configs: file < git_remote < env < cli
     let merged = file_config
