@@ -69,8 +69,7 @@ pub struct Config {
     // UI Settings
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
-    // Release Notes Settings
-    /// Repository aliases for release-notes command (e.g., "th" -> "/path/to/telehealth")
+    /// Repository aliases (e.g., "th" -> "/path/to/telehealth")
     pub repo_aliases: Option<ParsedProperty<std::collections::HashMap<String, String>>>,
 }
 
@@ -419,8 +418,8 @@ show_dependency_highlights = true
 # Show work item relationship highlighting in PR selection (optional, defaults to true)
 show_work_item_highlights = true
 
-# Repository aliases for release-notes command
-# Maps short names to full paths for quick access
+# Repository aliases for quick access
+# Maps short names to full paths (usable with any command)
 # [repo_aliases]
 # th = "/path/to/telehealth-backend"
 # gk = "/path/to/gatekeeper-backend"

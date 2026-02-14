@@ -215,7 +215,7 @@ fn release_notes_examples() -> &'static str {
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
 pub struct SharedArgs {
-    /// Local repository path (positional argument, takes precedence over --local-repo)
+    /// Local repository path or alias (positional argument, takes precedence over --local-repo)
     pub path: Option<String>,
 
     // Azure DevOps Connection
@@ -445,9 +445,6 @@ impl std::fmt::Display for TaskGroup {
 /// Arguments for the release-notes command.
 #[derive(ClapArgs, Clone, Debug)]
 pub struct ReleaseNotesArgs {
-    /// Repository path or alias (e.g., th, gk). Uses current directory if not specified.
-    pub path_or_alias: Option<String>,
-
     #[command(flatten)]
     pub shared: SharedArgs,
 
@@ -1172,29 +1169,21 @@ impl Args {
         // Load from environment variables
         let env_config = Config::load_from_env();
 
-        // For ReleaseNotes, resolve path_or_alias (supports repo aliases) into repo path
-        let release_notes_resolved_path = if let Commands::ReleaseNotes(ref rn_args) = mode_command
-        {
-            let repo_aliases = file_config.repo_aliases.as_ref().map(|p| p.value().clone());
-            if let Some(ref path_or_alias) = rn_args.path_or_alias {
-                crate::config::resolve_repo_path(Some(path_or_alias), &repo_aliases)
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-            } else {
-                let cwd = std::env::current_dir().unwrap_or_default();
-                Some(cwd.to_string_lossy().to_string())
-            }
-        } else {
-            None
-        };
+        // Resolve repo aliases for all commands (supports path or alias via SharedArgs.path)
+        let repo_aliases = file_config.repo_aliases.as_ref().map(|p| p.value().clone());
+        let resolved_local_repo = cli_local_repo.and_then(|path| {
+            crate::config::resolve_repo_path(Some(path), &repo_aliases)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        });
 
         // Determine effective local_repo path for git detection
-        // For ReleaseNotes: resolved path_or_alias takes precedence
-        // For others: CLI takes precedence, then env var, then config file
-        let effective_local_repo = release_notes_resolved_path.or_else(|| {
-            cli_local_repo
-                .cloned()
-                .or_else(|| env_config.local_repo.as_ref().map(|p| p.value().clone()))
+        // CLI (resolved via aliases) takes precedence, then env var, then config file
+        let effective_local_repo = resolved_local_repo.or_else(|| {
+            env_config
+                .local_repo
+                .as_ref()
+                .map(|p| p.value().clone())
                 .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()))
         });
 
