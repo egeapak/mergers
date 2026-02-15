@@ -205,10 +205,17 @@ fn cleanup_examples() -> &'static str {
     EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/cleanup.txt")))
 }
 
+/// Release-notes command examples
+fn release_notes_examples() -> &'static str {
+    use std::sync::OnceLock;
+    static EXAMPLES: OnceLock<String> = OnceLock::new();
+    EXAMPLES.get_or_init(|| styled_examples(include_str!("../docs/examples/release-notes.txt")))
+}
+
 /// Shared arguments used by all commands
 #[derive(ClapArgs, Clone, Default, Debug)]
 pub struct SharedArgs {
-    /// Local repository path (positional argument, takes precedence over --local-repo)
+    /// Local repository path or alias (positional argument, takes precedence over --local-repo)
     pub path: Option<String>,
 
     // Azure DevOps Connection
@@ -382,6 +389,94 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
+// ============================================================================
+// Release Notes CLI Arguments
+// ============================================================================
+
+/// Output format for release-notes command.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, serde::Serialize)]
+pub enum ReleaseNotesOutputFormat {
+    /// Markdown table format.
+    #[default]
+    Markdown,
+    /// JSON array of task objects.
+    Json,
+    /// Plain text list.
+    Plain,
+}
+
+impl std::fmt::Display for ReleaseNotesOutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReleaseNotesOutputFormat::Markdown => write!(f, "markdown"),
+            ReleaseNotesOutputFormat::Json => write!(f, "json"),
+            ReleaseNotesOutputFormat::Plain => write!(f, "plain"),
+        }
+    }
+}
+
+/// Task grouping category based on commit message prefix.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum TaskGroup {
+    /// Feature additions (feat:, feature:)
+    Feature,
+    /// Bug fixes (fix:, bugfix:)
+    Fix,
+    /// Code refactoring (refactor:)
+    Refactor,
+    /// Other changes
+    #[default]
+    Other,
+}
+
+impl std::fmt::Display for TaskGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TaskGroup::Feature => write!(f, "Features"),
+            TaskGroup::Fix => write!(f, "Fixes"),
+            TaskGroup::Refactor => write!(f, "Refactors"),
+            TaskGroup::Other => write!(f, "Other"),
+        }
+    }
+}
+
+/// Arguments for the release-notes command.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct ReleaseNotesArgs {
+    #[command(flatten)]
+    pub shared: SharedArgs,
+
+    /// Output format: markdown, json, plain
+    #[arg(long, value_enum, default_value_t = ReleaseNotesOutputFormat::Markdown, help_heading = "Output Options")]
+    pub output: ReleaseNotesOutputFormat,
+
+    /// Copy output to clipboard
+    #[arg(long, help_heading = "Output Options")]
+    pub copy: bool,
+
+    /// Group tasks by commit type (feat, fix, refactor)
+    #[arg(long, help_heading = "Output Options")]
+    pub group: bool,
+
+    /// Include PR links in output
+    #[arg(long, help_heading = "Output Options")]
+    pub include_prs: bool,
+
+    /// Starting version/tag for range (inclusive)
+    #[arg(long, help_heading = "Version Range")]
+    pub from: Option<String>,
+
+    /// Ending version/tag for range (inclusive, defaults to HEAD)
+    #[arg(long, help_heading = "Version Range")]
+    pub to: Option<String>,
+
+    /// Skip cache and fetch fresh data from API
+    #[arg(long, help_heading = "Cache Options")]
+    pub no_cache: bool,
+}
+
 /// Arguments for the `merge continue` subcommand.
 #[derive(ClapArgs, Clone, Debug)]
 pub struct MergeContinueArgs {
@@ -517,6 +612,16 @@ impl HasSharedArgs for CleanupArgs {
     }
 }
 
+impl HasSharedArgs for ReleaseNotesArgs {
+    fn shared_args(&self) -> &SharedArgs {
+        &self.shared
+    }
+
+    fn shared_args_mut(&mut self) -> &mut SharedArgs {
+        &mut self.shared
+    }
+}
+
 /// Available commands
 #[derive(Subcommand, Clone)]
 pub enum Commands {
@@ -554,25 +659,50 @@ pub enum Commands {
         after_help = cleanup_examples()
     )]
     Cleanup(CleanupArgs),
+
+    /// Generate release notes from version commits
+    #[command(
+        visible_alias = "rn",
+        long_about = "Generate release notes from git commits.\n\n\
+            Extracts work item references (rwi:#XXXXX) from commit messages\n\
+            and fetches their titles from Azure DevOps to create formatted\n\
+            release notes.\n\n\
+            Features:\n  \
+            • Supports version ranges (--from / --to)\n  \
+            • Groups tasks by type (feat, fix, refactor)\n  \
+            • Caches work item titles locally\n  \
+            • Multiple output formats (markdown, json, plain)\n  \
+            • Clipboard support (--copy)",
+        after_help = release_notes_examples()
+    )]
+    ReleaseNotes(ReleaseNotesArgs),
 }
 
 impl Commands {
-    /// Extract shared arguments from any command variant
+    /// Extract shared arguments from any command variant.
     pub fn shared_args(&self) -> &SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args(),
             Commands::Migrate(args) => args.shared_args(),
             Commands::Cleanup(args) => args.shared_args(),
+            Commands::ReleaseNotes(args) => args.shared_args(),
         }
     }
 
-    /// Extract mutable shared arguments from any command variant
+    /// Extract mutable shared arguments from any command variant.
     pub fn shared_args_mut(&mut self) -> &mut SharedArgs {
         match self {
             Commands::Merge(args) => args.shared_args_mut(),
             Commands::Migrate(args) => args.shared_args_mut(),
             Commands::Cleanup(args) => args.shared_args_mut(),
+            Commands::ReleaseNotes(args) => args.shared_args_mut(),
         }
+    }
+
+    /// Check if this command is the ReleaseNotes command.
+    #[must_use]
+    pub fn is_release_notes(&self) -> bool {
+        matches!(self, Commands::ReleaseNotes(_))
     }
 }
 
@@ -696,6 +826,18 @@ pub struct MigrationModeConfig {
 #[derive(Debug, Clone)]
 pub struct CleanupModeConfig {
     pub target: ParsedProperty<String>,
+}
+
+/// Configuration specific to release notes mode
+#[derive(Debug, Clone)]
+pub struct ReleaseNotesModeConfig {
+    pub from_version: Option<String>,
+    pub to_version: Option<String>,
+    pub output_format: ReleaseNotesOutputFormat,
+    pub grouped: bool,
+    pub include_prs: bool,
+    pub copy_to_clipboard: bool,
+    pub no_cache: bool,
 }
 
 // ============================================================================
@@ -836,14 +978,19 @@ pub enum AppConfig {
         shared: SharedConfig,
         cleanup: CleanupModeConfig,
     },
+    ReleaseNotes {
+        shared: SharedConfig,
+        release_notes: ReleaseNotesModeConfig,
+    },
 }
 
 impl AppConfig {
     pub fn shared(&self) -> &SharedConfig {
         match self {
-            AppConfig::Default { shared, .. } => shared,
-            AppConfig::Migration { shared, .. } => shared,
-            AppConfig::Cleanup { shared, .. } => shared,
+            AppConfig::Default { shared, .. }
+            | AppConfig::Migration { shared, .. }
+            | AppConfig::Cleanup { shared, .. }
+            | AppConfig::ReleaseNotes { shared, .. } => shared,
         }
     }
 
@@ -901,6 +1048,44 @@ impl AppConfig {
         }
     }
 
+    /// Converts to ReleaseNotesRunnerConfig if this is a ReleaseNotes variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-ReleaseNotes variant.
+    /// Converts to ReleaseNotesRunnerConfig if this is a ReleaseNotes variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a non-ReleaseNotes variant.
+    pub fn into_release_notes_runner_config(
+        self,
+    ) -> crate::core::runner::release_notes::ReleaseNotesRunnerConfig {
+        match self {
+            AppConfig::ReleaseNotes {
+                shared,
+                release_notes,
+            } => crate::core::runner::release_notes::ReleaseNotesRunnerConfig {
+                organization: shared.organization.value().clone(),
+                project: shared.project.value().clone(),
+                repository: shared.repository.value().clone(),
+                pat: shared.pat.value().clone(),
+                dev_branch: shared.dev_branch.value().clone(),
+                tag_prefix: shared.tag_prefix.value().clone(),
+                from_version: release_notes.from_version,
+                to_version: release_notes.to_version,
+                output_format: release_notes.output_format,
+                grouped: release_notes.grouped,
+                include_prs: release_notes.include_prs,
+                copy_to_clipboard: release_notes.copy_to_clipboard,
+                no_cache: release_notes.no_cache,
+                max_concurrent_network: *shared.max_concurrent_network.value(),
+                max_concurrent_processing: *shared.max_concurrent_processing.value(),
+            },
+            _ => panic!("into_release_notes_runner_config called on non-ReleaseNotes variant"),
+        }
+    }
+
     /// Tries to convert to MergeConfig, returning None if not a Default variant.
     pub fn try_into_merge_config(self) -> Option<MergeConfig> {
         match self {
@@ -943,9 +1128,10 @@ impl AppConfig {
 impl AppModeConfig for AppConfig {
     fn shared(&self) -> &SharedConfig {
         match self {
-            AppConfig::Default { shared, .. } => shared,
-            AppConfig::Migration { shared, .. } => shared,
-            AppConfig::Cleanup { shared, .. } => shared,
+            AppConfig::Default { shared, .. }
+            | AppConfig::Migration { shared, .. }
+            | AppConfig::Cleanup { shared, .. }
+            | AppConfig::ReleaseNotes { shared, .. } => shared,
         }
     }
 }
@@ -983,12 +1169,23 @@ impl Args {
         // Load from environment variables
         let env_config = Config::load_from_env();
 
+        // Resolve repo aliases for all commands (supports path or alias via SharedArgs.path)
+        let repo_aliases = file_config.repo_aliases.as_ref().map(|p| p.value().clone());
+        let resolved_local_repo = cli_local_repo.and_then(|path| {
+            crate::config::resolve_repo_path(Some(path), &repo_aliases)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        });
+
         // Determine effective local_repo path for git detection
-        // CLI takes precedence, then env var, then config file
-        let effective_local_repo = cli_local_repo
-            .cloned()
-            .or_else(|| env_config.local_repo.as_ref().map(|p| p.value().clone()))
-            .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()));
+        // CLI (resolved via aliases) takes precedence, then env var, then config file
+        let effective_local_repo = resolved_local_repo.or_else(|| {
+            env_config
+                .local_repo
+                .as_ref()
+                .map(|p| p.value().clone())
+                .or_else(|| file_config.local_repo.as_ref().map(|p| p.value().clone()))
+        });
 
         // Try to detect from git remote if we have a local repo path from any source
         let git_config = if let Some(ref repo_path) = effective_local_repo {
@@ -997,52 +1194,7 @@ impl Args {
             Config::default()
         };
 
-        let cli_config = Config {
-            organization: shared
-                .organization
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            project: shared
-                .project
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            repository: shared
-                .repository
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            pat: shared
-                .pat
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            dev_branch: shared
-                .dev_branch
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            target_branch: shared
-                .target_branch
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            local_repo: cli_local_repo.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            work_item_state: None, // Will be set based on command
-            parallel_limit: shared
-                .parallel_limit
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_network: shared
-                .max_concurrent_network
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            max_concurrent_processing: shared
-                .max_concurrent_processing
-                .map(|v| ParsedProperty::Cli(v, v.to_string())),
-            tag_prefix: shared
-                .tag_prefix
-                .as_ref()
-                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-            // run_hooks is handled separately per command (MergeArgs has it, not SharedArgs)
-            run_hooks: None,
-            // UI settings are not set via CLI, only via config file
-            show_dependency_highlights: None,
-            show_work_item_highlights: None,
-        };
+        let cli_config = Config::from_shared_args(shared);
 
         // Merge configs: file < git_remote < env < cli
         let merged_config = file_config
@@ -1141,6 +1293,18 @@ impl Args {
                     cleanup: CleanupModeConfig { target },
                 })
             }
+            Commands::ReleaseNotes(rn_args) => Ok(AppConfig::ReleaseNotes {
+                shared: shared_config,
+                release_notes: ReleaseNotesModeConfig {
+                    from_version: rn_args.from.clone(),
+                    to_version: rn_args.to.clone(),
+                    output_format: rn_args.output,
+                    grouped: rn_args.group,
+                    include_prs: rn_args.include_prs,
+                    copy_to_clipboard: rn_args.copy,
+                    no_cache: rn_args.no_cache,
+                },
+            }),
         }
     }
 }

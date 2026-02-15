@@ -1,0 +1,31 @@
+# Generate release notes from current directory
+mergers release-notes
+
+# Use short alias (rn)
+mergers rn
+
+# Use repository alias (configured in config.toml)
+mergers rn th
+
+# Generate notes between two versions
+mergers release-notes --from v1.0.0 --to v1.1.0
+
+# Group tasks by type (feat, fix, refactor)
+mergers release-notes --group
+
+# Output as JSON
+mergers release-notes --output json
+
+# Output as plain text
+mergers release-notes --output plain
+
+# Copy output to clipboard
+mergers release-notes --copy
+
+# Skip cache and fetch fresh data
+mergers release-notes --no-cache
+
+# Full example with all options
+mergers rn th -o myorg -p myproject -t <PAT> \
+  --from v1.0.0 --to v1.1.0 \
+  --group --output markdown --copy

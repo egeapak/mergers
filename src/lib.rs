@@ -41,6 +41,7 @@ pub mod logging;
 pub mod migration;
 pub mod models;
 pub mod parsed_property;
+pub mod release_notes;
 pub mod ui;
 pub mod utils;
 
@@ -64,8 +65,12 @@ pub use models::{
     MigrationModeConfig,
     NonInteractiveArgs,
     OutputFormat,
+    // Release notes types
+    ReleaseNotesArgs,
+    ReleaseNotesOutputFormat,
     SharedArgs,
     SharedConfig,
+    TaskGroup,
 };
 pub use parsed_property::ParsedProperty;
 

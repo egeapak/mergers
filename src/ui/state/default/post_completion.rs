@@ -382,7 +382,7 @@ impl ModeState for PostCompletionState {
             KeyCode::Null if !self.completed => {
                 // Auto-process tasks
                 if self.process_current_task(app).await {
-                    // All tasks completed, stay in this state to show results
+                    app.tagging_completed = true;
                 }
                 StateChange::Keep
             }
