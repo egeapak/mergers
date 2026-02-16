@@ -315,6 +315,41 @@ impl AzureDevOpsClient {
         Ok(work_items.value.into_iter().map(WorkItem::from).collect())
     }
 
+    /// Fetches work items by a list of IDs directly.
+    ///
+    /// This is useful when you already have work item IDs and want to fetch
+    /// their details without going through a PR reference.
+    ///
+    /// # Arguments
+    ///
+    /// * `ids` - Slice of work item IDs to fetch
+    ///
+    /// # Returns
+    ///
+    /// Vector of WorkItem objects for the requested IDs.
+    #[must_use = "this returns the fetched work items which should be used"]
+    pub async fn fetch_work_items_by_ids(&self, ids: &[i32]) -> Result<Vec<WorkItem>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let ids_str = ids
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let work_items = self
+            .wit_client
+            .work_items_client()
+            .list(&self.organization, &ids_str, &self.project)
+            .fields("System.Title,System.State,System.WorkItemType,System.AssignedTo,System.IterationPath")
+            .await
+            .context("Failed to fetch work items by IDs")?;
+
+        Ok(work_items.value.into_iter().map(WorkItem::from).collect())
+    }
+
     /// Fetches repository details including SSH URL.
     pub async fn fetch_repo_details(&self) -> Result<RepoDetails> {
         let repo = self
@@ -673,6 +708,33 @@ pub fn filter_prs_without_merged_tag(prs: Vec<PullRequest>) -> Vec<PullRequest> 
             }
         })
         .collect()
+}
+
+/// Filter PRs that have a specific tag label.
+#[must_use]
+pub fn filter_prs_with_tag<'a>(prs: &'a [PullRequest], tag: &str) -> Vec<&'a PullRequest> {
+    prs.iter()
+        .filter(|pr| {
+            pr.labels
+                .as_ref()
+                .is_some_and(|labels| labels.iter().any(|label| label.name == tag))
+        })
+        .collect()
+}
+
+/// Extract all unique merged-* tag names from a list of PRs.
+#[must_use]
+pub fn extract_merged_tags(prs: &[PullRequest], tag_prefix: &str) -> Vec<String> {
+    let mut tags: Vec<String> = prs
+        .iter()
+        .filter_map(|pr| pr.labels.as_ref())
+        .flat_map(|labels| labels.iter())
+        .filter(|label| label.name.starts_with(tag_prefix))
+        .map(|label| label.name.clone())
+        .collect();
+    tags.sort_unstable();
+    tags.dedup();
+    tags
 }
 
 /// Generic Azure DevOps client that uses trait objects for operations.

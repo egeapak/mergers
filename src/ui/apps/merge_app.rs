@@ -72,6 +72,9 @@ pub struct MergeApp {
 
     /// Whether to show work item relationship highlighting in PR selection.
     show_work_item_highlights: bool,
+
+    /// Whether tagging (post-completion) has been completed.
+    pub tagging_completed: bool,
 }
 
 impl MergeApp {
@@ -125,6 +128,7 @@ impl MergeApp {
             dependency_graph: None,
             show_dependency_highlights,
             show_work_item_highlights,
+            tagging_completed: false,
         }
     }
 

@@ -21,9 +21,10 @@
 //! let merged = config.merge(env_config);
 //! ```
 
-use crate::{git_config, parsed_property::ParsedProperty};
+use crate::{git_config, models::SharedArgs, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -46,6 +47,8 @@ struct ConfigFile {
     // UI Settings
     pub show_dependency_highlights: Option<bool>,
     pub show_work_item_highlights: Option<bool>,
+    // Release Notes Settings
+    pub repo_aliases: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -66,6 +69,8 @@ pub struct Config {
     // UI Settings
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
+    /// Repository aliases (e.g., "th" -> "/path/to/telehealth")
+    pub repo_aliases: Option<ParsedProperty<std::collections::HashMap<String, String>>>,
 }
 
 impl Default for Config {
@@ -87,6 +92,8 @@ impl Default for Config {
             // UI Settings - both enabled by default
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            // Release Notes Settings
+            repo_aliases: None,
         }
     }
 }
@@ -153,6 +160,9 @@ impl Config {
             show_work_item_highlights: config_file
                 .show_work_item_highlights
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            repo_aliases: config_file
+                .repo_aliases
+                .map(|v| ParsedProperty::File(v.clone(), config_path.clone(), format!("{:?}", v))),
         })
     }
 
@@ -203,6 +213,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                repo_aliases: None,
             };
         }
 
@@ -229,6 +240,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                repo_aliases: None,
             };
         }
 
@@ -293,6 +305,8 @@ impl Config {
                         .ok()
                         .map(|v| ParsedProperty::Env(v, s.clone()))
                 }),
+            // repo_aliases is configured via file only, not environment variables
+            repo_aliases: None,
         }
     }
 
@@ -346,6 +360,7 @@ impl Config {
             show_work_item_highlights: other
                 .show_work_item_highlights
                 .or(self.show_work_item_highlights),
+            repo_aliases: other.repo_aliases.or(self.repo_aliases),
         }
     }
 
@@ -402,6 +417,12 @@ show_dependency_highlights = true
 
 # Show work item relationship highlighting in PR selection (optional, defaults to true)
 show_work_item_highlights = true
+
+# Repository aliases for quick access
+# Maps short names to full paths (usable with any command)
+# [repo_aliases]
+# th = "/path/to/telehealth-backend"
+# gk = "/path/to/gatekeeper-backend"
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
@@ -447,6 +468,99 @@ show_work_item_highlights = true
             .with_context(|| format!("Failed to write config to: {}", config_path.display()))?;
 
         Ok(())
+    }
+
+    /// Build a Config from SharedArgs CLI values.
+    ///
+    /// Converts SharedArgs fields into `ParsedProperty::Cli` variants.
+    /// Command-specific fields (work_item_state, run_hooks, etc.) are left as None
+    /// and should be set by the caller if needed.
+    pub fn from_shared_args(shared: &SharedArgs) -> Self {
+        let cli_local_repo = shared.path.as_ref().or(shared.local_repo.as_ref());
+        Config {
+            organization: shared
+                .organization
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            project: shared
+                .project
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            repository: shared
+                .repository
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            pat: shared
+                .pat
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            dev_branch: shared
+                .dev_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            target_branch: shared
+                .target_branch
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            local_repo: cli_local_repo.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            parallel_limit: shared
+                .parallel_limit
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_network: shared
+                .max_concurrent_network
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            max_concurrent_processing: shared
+                .max_concurrent_processing
+                .map(|v| ParsedProperty::Cli(v, v.to_string())),
+            tag_prefix: shared
+                .tag_prefix
+                .as_ref()
+                .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
+            // Command-specific fields: not set from SharedArgs
+            work_item_state: None,
+            run_hooks: None,
+            // UI settings: not set via CLI
+            show_dependency_highlights: None,
+            show_work_item_highlights: None,
+            // Repo aliases: not set via CLI
+            repo_aliases: None,
+        }
+    }
+}
+
+/// Resolve repository path from alias or path.
+///
+/// # Arguments
+///
+/// * `path_or_alias` - Optional path or alias (e.g., "th", "/path/to/repo")
+/// * `aliases` - Map of alias names to paths from config
+///
+/// # Returns
+///
+/// Resolved PathBuf to the repository.
+pub fn resolve_repo_path(
+    path_or_alias: Option<&str>,
+    aliases: &Option<HashMap<String, String>>,
+) -> Result<PathBuf> {
+    match path_or_alias {
+        None => std::env::current_dir().context("Failed to get current directory"),
+        Some(input) => {
+            if let Some(alias_map) = aliases
+                && let Some(path) = alias_map.get(input)
+            {
+                return Ok(PathBuf::from(path));
+            }
+
+            let path = PathBuf::from(input);
+            if path.exists() {
+                Ok(path)
+            } else {
+                anyhow::bail!(
+                    "Path '{}' does not exist. If this is an alias, configure it in ~/.config/mergers/config.toml under [repo_aliases]",
+                    input
+                )
+            }
+        }
     }
 }
 
@@ -784,6 +898,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let other = Config {
@@ -802,6 +917,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let merged = base.merge(other);
@@ -883,6 +999,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let empty2 = Config {
@@ -901,6 +1018,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            repo_aliases: None,
         };
 
         let merged = empty1.merge(empty2);
@@ -1345,6 +1463,7 @@ invalid toml syntax here [
             run_hooks: Some(ParsedProperty::Default(false)),
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            repo_aliases: None,
         };
 
         // Test serialization to TOML (serializes with enum variant info)
@@ -1660,6 +1779,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            repo_aliases: None,
         };
 
         let override_config = Config {
@@ -1678,6 +1798,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(false)),
             show_work_item_highlights: None, // Should keep base value
+            repo_aliases: None,
         };
 
         let merged = base.merge(override_config);
@@ -1732,5 +1853,40 @@ show_work_item_highlights = true
         // Verify directory and file were created
         assert!(mergers_dir.exists());
         assert!(mergers_dir.join("config.toml").exists());
+    }
+
+    /// # Resolve Repo Path With Alias
+    ///
+    /// Tests that resolve_repo_path correctly resolves aliases from config.
+    ///
+    /// ## Test Scenario
+    /// - Creates an alias map with "test" -> "/tmp/test-repo"
+    /// - Resolves "test" using the alias map
+    ///
+    /// ## Expected Outcome
+    /// - Path resolves to the alias target
+    #[test]
+    fn test_resolve_repo_path_with_alias() {
+        let mut aliases = HashMap::new();
+        aliases.insert("test".to_string(), "/tmp/test-repo".to_string());
+
+        let result = super::resolve_repo_path(Some("test"), &Some(aliases));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/tmp/test-repo"));
+    }
+
+    /// # Resolve Repo Path Current Directory
+    ///
+    /// Tests that resolve_repo_path falls back to current directory when no input.
+    ///
+    /// ## Test Scenario
+    /// - Calls resolve_repo_path with None path and None aliases
+    ///
+    /// ## Expected Outcome
+    /// - Returns the current working directory
+    #[test]
+    fn test_resolve_repo_path_current_dir() {
+        let result = super::resolve_repo_path(None, &None);
+        assert!(result.is_ok());
     }
 }

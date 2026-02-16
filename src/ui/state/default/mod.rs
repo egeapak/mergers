@@ -6,6 +6,7 @@ mod conflict_resolution;
 mod data_loading;
 mod post_completion;
 mod pr_selection;
+mod release_notes_export;
 mod setup_repo;
 mod state_enum;
 mod version_input;
@@ -20,6 +21,7 @@ pub use post_completion::{
     PostCompletionState, PostCompletionTask, PostCompletionTaskItem, TaskStatus,
 };
 pub use pr_selection::PullRequestSelectionState;
+pub use release_notes_export::ReleaseNotesExportState;
 pub use setup_repo::SetupRepoState;
 pub use state_enum::MergeState;
 pub use version_input::VersionInputState;

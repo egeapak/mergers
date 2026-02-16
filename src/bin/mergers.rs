@@ -13,11 +13,13 @@ use std::sync::Arc;
 use mergers::{
     Args, AzureDevOpsClient, Commands, Config,
     config::Config as RawConfig,
-    core::runner::{MergeRunnerConfig, NonInteractiveRunner, OutputFormat, RunResult},
+    core::runner::{
+        MergeRunnerConfig, NonInteractiveRunner, OutputFormat, ReleaseNotesRunner, RunResult,
+    },
     logging::{init_logging, parse_early_log_config},
     models::{
         MergeAbortArgs, MergeArgs, MergeCompleteArgs, MergeContinueArgs, MergeStatusArgs,
-        MergeSubcommand,
+        MergeSubcommand, ReleaseNotesArgs,
     },
     parsed_property::ParsedProperty,
     ui::{App, run_app},
@@ -71,6 +73,13 @@ async fn main() -> Result<()> {
                 _ => {
                     run_interactive_tui(args).await?;
                 }
+            }
+        }
+        // Release notes command (non-TUI)
+        Some(Commands::ReleaseNotes(release_notes_args)) => {
+            if let Err(e) = run_release_notes(release_notes_args.clone()).await {
+                eprintln!("Error: {}", e);
+                process::exit(1);
             }
         }
         // Migrate, Cleanup, or no command → TUI mode
@@ -138,6 +147,22 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
     terminal.show_cursor()?;
 
     result
+}
+
+/// Runs the release-notes command.
+async fn run_release_notes(args: ReleaseNotesArgs) -> Result<()> {
+    let app_config = Args {
+        command: Some(Commands::ReleaseNotes(args)),
+        create_config: false,
+    }
+    .resolve_config()?;
+    let runner_config = app_config.into_release_notes_runner_config();
+    let runner = ReleaseNotesRunner::new(runner_config);
+
+    let output = runner.run().await?;
+    println!("{}", output);
+
+    Ok(())
 }
 
 /// Runs a non-interactive merge operation.
@@ -246,58 +271,16 @@ fn build_runner_config_from_merge_args(args: &MergeArgs) -> Result<MergeRunnerCo
         RawConfig::default()
     };
 
-    // CLI config from args
-    let cli_config = RawConfig {
-        organization: shared
-            .organization
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        project: shared
-            .project
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        repository: shared
-            .repository
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        pat: shared
-            .pat
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        dev_branch: shared
-            .dev_branch
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        target_branch: shared
-            .target_branch
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        local_repo: local_repo_path.map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        work_item_state: args
-            .work_item_state
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        parallel_limit: shared
-            .parallel_limit
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        max_concurrent_network: shared
-            .max_concurrent_network
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        max_concurrent_processing: shared
-            .max_concurrent_processing
-            .map(|v| ParsedProperty::Cli(v, v.to_string())),
-        tag_prefix: shared
-            .tag_prefix
-            .as_ref()
-            .map(|v| ParsedProperty::Cli(v.clone(), v.clone())),
-        run_hooks: Some(ParsedProperty::Cli(
-            args.run_hooks,
-            args.run_hooks.to_string(),
-        )),
-        // UI settings are not set via CLI, only via config file
-        show_dependency_highlights: None,
-        show_work_item_highlights: None,
-    };
+    // Build CLI config from shared args, then add merge-specific overrides
+    let mut cli_config = RawConfig::from_shared_args(shared);
+    cli_config.work_item_state = args
+        .work_item_state
+        .as_ref()
+        .map(|v| ParsedProperty::Cli(v.clone(), v.clone()));
+    cli_config.run_hooks = Some(ParsedProperty::Cli(
+        args.run_hooks,
+        args.run_hooks.to_string(),
+    ));
 
     // Merge configs: file < git_remote < env < cli
     let merged = file_config
