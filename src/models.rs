@@ -1538,6 +1538,40 @@ mod tests {
         }
     }
 
+    fn create_sample_release_notes_args() -> Args {
+        Args {
+            command: Some(Commands::ReleaseNotes(ReleaseNotesArgs {
+                shared: SharedArgs {
+                    path: Some("/test/repo".to_string()),
+                    organization: Some("test-org".to_string()),
+                    project: Some("test-project".to_string()),
+                    repository: Some("test-repo".to_string()),
+                    pat: Some("test-pat".to_string()),
+                    dev_branch: Some("dev".to_string()),
+                    target_branch: Some("main".to_string()),
+                    local_repo: None,
+                    tag_prefix: Some("merged-".to_string()),
+                    parallel_limit: Some(50),
+                    max_concurrent_network: Some(20),
+                    max_concurrent_processing: Some(5),
+                    since: Some("1w".to_string()),
+                    skip_confirmation: true,
+                    log_level: None,
+                    log_file: None,
+                    log_format: None,
+                },
+                output: ReleaseNotesOutputFormat::Markdown,
+                copy: false,
+                group: false,
+                include_prs: false,
+                from: Some("v1.0.0".to_string()),
+                to: Some("v2.0.0".to_string()),
+                no_cache: false,
+            })),
+            create_config: false,
+        }
+    }
+
     fn create_sample_pull_request() -> PullRequest {
         PullRequest {
             id: 123,
@@ -5382,6 +5416,826 @@ mod tests {
             assert!(cleanup_args.shared.skip_confirmation);
         } else {
             panic!("Expected Cleanup command");
+        }
+    }
+
+    // ========================================================================
+    // ReleaseNotes command parsing tests
+    // ========================================================================
+
+    /// # Release Notes Basic Command Parsing
+    ///
+    /// Tests that `mergers release-notes` is recognized as the ReleaseNotes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - Command is recognized as Commands::ReleaseNotes
+    #[test]
+    fn test_release_notes_command_basic_parsing() {
+        let args = Args::parse_from(["mergers", "release-notes"]);
+
+        assert!(matches!(args.command, Some(Commands::ReleaseNotes(_))));
+    }
+
+    /// # Release Notes Command Alias
+    ///
+    /// Tests that the 'rn' alias correctly parses as release-notes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn`
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'rn' is recognized as ReleaseNotes command
+    #[test]
+    fn test_release_notes_command_alias_rn() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        assert!(matches!(args.command, Some(Commands::ReleaseNotes(_))));
+    }
+
+    /// # Release Notes with Shared Args
+    ///
+    /// Tests that shared arguments (-o, -p, -r, -t) work on release-notes.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all short shared flags
+    ///
+    /// ## Expected Outcome
+    /// - All shared arg fields are correctly populated
+    #[test]
+    fn test_release_notes_with_shared_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "-o",
+            "my-org",
+            "-p",
+            "my-proj",
+            "-r",
+            "my-repo",
+            "-t",
+            "my-token",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(rn_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(rn_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(rn_args.shared.pat, Some("my-token".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes with Positional Path
+    ///
+    /// Tests that a positional path argument is captured on release-notes.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes /path/to/repo`
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in shared.path
+    #[test]
+    fn test_release_notes_with_positional_path() {
+        let args = Args::parse_from(["mergers", "release-notes", "/path/to/repo"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes All Fields Explicit
+    ///
+    /// Tests that every release-notes flag is correctly parsed when explicitly set.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all possible flags
+    ///
+    /// ## Expected Outcome
+    /// - Every field has the explicit value provided
+    #[test]
+    fn test_release_notes_all_fields_explicit() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "--output",
+            "json",
+            "--copy",
+            "--group",
+            "--include-prs",
+            "--from",
+            "v1.0.0",
+            "--to",
+            "v2.0.0",
+            "--no-cache",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release",
+            "--tag-prefix",
+            "released-",
+            "--since",
+            "2w",
+            "--skip-confirmation",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            // Release-notes specific
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Json);
+            assert!(rn_args.copy);
+            assert!(rn_args.group);
+            assert!(rn_args.include_prs);
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+            assert!(rn_args.no_cache);
+            // Shared args
+            assert_eq!(rn_args.shared.organization, Some("org".to_string()));
+            assert_eq!(rn_args.shared.project, Some("proj".to_string()));
+            assert_eq!(rn_args.shared.repository, Some("repo".to_string()));
+            assert_eq!(rn_args.shared.pat, Some("pat".to_string()));
+            assert_eq!(rn_args.shared.dev_branch, Some("develop".to_string()));
+            assert_eq!(rn_args.shared.target_branch, Some("release".to_string()));
+            assert_eq!(rn_args.shared.tag_prefix, Some("released-".to_string()));
+            assert_eq!(rn_args.shared.since, Some("2w".to_string()));
+            assert!(rn_args.shared.skip_confirmation);
+            assert_eq!(rn_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Default Values
+    ///
+    /// Tests that release-notes fields use correct defaults when no flags provided.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes` with no optional flags
+    ///
+    /// ## Expected Outcome
+    /// - output defaults to Markdown, booleans to false, from/to to None
+    #[test]
+    fn test_release_notes_default_values() {
+        let args = Args::parse_from(["mergers", "release-notes"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Markdown);
+            assert!(!rn_args.copy);
+            assert!(!rn_args.group);
+            assert!(!rn_args.include_prs);
+            assert_eq!(rn_args.from, None);
+            assert_eq!(rn_args.to, None);
+            assert!(!rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Boolean Flags Default False
+    ///
+    /// Tests that all boolean flags on release-notes default to false.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn` with no boolean flags
+    ///
+    /// ## Expected Outcome
+    /// - copy, group, include_prs, no_cache are all false
+    #[test]
+    fn test_release_notes_boolean_flags_default_false() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert!(!rn_args.copy);
+            assert!(!rn_args.group);
+            assert!(!rn_args.include_prs);
+            assert!(!rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Boolean Flags Activated
+    ///
+    /// Tests that all boolean flags are true when present.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all boolean flags
+    ///
+    /// ## Expected Outcome
+    /// - copy, group, include_prs, no_cache are all true
+    #[test]
+    fn test_release_notes_boolean_flags_activated() {
+        let args = Args::parse_from([
+            "mergers",
+            "rn",
+            "--copy",
+            "--group",
+            "--include-prs",
+            "--no-cache",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert!(rn_args.copy);
+            assert!(rn_args.group);
+            assert!(rn_args.include_prs);
+            assert!(rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes From and To Version Range
+    ///
+    /// Tests that --from and --to capture version range.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --from v1.0.0 --to v2.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - Both from and to contain the specified versions
+    #[test]
+    fn test_release_notes_from_and_to_version_range() {
+        let args = Args::parse_from(["mergers", "rn", "--from", "v1.0.0", "--to", "v2.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes From Without To
+    ///
+    /// Tests that --from can be specified alone (--to defaults to HEAD at runtime).
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --from v1.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - from is Some, to is None
+    #[test]
+    fn test_release_notes_from_without_to() {
+        let args = Args::parse_from(["mergers", "rn", "--from", "v1.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, None);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes To Without From
+    ///
+    /// Tests that --to can be specified alone.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --to v2.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - from is None, to is Some
+    #[test]
+    fn test_release_notes_to_without_from() {
+        let args = Args::parse_from(["mergers", "rn", "--to", "v2.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, None);
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Path Before and After Flags
+    ///
+    /// Tests that the positional path works regardless of position relative to flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses path before flags and after flags
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in both orderings
+    #[test]
+    fn test_release_notes_path_before_and_after_flags() {
+        // Path before flags
+        let args_before =
+            Args::parse_from(["mergers", "rn", "/my/repo", "--from", "v1.0", "--group"]);
+        // Path after flags
+        let args_after =
+            Args::parse_from(["mergers", "rn", "--from", "v1.0", "--group", "/my/repo"]);
+
+        if let Some(Commands::ReleaseNotes(rn_before)) = args_before.command {
+            assert_eq!(rn_before.shared.path, Some("/my/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command (before)");
+        }
+
+        if let Some(Commands::ReleaseNotes(rn_after)) = args_after.command {
+            assert_eq!(rn_after.shared.path, Some("/my/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command (after)");
+        }
+    }
+
+    // ========================================================================
+    // ReleaseNotesOutputFormat enum tests
+    // ========================================================================
+
+    /// # Release Notes Output Format All Values
+    ///
+    /// Tests that all ReleaseNotesOutputFormat values parse correctly.
+    ///
+    /// ## Test Scenario
+    /// - Parses --output with each valid value (markdown, json, plain)
+    ///
+    /// ## Expected Outcome
+    /// - Each string maps to the correct enum variant
+    #[test]
+    fn test_release_notes_output_format_all_values() {
+        for (input, expected) in [
+            ("markdown", ReleaseNotesOutputFormat::Markdown),
+            ("json", ReleaseNotesOutputFormat::Json),
+            ("plain", ReleaseNotesOutputFormat::Plain),
+        ] {
+            let args = Args::parse_from(["mergers", "rn", "--output", input]);
+
+            if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+                assert_eq!(
+                    rn_args.output, expected,
+                    "Output format '{}' should parse to {:?}",
+                    input, expected
+                );
+            } else {
+                panic!("Expected ReleaseNotes command for output '{}'", input);
+            }
+        }
+    }
+
+    /// # Release Notes Output Format Invalid Rejected
+    ///
+    /// Tests that invalid --output values are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse --output with invalid value "xml"
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_release_notes_output_format_invalid_rejected() {
+        let result = Args::try_parse_from(["mergers", "rn", "--output", "xml"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes Output Format Default Markdown
+    ///
+    /// Tests that output defaults to Markdown when --output is not specified.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes without --output
+    ///
+    /// ## Expected Outcome
+    /// - output field is ReleaseNotesOutputFormat::Markdown
+    #[test]
+    fn test_release_notes_output_format_default_markdown() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Markdown);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Output Format Display
+    ///
+    /// Tests the Display implementation for ReleaseNotesOutputFormat.
+    ///
+    /// ## Test Scenario
+    /// - Calls to_string() on each variant
+    ///
+    /// ## Expected Outcome
+    /// - Markdown -> "markdown", Json -> "json", Plain -> "plain"
+    #[test]
+    fn test_release_notes_output_format_display() {
+        assert_eq!(ReleaseNotesOutputFormat::Markdown.to_string(), "markdown");
+        assert_eq!(ReleaseNotesOutputFormat::Json.to_string(), "json");
+        assert_eq!(ReleaseNotesOutputFormat::Plain.to_string(), "plain");
+    }
+
+    // ========================================================================
+    // TaskGroup enum tests
+    // ========================================================================
+
+    /// # TaskGroup All Variants
+    ///
+    /// Tests that all TaskGroup variants can be constructed and matched.
+    ///
+    /// ## Test Scenario
+    /// - Creates each TaskGroup variant
+    /// - Pattern matches to verify correctness
+    ///
+    /// ## Expected Outcome
+    /// - All variants are constructible and matchable
+    #[test]
+    fn test_task_group_all_variants() {
+        let groups = [
+            TaskGroup::Feature,
+            TaskGroup::Fix,
+            TaskGroup::Refactor,
+            TaskGroup::Other,
+        ];
+
+        assert!(matches!(groups[0], TaskGroup::Feature));
+        assert!(matches!(groups[1], TaskGroup::Fix));
+        assert!(matches!(groups[2], TaskGroup::Refactor));
+        assert!(matches!(groups[3], TaskGroup::Other));
+    }
+
+    /// # TaskGroup Default Is Other
+    ///
+    /// Tests that TaskGroup::default() returns Other.
+    ///
+    /// ## Test Scenario
+    /// - Creates a default TaskGroup
+    ///
+    /// ## Expected Outcome
+    /// - Default variant is Other
+    #[test]
+    fn test_task_group_default_is_other() {
+        assert_eq!(TaskGroup::default(), TaskGroup::Other);
+    }
+
+    /// # TaskGroup Display
+    ///
+    /// Tests the Display implementation for all TaskGroup variants.
+    ///
+    /// ## Test Scenario
+    /// - Calls to_string() on each variant
+    ///
+    /// ## Expected Outcome
+    /// - Feature -> "Features", Fix -> "Fixes", Refactor -> "Refactors", Other -> "Other"
+    #[test]
+    fn test_task_group_display() {
+        assert_eq!(TaskGroup::Feature.to_string(), "Features");
+        assert_eq!(TaskGroup::Fix.to_string(), "Fixes");
+        assert_eq!(TaskGroup::Refactor.to_string(), "Refactors");
+        assert_eq!(TaskGroup::Other.to_string(), "Other");
+    }
+
+    // ========================================================================
+    // Commands::ReleaseNotes integration tests
+    // ========================================================================
+
+    /// # Commands is_release_notes True
+    ///
+    /// Tests that is_release_notes() returns true for ReleaseNotes command.
+    ///
+    /// ## Test Scenario
+    /// - Creates a Commands::ReleaseNotes variant
+    /// - Calls is_release_notes()
+    ///
+    /// ## Expected Outcome
+    /// - Returns true
+    #[test]
+    fn test_commands_is_release_notes_true() {
+        let cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs::default(),
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        assert!(cmd.is_release_notes());
+    }
+
+    /// # Commands is_release_notes False for Others
+    ///
+    /// Tests that is_release_notes() returns false for non-ReleaseNotes commands.
+    ///
+    /// ## Test Scenario
+    /// - Creates Merge, Migrate, and Cleanup commands
+    /// - Calls is_release_notes() on each
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for all three
+    #[test]
+    fn test_commands_is_release_notes_false_for_others() {
+        let merge_cmd = Commands::Merge(MergeArgs {
+            shared: SharedArgs::default(),
+            ni: NonInteractiveArgs::default(),
+            work_item_state: None,
+            run_hooks: false,
+            subcommand: None,
+        });
+        let migrate_cmd = Commands::Migrate(MigrateArgs {
+            shared: SharedArgs::default(),
+            terminal_states: "Closed".to_string(),
+        });
+        let cleanup_cmd = Commands::Cleanup(CleanupArgs {
+            shared: SharedArgs::default(),
+            target: None,
+        });
+
+        assert!(!merge_cmd.is_release_notes());
+        assert!(!migrate_cmd.is_release_notes());
+        assert!(!cleanup_cmd.is_release_notes());
+    }
+
+    /// # Commands Shared Args Extraction for ReleaseNotes
+    ///
+    /// Tests that Commands::shared_args() works for the ReleaseNotes variant.
+    ///
+    /// ## Test Scenario
+    /// - Creates a Commands::ReleaseNotes with organization set
+    /// - Extracts shared args via Commands::shared_args()
+    ///
+    /// ## Expected Outcome
+    /// - Organization field is correctly extracted
+    #[test]
+    fn test_commands_shared_args_extraction_release_notes() {
+        let rn_cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs {
+                organization: Some("rn-org".to_string()),
+                ..Default::default()
+            },
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        assert_eq!(
+            rn_cmd.shared_args().organization,
+            Some("rn-org".to_string())
+        );
+    }
+
+    /// # Commands Shared Args Mut for ReleaseNotes
+    ///
+    /// Tests that Commands::shared_args_mut() allows mutation on ReleaseNotes.
+    ///
+    /// ## Test Scenario
+    /// - Creates a mutable Commands::ReleaseNotes
+    /// - Mutates organization via shared_args_mut()
+    ///
+    /// ## Expected Outcome
+    /// - Mutation is visible via shared_args()
+    #[test]
+    fn test_commands_shared_args_mut_release_notes() {
+        let mut rn_cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs::default(),
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        rn_cmd.shared_args_mut().organization = Some("mutated-org".to_string());
+        assert_eq!(
+            rn_cmd.shared_args().organization,
+            Some("mutated-org".to_string())
+        );
+    }
+
+    /// # HasSharedArgs Trait on ReleaseNotesArgs
+    ///
+    /// Tests that the HasSharedArgs trait works correctly on ReleaseNotesArgs.
+    ///
+    /// ## Test Scenario
+    /// - Creates ReleaseNotesArgs with shared arguments
+    /// - Uses trait methods to access and mutate shared args
+    ///
+    /// ## Expected Outcome
+    /// - Trait methods return correct shared arguments
+    /// - Mutable access works correctly
+    #[test]
+    fn test_has_shared_args_trait_release_notes() {
+        let mut rn_args = ReleaseNotesArgs {
+            shared: SharedArgs {
+                organization: Some("rn-org".to_string()),
+                project: Some("rn-proj".to_string()),
+                ..Default::default()
+            },
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        };
+
+        assert_eq!(
+            rn_args.shared_args().organization,
+            Some("rn-org".to_string())
+        );
+        assert_eq!(rn_args.shared_args().project, Some("rn-proj".to_string()));
+
+        rn_args.shared_args_mut().organization = Some("modified-org".to_string());
+        assert_eq!(
+            rn_args.shared_args().organization,
+            Some("modified-org".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Release-notes config resolution tests
+    // ========================================================================
+
+    /// # Release Notes Resolve Config Success
+    ///
+    /// Tests that release-notes args resolve config successfully.
+    ///
+    /// ## Test Scenario
+    /// - Uses create_sample_release_notes_args() with all required fields
+    /// - Calls resolve_config()
+    ///
+    /// ## Expected Outcome
+    /// - Config resolves successfully
+    /// - Result is AppConfig::ReleaseNotes variant
+    #[test]
+    fn test_release_notes_resolve_config_success() {
+        let args = create_sample_release_notes_args();
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert!(matches!(config, AppConfig::ReleaseNotes { .. }));
+        assert!(!config.is_migration_mode());
+    }
+
+    /// # Release Notes App Config Fields
+    ///
+    /// Tests that shared config fields have the correct Cli source annotation.
+    ///
+    /// ## Test Scenario
+    /// - Resolves config from sample release-notes args
+    /// - Checks shared config field sources
+    ///
+    /// ## Expected Outcome
+    /// - Organization and project are marked as Cli source
+    #[test]
+    fn test_release_notes_app_config_fields() {
+        let args = create_sample_release_notes_args();
+        let config = args.resolve_config().unwrap();
+
+        assert_eq!(
+            config.shared().organization,
+            ParsedProperty::Cli("test-org".to_string(), "test-org".to_string())
+        );
+        assert_eq!(
+            config.shared().project,
+            ParsedProperty::Cli("test-project".to_string(), "test-project".to_string())
+        );
+    }
+
+    /// # Release Notes Mode Config Maps from Args
+    ///
+    /// Tests that ReleaseNotesModeConfig fields correctly map from CLI args.
+    ///
+    /// ## Test Scenario
+    /// - Resolves config from sample release-notes args
+    /// - Checks each ReleaseNotesModeConfig field
+    ///
+    /// ## Expected Outcome
+    /// - All mode config fields match the original args
+    #[test]
+    fn test_release_notes_mode_config_maps_from_args() {
+        let args = create_sample_release_notes_args();
+        let config = args.resolve_config().unwrap();
+
+        if let AppConfig::ReleaseNotes { release_notes, .. } = config {
+            assert_eq!(release_notes.from_version, Some("v1.0.0".to_string()));
+            assert_eq!(release_notes.to_version, Some("v2.0.0".to_string()));
+            assert_eq!(
+                release_notes.output_format,
+                ReleaseNotesOutputFormat::Markdown
+            );
+            assert!(!release_notes.grouped);
+            assert!(!release_notes.include_prs);
+            assert!(!release_notes.copy_to_clipboard);
+            assert!(!release_notes.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes config");
+        }
+    }
+
+    // ========================================================================
+    // Release-notes error/edge case tests
+    // ========================================================================
+
+    /// # Release Notes Unknown Flag Rejected
+    ///
+    /// Tests that unrecognized flags on release-notes are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse release-notes with an unknown --foo flag
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_release_notes_unknown_flag_rejected() {
+        let result = Args::try_parse_from(["mergers", "release-notes", "--foo", "bar"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes From/To with Spaces Preserved
+    ///
+    /// Tests that --from and --to values with spaces are preserved as-is.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with space-containing version strings
+    ///
+    /// ## Expected Outcome
+    /// - Values are preserved exactly including spaces
+    #[test]
+    fn test_release_notes_from_to_with_spaces_preserved() {
+        let args = Args::parse_from([
+            "mergers",
+            "rn",
+            "--from",
+            "v1.0.0 beta",
+            "--to",
+            "v2.0.0 release candidate",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0 beta".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0 release candidate".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Not Available via MergeArgsParser Fallback
+    ///
+    /// Tests that release-notes-specific flags fail on MergeArgsParser.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse release-notes flags via MergeArgsParser
+    /// - MergeArgsParser only knows MergeArgs, not ReleaseNotesArgs
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because --from is not a valid MergeArgs flag
+    #[test]
+    fn test_release_notes_not_on_merge_args_parser_fallback() {
+        let result =
+            MergeArgsParser::try_parse_from(["mergers", "release-notes", "--from", "v1.0"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes with Logging Args
+    ///
+    /// Tests that logging arguments work on the release-notes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with --log-level, --log-file, --log-format
+    ///
+    /// ## Expected Outcome
+    /// - All logging fields are populated on shared args
+    #[test]
+    fn test_release_notes_with_logging_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "--log-level",
+            "debug",
+            "--log-file",
+            "/tmp/rn.log",
+            "--log-format",
+            "json",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.log_level, Some("debug".to_string()));
+            assert_eq!(rn_args.shared.log_file, Some("/tmp/rn.log".to_string()));
+            assert_eq!(rn_args.shared.log_format, Some("json".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
         }
     }
 }

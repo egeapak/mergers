@@ -1889,4 +1889,27 @@ show_work_item_highlights = true
         let result = super::resolve_repo_path(None, &None);
         assert!(result.is_ok());
     }
+
+    /// # Resolve Repo Path Nonexistent Path Errors
+    ///
+    /// Tests that resolve_repo_path returns an error for a nonexistent path
+    /// when no matching alias exists.
+    ///
+    /// ## Test Scenario
+    /// - Calls resolve_repo_path with a path that does not exist on disk
+    /// - No aliases are configured
+    ///
+    /// ## Expected Outcome
+    /// - Returns an error containing "does not exist"
+    #[test]
+    fn test_resolve_repo_path_nonexistent_path_errors() {
+        let result = super::resolve_repo_path(Some("/nonexistent/path/mergers_test_xyz"), &None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("does not exist"),
+            "Error should mention path does not exist: {}",
+            err_msg
+        );
+    }
 }
