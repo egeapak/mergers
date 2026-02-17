@@ -239,8 +239,7 @@ fn test_args_resolution_with_env() {
                 ParsedProperty::Env(500, "500".to_string())
             );
         }
-        AppConfig::Migration { .. } => panic!("Expected default mode"),
-        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
+        _ => panic!("Expected default mode"),
     }
 
     // Clean up
@@ -353,8 +352,7 @@ target_branch = "main"
             );
             assert_eq!(shared.parallel_limit, ParsedProperty::Default(300)); // Uses default value instead of file value
         }
-        AppConfig::Migration { .. } => panic!("Expected default mode"),
-        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
+        _ => panic!("Expected default mode"),
     }
 }
 
@@ -439,8 +437,7 @@ fn test_migration_mode_initialization() {
                 ParsedProperty::Env("test-pat".to_string(), "test-pat".to_string())
             );
         }
-        AppConfig::Default { .. } => panic!("Expected migration mode"),
-        AppConfig::Cleanup { .. } => panic!("Expected migration mode"),
+        _ => panic!("Expected migration mode"),
     }
 
     // Clean up
@@ -505,8 +502,7 @@ fn test_default_mode_initialization() {
                 ParsedProperty::Env("test-pat".to_string(), "test-pat".to_string())
             );
         }
-        AppConfig::Migration { .. } => panic!("Expected default mode"),
-        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
+        _ => panic!("Expected default mode"),
     }
 
     // Clean up
@@ -638,8 +634,7 @@ fn test_args_cli_precedence() {
                 ParsedProperty::Cli(999, "999".to_string())
             ); // CLI wins
         }
-        AppConfig::Migration { .. } => panic!("Expected default mode"),
-        AppConfig::Cleanup { .. } => panic!("Expected default mode"),
+        _ => panic!("Expected default mode"),
     }
 
     // Clean up

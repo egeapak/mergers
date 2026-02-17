@@ -6,6 +6,7 @@ use crate::{
     models::{MigrationAnalysis, PRAnalysisResult, PullRequestWithWorkItems},
 };
 
+/// Analyzes pull requests to categorize them for migration between branches.
 #[derive(Clone)]
 pub struct MigrationAnalyzer {
     client: AzureDevOpsClient,
@@ -13,6 +14,7 @@ pub struct MigrationAnalyzer {
 }
 
 impl MigrationAnalyzer {
+    /// Creates a new MigrationAnalyzer with the given git operations handler.
     pub fn new(client: AzureDevOpsClient, terminal_states: Vec<String>) -> Self {
         Self {
             client,
@@ -20,6 +22,7 @@ impl MigrationAnalyzer {
         }
     }
 
+    /// Analyzes a single pull request to determine its migration category (already merged, conflict, clean merge, etc.).
     pub async fn analyze_single_pr(
         &self,
         pr_with_work_items: &PullRequestWithWorkItems,
@@ -183,10 +186,12 @@ impl MigrationAnalyzer {
         }
     }
 
+    /// Categorizes a list of pull requests into migration categories.
     pub fn categorize_prs(&self, analyses: Vec<PRAnalysisResult>) -> Result<MigrationAnalysis> {
         self.categorize_prs_with_overrides(analyses, Default::default())
     }
 
+    /// Categorizes pull requests with manual category overrides applied.
     pub fn categorize_prs_with_overrides(
         &self,
         analyses: Vec<PRAnalysisResult>,

@@ -17,6 +17,7 @@ A Rust CLI/TUI tool for streamlining Azure DevOps pull request merging and migra
 
 - [Features](#features)
 - [Installation](#installation)
+- [Commands](#commands)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Configuration](#configuration)
@@ -57,6 +58,11 @@ A Rust CLI/TUI tool for streamlining Azure DevOps pull request merging and migra
 - **Rust 1.85+** (edition 2024)
 - **Git** installed and accessible in PATH
 - **Azure DevOps PAT** with Code Read and Work Items Read permissions
+- **Linux only**: System libraries required by the `arboard` clipboard crate:
+  ```bash
+  sudo apt-get install libx11-dev libxcb-shape0-dev libxcb-xfixes0-dev
+  ```
+  macOS and Windows have no extra system dependencies.
 
 ### From Source
 
@@ -68,9 +74,26 @@ cargo build --release
 
 The executable will be at `target/release/mergers`.
 
+### Install via Cargo
+
+```bash
+cargo install mergers
+```
+
 ### Pre-built Binaries
 
 Download from the [Releases](https://github.com/egeapak/mergers/releases) page.
+
+## Commands
+
+| Subcommand | Alias | Description |
+|------------|-------|-------------|
+| `merge` | `m` | Cherry-pick merged PRs from dev branch to target branch (interactive TUI or non-interactive) |
+| `migrate` | `mi` | Analyze PRs to determine migration eligibility based on work item states |
+| `cleanup` | `c` | Delete local patch branches that have been merged to the target branch |
+| `release-notes` | `rn` | Generate formatted release notes from git tags and associated work items |
+
+Run `mergers <subcommand> --help` for detailed options.
 
 ## Quick Start
 
@@ -285,14 +308,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Contributing
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run `cargo fmt` and `cargo clippy`
-5. Ensure tests pass with `cargo nextest run`
-6. Submit a pull request
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, code style, and pull request guidelines.
 
 ## License
 

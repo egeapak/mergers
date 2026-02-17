@@ -3,7 +3,7 @@ name: Release
 on:
     push:
         tags:
-            - "*"
+            - "v*"
 
 permissions:
     contents: write
@@ -19,22 +19,22 @@ jobs:
                     - platform: x86_64-pc-windows-msvc
                       os: windows-latest
                       binary-suffix: .exe
-                      artifact-name: mergers-x86_64-windows.exe
+                      archive-ext: .zip
 
                     - platform: x86_64-unknown-linux-gnu
                       os: ubuntu-latest
                       binary-suffix: ""
-                      artifact-name: mergers-x86_64-linux
+                      archive-ext: .tar.gz
 
                     - platform: x86_64-apple-darwin
                       os: macos-15-intel
                       binary-suffix: ""
-                      artifact-name: mergers-x86_64-macos
+                      archive-ext: .tar.gz
 
                     - platform: aarch64-apple-darwin
                       os: macos-latest
                       binary-suffix: ""
-                      artifact-name: mergers-aarch64-macos
+                      archive-ext: .tar.gz
 
         steps:
             - name: Checkout code
@@ -59,16 +59,21 @@ jobs:
             - name: Build release binary
               run: cargo build --release --target ${{ matrix.platform }}
 
-            - name: Copy binary to artifact name
+            - name: Package release archive
               shell: bash
               run: |
-                  cp target/${{ matrix.platform }}/release/mergers${{ matrix.binary-suffix }} ${{ matrix.artifact-name }}
+                  cp target/${{ matrix.platform }}/release/mergers${{ matrix.binary-suffix }} mergers${{ matrix.binary-suffix }}
+                  if [[ "${{ matrix.archive-ext }}" == ".zip" ]]; then
+                    7z a mergers-${{ matrix.platform }}.zip mergers.exe
+                  else
+                    tar czf mergers-${{ matrix.platform }}.tar.gz mergers
+                  fi
 
             - name: Upload artifact
               uses: actions/upload-artifact@v4
               with:
-                  name: ${{ matrix.artifact-name }}
-                  path: ${{ matrix.artifact-name }}
+                  name: mergers-${{ matrix.platform }}${{ matrix.archive-ext }}
+                  path: mergers-${{ matrix.platform }}${{ matrix.archive-ext }}
 
     changelog:
         name: Generate Release Notes
@@ -83,12 +88,18 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Detect revert pairs
+              id: reverts
+              run: |
+                  SKIP_FLAGS=$(bash scripts/find-revert-pairs.sh)
+                  echo "flags=${SKIP_FLAGS}" >> "$GITHUB_OUTPUT"
+
             - name: Generate release notes
               uses: orhun/git-cliff-action@v4
               id: git-cliff
               with:
                   config: cliff.toml
-                  args: --latest --strip header
+                  args: ${{ steps.reverts.outputs.flags }} --latest --strip header
               env:
                   GITHUB_REPO: ${{ github.repository }}
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -111,11 +122,7 @@ jobs:
             - name: Create release
               uses: softprops/action-gh-release@v2
               with:
-                  files: |
-                      artifacts/mergers-x86_64-windows.exe/mergers-x86_64-windows.exe
-                      artifacts/mergers-x86_64-linux/mergers-x86_64-linux
-                      artifacts/mergers-x86_64-macos/mergers-x86_64-macos
-                      artifacts/mergers-aarch64-macos/mergers-aarch64-macos
+                  files: artifacts/mergers-*/mergers-*
                   body: ${{ needs.changelog.outputs.release_body }}
                   draft: false
                   prerelease: false

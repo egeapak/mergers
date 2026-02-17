@@ -7,7 +7,7 @@
 use super::{
     AbortingState, CherryPickContinueState, CherryPickState, CompletionState,
     ConflictResolutionState, DataLoadingState, PostCompletionState, PullRequestSelectionState,
-    SetupRepoState, VersionInputState,
+    ReleaseNotesExportState, SetupRepoState, VersionInputState,
 };
 use crate::ui::apps::MergeApp;
 use crate::ui::state::shared::{ErrorState, SettingsConfirmationState};
@@ -36,7 +36,8 @@ use ratatui::Frame;
 /// 9. `Aborting` - Cleanup during abort with background processing
 /// 10. `Completion` - Show completion summary
 /// 11. `PostCompletion` - Handle post-merge tasks
-/// 12. `Error` - Display error messages
+/// 12. `ReleaseNotesExport` - Export release notes to file
+/// 13. `Error` - Display error messages
 ///
 /// # Example
 ///
@@ -74,6 +75,8 @@ pub enum MergeState {
     Completion(CompletionState),
     /// Post-completion tasks screen.
     PostCompletion(PostCompletionState),
+    /// Release notes export screen.
+    ReleaseNotesExport(ReleaseNotesExportState),
     /// Error display screen.
     Error(ErrorState),
 }
@@ -113,6 +116,7 @@ impl MergeState {
             MergeState::Aborting(_) => "Aborting",
             MergeState::Completion(_) => "Completion",
             MergeState::PostCompletion(_) => "PostCompletion",
+            MergeState::ReleaseNotesExport(_) => "ReleaseNotesExport",
             MergeState::Error(_) => "Error",
         }
     }
@@ -142,6 +146,7 @@ impl AppState for MergeState {
             MergeState::Aborting(state) => ModeState::ui(state, f, app),
             MergeState::Completion(state) => ModeState::ui(state, f, app),
             MergeState::PostCompletion(state) => ModeState::ui(state, f, app),
+            MergeState::ReleaseNotesExport(state) => ModeState::ui(state, f, app),
             MergeState::Error(state) => state.render(f, app.error_message()),
         }
     }
@@ -163,6 +168,7 @@ impl AppState for MergeState {
             MergeState::Aborting(state) => ModeState::process_key(state, code, app).await,
             MergeState::Completion(state) => ModeState::process_key(state, code, app).await,
             MergeState::PostCompletion(state) => ModeState::process_key(state, code, app).await,
+            MergeState::ReleaseNotesExport(state) => ModeState::process_key(state, code, app).await,
             MergeState::Error(state) => state.handle_key(code),
         }
     }
@@ -186,6 +192,9 @@ impl AppState for MergeState {
             MergeState::Aborting(state) => ModeState::process_mouse(state, event, app).await,
             MergeState::Completion(state) => ModeState::process_mouse(state, event, app).await,
             MergeState::PostCompletion(state) => ModeState::process_mouse(state, event, app).await,
+            MergeState::ReleaseNotesExport(state) => {
+                ModeState::process_mouse(state, event, app).await
+            }
             MergeState::Error(_) => StateChange::Keep,
         }
     }

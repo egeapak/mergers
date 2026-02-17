@@ -128,6 +128,9 @@ impl App {
                 });
                 App::new_merge(typed_config, client)
             }
+            AppConfig::ReleaseNotes { .. } => {
+                unreachable!("ReleaseNotes uses its own CLI runner, not the TUI")
+            }
         }
     }
 
@@ -167,6 +170,9 @@ impl App {
                     run_hooks: default.run_hooks,
                 });
                 App::Merge(MergeApp::new(typed_config, client, browser))
+            }
+            AppConfig::ReleaseNotes { .. } => {
+                unreachable!("ReleaseNotes uses its own CLI runner, not the TUI")
             }
         };
 

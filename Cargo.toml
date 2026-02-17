@@ -1,12 +1,16 @@
 [package]
 name = "mergers"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2024"
 description = "A comprehensive tool for managing Azure DevOps pull request merging and migration workflows"
 license = "MIT"
 repository = "https://github.com/egeapak/mergers"
+homepage = "https://github.com/egeapak/mergers"
+documentation = "https://docs.rs/mergers"
 keywords = ["azure-devops", "git", "merge", "migration", "cli"]
 categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+rust-version = "1.85"
 
 [lib]
 name = "mergers"
@@ -29,35 +33,45 @@ chrono = { version = "=0.4.43", features = ["serde"] }
 anyhow = "=1.0.100"
 thiserror = "=2.0.17"
 secrecy = "=0.10.3"
-clap = { version = "=4.5.54", features = ["derive", "color"] }
+clap = { version = "=4.5.59", features = ["derive", "color"] }
 async-trait = "=0.1.89"
 futures = "=0.3.31"
-tempfile = "=3.24.0"
+tempfile = "=3.25.0"
 scraper = "=0.25.0"
 ego-tree = "=0.10.0"
 toml = "=0.9.11"
 dirs = "=6.0.0"
 regex = "=1.12.2"
+url = "=2.5.4"
 sha2 = "=0.10.9"
 libc = "=0.2.180"
-time = "0.3"
-rayon = "1.10"
-roaring = "0.10"
+time = "=0.3.47"
+rayon = "=1.11.0"
+roaring = "=0.11.3"
 
 # Azure DevOps API client
-azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
+azure_devops_rust_api = { version = "=0.34.0", features = ["git", "wit"] }
+
+# Clipboard support
+arboard = "=3.6.1"
 
 # Logging/tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "json"] }
+tracing-appender = "=0.2.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tokio-test = "=0.4.4"
-tempfile = "=3.24.0"
-insta = { version = "=1.44.3", features = ["yaml"] }
+tempfile = "=3.25.0"
+insta = { version = "=1.46.3", features = ["yaml"] }
 serial_test = { version = "=3.2.0", features = ["file_locks"] }
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { version = "=0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "dependency_analysis"

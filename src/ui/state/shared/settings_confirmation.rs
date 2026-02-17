@@ -180,6 +180,7 @@ impl SettingsConfirmationState {
             AppConfig::Default { .. } => "Merge",
             AppConfig::Migration { .. } => "Migration",
             AppConfig::Cleanup { .. } => "Cleanup",
+            AppConfig::ReleaseNotes { .. } => "Release Notes",
         };
 
         let mut lines = vec![
@@ -303,6 +304,7 @@ impl SettingsConfirmationState {
             AppConfig::Cleanup { cleanup, .. } => {
                 lines.push(self.format_property_with_source("Target Branch", &cleanup.target));
             }
+            AppConfig::ReleaseNotes { .. } => {}
         }
         lines.push(Line::from(""));
 
