@@ -45,23 +45,23 @@ regex = "=1.12.2"
 url = "=2.5.4"
 sha2 = "=0.10.9"
 libc = "=0.2.180"
-time = "0.3"
-rayon = "1.10"
-roaring = "0.10"
+time = "=0.3.47"
+rayon = "=1.11.0"
+roaring = "=0.11.3"
 
 # Azure DevOps API client
-azure_devops_rust_api = { version = "0.32", features = ["git", "wit"] }
+azure_devops_rust_api = { version = "=0.34.0", features = ["git", "wit"] }
 
 # Clipboard support
 arboard = "=3.6.1"
 
 # Logging/tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-appender = "0.2"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "json"] }
+tracing-appender = "=0.2.4"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
+windows-sys = { version = "=0.61.2", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
 ] }
@@ -71,7 +71,7 @@ tokio-test = "=0.4.4"
 tempfile = "=3.25.0"
 insta = { version = "=1.46.3", features = ["yaml"] }
 serial_test = { version = "=3.2.0", features = ["file_locks"] }
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { version = "=0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "dependency_analysis"
