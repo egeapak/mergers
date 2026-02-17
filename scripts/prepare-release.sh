@@ -71,9 +71,17 @@ perl -i -pe 'BEGIN{$found=0} s/^version = "\K[^"]*/'${VERSION}'/ if !$found && /
 print_info "Updating Cargo.lock"
 cargo build --quiet 2>&1 | grep -v "Compiling\|Finished" || true
 
+# Detect revert pairs to exclude from changelog
+print_info "Detecting revert pairs to exclude from changelog"
+SKIP_FLAGS=$(bash scripts/find-revert-pairs.sh)
+if [ -n "$SKIP_FLAGS" ]; then
+    print_info "Excluding revert pairs: ${SKIP_FLAGS}"
+fi
+
 # Generate CHANGELOG.md
 print_info "Generating CHANGELOG.md"
-git-cliff --tag "${VERSION_WITH_V}" -o CHANGELOG.md
+# shellcheck disable=SC2086
+git-cliff $SKIP_FLAGS --tag "${VERSION_WITH_V}" -o CHANGELOG.md
 
 # Show the changes
 print_info "Changes to be committed:"
