@@ -27,18 +27,6 @@ When reporting, please include:
 - Any relevant configuration, environment details, or log output
 - If known, a suggested fix or mitigation
 
-## Expected Response Timeline
-
-| Milestone                        | Target     |
-| -------------------------------- | ---------- |
-| Acknowledgement of report        | 3 business days  |
-| Confirmation / triage complete   | 7 business days  |
-| Fix released (if valid)          | 30 days (severity-dependent) |
-
-For critical vulnerabilities (e.g., arbitrary code execution, credential theft)
-the fix timeline will be prioritised accordingly. You will be kept informed of
-progress throughout.
-
 ## What Constitutes a Security Issue
 
 mergers is a CLI/TUI tool that interacts with Azure DevOps APIs, performs git
