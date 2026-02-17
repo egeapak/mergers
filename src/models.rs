@@ -663,13 +663,12 @@ pub enum Commands {
     /// Generate release notes from version commits
     #[command(
         visible_alias = "rn",
-        long_about = "Generate release notes from git commits.\n\n\
-            Extracts work item references (rwi:#XXXXX) from commit messages\n\
-            and fetches their titles from Azure DevOps to create formatted\n\
-            release notes.\n\n\
+        long_about = "Generate release notes from git tags and pull requests.\n\n\
+            Discovers PRs tagged with a configurable prefix (tag_prefix) and fetches\n\
+            associated work items from Azure DevOps to build formatted release notes.\n\n\
             Features:\n  \
             • Supports version ranges (--from / --to)\n  \
-            • Groups tasks by type (feat, fix, refactor)\n  \
+            • Groups entries by type (feat, fix, refactor)\n  \
             • Caches work item titles locally\n  \
             • Multiple output formats (markdown, json, plain)\n  \
             • Clipboard support (--copy)",

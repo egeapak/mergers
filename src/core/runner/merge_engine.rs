@@ -606,9 +606,10 @@ impl MergeEngine {
                         }
                         Err(e) => {
                             // Log warning but continue - commit might not be fetchable
-                            eprintln!(
+                            tracing::warn!(
                                 "Warning: Could not analyze changes for PR #{}: {}",
-                                pr.id, e
+                                pr.id,
+                                e
                             );
                         }
                     }
