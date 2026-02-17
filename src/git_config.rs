@@ -266,12 +266,12 @@ mod tests {
     /// - Organization, project, and repository are extracted accurately
     #[test]
     fn test_parse_azure_devops_ssh_url_legacy() {
-        let url = "ceibaeclinics@vs-ssh.visualstudio.com:v3/ceibaeclinics/EclinicsFrontend/EclinicsFrontend";
+        let url = "myorg@vs-ssh.visualstudio.com:v3/myorg/MyProject/MyRepo";
         let config = parse_azure_devops_url(url).unwrap().unwrap();
 
-        assert_eq!(config.organization, "ceibaeclinics");
-        assert_eq!(config.project, "EclinicsFrontend");
-        assert_eq!(config.repository, "EclinicsFrontend");
+        assert_eq!(config.organization, "myorg");
+        assert_eq!(config.project, "MyProject");
+        assert_eq!(config.repository, "MyRepo");
     }
 
     /// # Parse Azure DevOps SSH URL (Modern Format)
@@ -411,12 +411,12 @@ mod tests {
     /// - Repository information is extracted despite formatting
     #[test]
     fn test_parse_azure_devops_url_with_trailing_slash() {
-        let url = "ceibaeclinics@vs-ssh.visualstudio.com:v3/ceibaeclinics/EclinicsFrontend/EclinicsFrontend/";
+        let url = "myorg@vs-ssh.visualstudio.com:v3/myorg/MyProject/MyRepo/";
         let config = parse_azure_devops_url(url).unwrap().unwrap();
 
-        assert_eq!(config.organization, "ceibaeclinics");
-        assert_eq!(config.project, "EclinicsFrontend");
-        assert_eq!(config.repository, "EclinicsFrontend");
+        assert_eq!(config.organization, "myorg");
+        assert_eq!(config.project, "MyProject");
+        assert_eq!(config.repository, "MyRepo");
     }
 
     // ============================================================================

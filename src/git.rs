@@ -8,9 +8,6 @@
 //!
 //! All operations use the system `git` command via `std::process::Command`.
 
-// Allow deprecated RepositorySetupError usage within this module during migration
-#![allow(deprecated)]
-
 use anyhow::{Context, Result};
 use std::{
     collections::HashSet,
@@ -255,6 +252,7 @@ pub fn shallow_clone_repo(
     Ok((repo_path, temp_dir))
 }
 
+#[allow(deprecated)]
 pub fn create_worktree(
     base_repo_path: &Path,
     target_branch: &str,
@@ -499,6 +497,7 @@ pub enum RepositorySetup {
     Clone(PathBuf, TempDir),
 }
 
+#[allow(deprecated)]
 pub fn setup_repository(
     local_repo: Option<&str>,
     ssh_url: &str,
@@ -1071,9 +1070,10 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     // Remove found migration worktrees
     for worktree_id in migration_worktrees {
         if let Err(e) = force_remove_worktree(base_repo_path, &worktree_id) {
-            eprintln!(
+            tracing::warn!(
                 "Warning: Failed to remove migration worktree {}: {}",
-                worktree_id, e
+                worktree_id,
+                e
             );
         }
     }

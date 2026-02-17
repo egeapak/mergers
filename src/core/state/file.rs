@@ -827,6 +827,7 @@ impl Drop for LockGuard {
 #[cfg(unix)]
 fn is_process_alive(pid: u32) -> bool {
     // On Unix, send signal 0 to check if process exists
+    // SAFETY: signal 0 only checks process existence, no signal is actually delivered; pid cast is safe for valid PIDs
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
@@ -836,6 +837,7 @@ fn is_process_alive(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
+    // SAFETY: OpenProcess returns null on failure (process doesn't exist); handle is closed immediately after check
     unsafe {
         let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle == ptr::null_mut() {

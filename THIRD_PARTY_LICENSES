@@ -1,0 +1,2684 @@
+THIRD PARTY LICENSES
+====================
+
+This file lists the third-party open source packages used by the "mergers" project,
+along with their versions, licenses, and source repositories.
+
+Total dependencies: 446
+
+--------------------------------------------------------------------------------
+
+Package: adler2
+Version: 2.0.1
+License: 0BSD OR Apache-2.0 OR MIT
+Repository: https://github.com/oyvindln/adler2
+Description: A simple clean-room implementation of the Adler-32 checksum
+
+Package: aho-corasick
+Version: 1.1.3
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/aho-corasick
+Description: Fast multiple substring searching.
+
+Package: alloca
+Version: 0.4.0
+License: MIT
+Repository: https://github.com/playXE/alloca-rs
+Description: Mostly safe wrapper for alloca
+
+Package: allocator-api2
+Version: 0.2.21
+License: Apache-2.0 OR MIT
+Repository: https://github.com/zakarumych/allocator-api2
+Description: Mirror of Rust's allocator API
+
+Package: android_system_properties
+Version: 0.1.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/nical/android_system_properties
+Description: Minimal Android system properties wrapper
+
+Package: anes
+Version: 0.1.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/zrzka/anes-rs
+Description: ANSI Escape Sequences provider & parser
+
+Package: anstream
+Version: 0.6.18
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: A simple cross platform library for writing colored text to a terminal.
+
+Package: anstyle
+Version: 1.0.10
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: ANSI text styling
+
+Package: anstyle-parse
+Version: 0.2.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: Parse ANSI Style Escapes
+
+Package: anstyle-query
+Version: 1.1.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: Look up colored console capabilities
+
+Package: anstyle-wincon
+Version: 3.0.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: Styling legacy Windows terminals
+
+Package: anyhow
+Version: 1.0.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/anyhow
+Description: Flexible concrete Error type built on std::error::Error
+
+Package: arboard
+Version: 3.6.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/1Password/arboard
+Description: Image and text handling for the OS clipboard.
+
+Package: async-compression
+Version: 0.4.35
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Nullus157/async-compression
+Description: Adaptors between compression crates and Rust's modern asynchronous IO types.
+
+Package: async-lock
+Version: 3.4.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/async-lock
+Description: Async synchronization primitives
+
+Package: async-stream
+Version: 0.3.6
+License: MIT
+Repository: https://github.com/tokio-rs/async-stream
+Description: Asynchronous streams using async & await notation
+
+Package: async-stream-impl
+Version: 0.3.6
+License: MIT
+Repository: https://github.com/tokio-rs/async-stream
+Description: proc macros for async-stream crate
+
+Package: async-trait
+Version: 0.1.89
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/async-trait
+Description: Type erasure for async trait methods
+
+Package: atomic
+Version: 0.6.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Amanieu/atomic-rs
+Description: Generic Atomic<T> wrapper type
+
+Package: autocfg
+Version: 1.4.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/cuviper/autocfg
+Description: Automatic cfg for Rust compiler features
+
+Package: azure_core
+Version: 0.28.0
+License: MIT
+Repository: https://github.com/azure/azure-sdk-for-rust
+Description: Rust wrappers around Microsoft Azure REST APIs - Core crate
+
+Package: azure_core_macros
+Version: 0.2.0
+License: MIT
+Repository: https://github.com/azure/azure-sdk-for-rust
+Description: Procedural macros for client libraries built on azure_core.
+
+Package: azure_devops_rust_api
+Version: 0.32.0
+License: MIT
+Repository: https://github.com/microsoft/azure-devops-rust-api
+Description: Rust API library for Azure DevOps
+
+Package: base64
+Version: 0.22.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/marshallpierce/rust-base64
+Description: encodes and decodes base64 as bytes or utf8
+
+Package: bit-set
+Version: 0.5.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/contain-rs/bit-set
+Description: A set of bits
+
+Package: bit-vec
+Version: 0.6.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/contain-rs/bit-vec
+Description: A vector of bits
+
+Package: bitflags
+Version: 1.3.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/bitflags/bitflags
+Description: A macro to generate structures which behave like bitflags.
+
+Package: bitflags
+Version: 2.10.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/bitflags/bitflags
+Description: A macro to generate structures which behave like bitflags.
+
+Package: block-buffer
+Version: 0.10.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/utils
+Description: Buffer type for block processing of data
+
+Package: bumpalo
+Version: 3.17.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/fitzgen/bumpalo
+Description: A fast bump allocation arena for Rust.
+
+Package: bytemuck
+Version: 1.24.0
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/Lokathor/bytemuck
+Description: A crate for mucking around with piles of bytes.
+
+Package: byteorder
+Version: 1.5.0
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/byteorder
+Description: Library for reading/writing numbers in big-endian and little-endian.
+
+Package: byteorder-lite
+Version: 0.1.0
+License: MIT OR Unlicense
+Repository: https://github.com/image-rs/byteorder-lite
+Description: Library for reading/writing numbers in big-endian and little-endian.
+
+Package: bytes
+Version: 1.10.1
+License: MIT
+Repository: https://github.com/tokio-rs/bytes
+Description: Types and traits for working with bytes
+
+Package: cast
+Version: 0.3.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/japaric/cast.rs
+Description: Ergonomic, checked cast functions for primitive types
+
+Package: castaway
+Version: 0.2.3
+License: MIT
+Repository: https://github.com/sagebind/castaway
+Description: Safe, zero-cost downcasting for limited compile-time specialization.
+
+Package: cc
+Version: 1.2.23
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/cc-rs
+Description: A build-time dependency for Cargo build scripts to assist in invoking the native C compiler to compile native C code into a static archive to be linked into Rust code.
+
+Package: cfg-if
+Version: 1.0.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/cfg-if
+Description: A macro to ergonomically define an item depending on a large number of #[cfg] parameters. Structured like an if-else chain, the first matching branch is the item that gets emitted.
+
+Package: cfg_aliases
+Version: 0.2.1
+License: MIT
+Repository: https://github.com/katharostech/cfg_aliases
+Description: A tiny utility to help save you a lot of effort with long winded `#[cfg()]` checks.
+
+Package: chrono
+Version: 0.4.43
+License: Apache-2.0 OR MIT
+Repository: https://github.com/chronotope/chrono
+Description: Date and time library for Rust
+
+Package: ciborium
+Version: 0.2.2
+License: Apache-2.0
+Repository: https://github.com/enarx/ciborium
+Description: serde implementation of CBOR using ciborium-basic
+
+Package: ciborium-io
+Version: 0.2.2
+License: Apache-2.0
+Repository: https://github.com/enarx/ciborium
+Description: Simplified Read/Write traits for no_std usage
+
+Package: ciborium-ll
+Version: 0.2.2
+License: Apache-2.0
+Repository: https://github.com/enarx/ciborium
+Description: Low-level CBOR codec primitives
+
+Package: clap
+Version: 4.5.54
+License: Apache-2.0 OR MIT
+Repository: https://github.com/clap-rs/clap
+Description: A simple to use, efficient, and full-featured Command Line Argument Parser
+
+Package: clap_builder
+Version: 4.5.54
+License: Apache-2.0 OR MIT
+Repository: https://github.com/clap-rs/clap
+Description: A simple to use, efficient, and full-featured Command Line Argument Parser
+
+Package: clap_derive
+Version: 4.5.49
+License: Apache-2.0 OR MIT
+Repository: https://github.com/clap-rs/clap
+Description: Parse command line argument by defining a struct, derive crate.
+
+Package: clap_lex
+Version: 0.7.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/clap-rs/clap
+Description: Minimal, flexible command line parser
+
+Package: clipboard-win
+Version: 5.4.1
+License: BSL-1.0
+Repository: https://github.com/DoumanAsh/clipboard-win
+Description: Provides simple way to interact with Windows clipboard.
+
+Package: colorchoice
+Version: 1.0.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-cli/anstyle.git
+Description: Global override of color control
+
+Package: compact_str
+Version: 0.9.0
+License: MIT
+Repository: https://github.com/ParkMyCar/compact_str
+Description: A memory efficient string type that transparently stores strings on the stack, when possible
+
+Package: compression-codecs
+Version: 0.4.34
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Nullus157/async-compression
+Description: Adaptors for various compression algorithms.
+
+Package: compression-core
+Version: 0.4.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Nullus157/async-compression
+Description: Abstractions for compression algorithms.
+
+Package: concurrent-queue
+Version: 2.5.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/concurrent-queue
+Description: Concurrent multi-producer multi-consumer queue
+
+Package: console
+Version: 0.15.11
+License: MIT
+Repository: https://github.com/console-rs/console
+Description: A terminal and console abstraction for Rust
+
+Package: convert_case
+Version: 0.10.0
+License: MIT
+Repository: https://github.com/rutrum/convert-case
+Description: Convert strings into any case
+
+Package: core-foundation
+Version: 0.9.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/core-foundation-rs
+Description: Bindings to Core Foundation for macOS
+
+Package: core-foundation-sys
+Version: 0.8.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/core-foundation-rs
+Description: Bindings to Core Foundation for macOS
+
+Package: cpufeatures
+Version: 0.2.17
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/utils
+Description: Lightweight runtime CPU feature detection for aarch64, loongarch64, and x86/x86_64 targets,  with no_std support and support for mobile targets including Android and iOS
+
+Package: crc32fast
+Version: 1.5.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/srijs/rust-crc32fast
+Description: Fast, SIMD-accelerated CRC32 (IEEE) checksum computation
+
+Package: criterion
+Version: 0.8.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/criterion-rs/criterion.rs
+Description: Statistics-driven micro-benchmarking library
+
+Package: criterion-plot
+Version: 0.8.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/criterion-rs/criterion.rs
+Description: Criterion's plotting library
+
+Package: crossbeam-channel
+Version: 0.5.15
+License: Apache-2.0 OR MIT
+Repository: https://github.com/crossbeam-rs/crossbeam
+Description: Multi-producer multi-consumer channels for message passing
+
+Package: crossbeam-deque
+Version: 0.8.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/crossbeam-rs/crossbeam
+Description: Concurrent work-stealing deque
+
+Package: crossbeam-epoch
+Version: 0.9.18
+License: Apache-2.0 OR MIT
+Repository: https://github.com/crossbeam-rs/crossbeam
+Description: Epoch-based garbage collection
+
+Package: crossbeam-utils
+Version: 0.8.21
+License: Apache-2.0 OR MIT
+Repository: https://github.com/crossbeam-rs/crossbeam
+Description: Utilities for concurrent programming
+
+Package: crossterm
+Version: 0.29.0
+License: MIT
+Repository: https://github.com/crossterm-rs/crossterm
+Description: A crossplatform terminal library for manipulating terminals.
+
+Package: crossterm_winapi
+Version: 0.9.1
+License: MIT
+Repository: https://github.com/crossterm-rs/crossterm-winapi
+Description: WinAPI wrapper that provides some basic simple abstractions around common WinAPI calls
+
+Package: crunchy
+Version: 0.2.4
+License: MIT
+Repository: https://github.com/eira-fransham/crunchy
+Description: Crunchy unroller: deterministically unroll constant loops
+
+Package: crypto-common
+Version: 0.1.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/traits
+Description: Common cryptographic traits
+
+Package: csscolorparser
+Version: 0.6.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/mazznoer/csscolorparser-rs
+Description: CSS color parser library
+
+Package: cssparser
+Version: 0.36.0
+License: MPL-2.0
+Repository: https://github.com/servo/rust-cssparser
+Description: Rust implementation of CSS Syntax Level 3
+
+Package: cssparser-macros
+Version: 0.6.1
+License: MPL-2.0
+Repository: https://github.com/servo/rust-cssparser
+Description: Procedural macros for cssparser
+
+Package: darling
+Version: 0.20.11
+License: MIT
+Repository: https://github.com/TedDriggs/darling
+Description: A proc-macro library for reading attributes into structs when implementing custom derives.
+
+Package: darling_core
+Version: 0.20.11
+License: MIT
+Repository: https://github.com/TedDriggs/darling
+Description: Helper crate for proc-macro library for reading attributes into structs when implementing custom derives. Use https://crates.io/crates/darling in your code.
+
+Package: darling_macro
+Version: 0.20.11
+License: MIT
+Repository: https://github.com/TedDriggs/darling
+Description: Internal support for a proc-macro library for reading attributes into structs when implementing custom derives. Use https://crates.io/crates/darling in your code.
+
+Package: deltae
+Version: 0.3.2
+License: MIT
+Repository: https://gitlab.com/ryanobeirne/deltae.git
+Description: Calculate Delta E between two colors in CIE Lab space.
+
+Package: deranged
+Version: 0.5.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/jhpratt/deranged
+Description: Ranged integers
+
+Package: derive_more
+Version: 2.1.0
+License: MIT
+Repository: https://github.com/JelteF/derive_more
+Description: Adds #[derive(x)] macros for more traits
+
+Package: derive_more-impl
+Version: 2.1.0
+License: MIT
+Repository: https://github.com/JelteF/derive_more
+Description: Internal implementation of `derive_more` crate
+
+Package: digest
+Version: 0.10.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/traits
+Description: Traits for cryptographic hash functions and message authentication codes
+
+Package: dirs
+Version: 6.0.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/soc/dirs-rs
+Description: A tiny low-level library that provides platform-specific standard locations of directories for config, cache and other data on Linux, Windows, macOS and Redox by leveraging the mechanisms defined by the XDG base/user directory specifications on Linux, the Known Folder API on Windows, and the Standard Directory guidelines on macOS.
+
+Package: dirs-sys
+Version: 0.5.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dirs-dev/dirs-sys-rs
+Description: System-level helper functions for the dirs and directories crates.
+
+Package: dispatch2
+Version: 0.3.0
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings and wrappers for Apple's Grand Central Dispatch (GCD)
+
+Package: displaydoc
+Version: 0.2.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/yaahc/displaydoc
+Description: A derive macro for implementing the display Trait via a doc comment and string interpolation
+
+Package: document-features
+Version: 0.2.12
+License: Apache-2.0 OR MIT
+Repository: https://github.com/slint-ui/document-features
+Description: Extract documentation for the feature flags from comments in Cargo.toml
+
+Package: dtoa
+Version: 1.0.10
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/dtoa
+Description: Fast floating point primitive to string conversion
+
+Package: dtoa-short
+Version: 0.3.5
+License: MPL-2.0
+Repository: https://github.com/upsuper/dtoa-short
+Description: Serialize float number and truncate to certain precision
+
+Package: dyn-clone
+Version: 1.0.20
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/dyn-clone
+Description: Clone trait that is dyn-compatible
+
+Package: ego-tree
+Version: 0.10.0
+License: ISC
+Repository: https://github.com/rust-scraper/ego-tree
+Description: Vec-backed ID-tree
+
+Package: either
+Version: 1.15.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rayon-rs/either
+Description: The enum `Either` with variants `Left` and `Right` is a general purpose sum type with two cases.
+
+Package: encode_unicode
+Version: 1.0.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/tormol/encode_unicode
+Description: UTF-8 and UTF-16 character types, iterators and related methods for char, u8 and u16.
+
+Package: equivalent
+Version: 1.0.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/indexmap-rs/equivalent
+Description: Traits for key comparison in maps.
+
+Package: errno
+Version: 0.3.12
+License: Apache-2.0 OR MIT
+Repository: https://github.com/lambda-fairy/rust-errno
+Description: Cross-platform interface to the `errno` variable.
+
+Package: error-code
+Version: 3.3.2
+License: BSL-1.0
+Repository: https://github.com/DoumanAsh/error-code
+Description: Error code
+
+Package: euclid
+Version: 0.22.11
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/euclid
+Description: Geometry primitives
+
+Package: event-listener
+Version: 5.4.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/event-listener
+Description: Notify async tasks or threads
+
+Package: event-listener-strategy
+Version: 0.5.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/event-listener-strategy
+Description: Block or poll on event_listener easily
+
+Package: fancy-regex
+Version: 0.11.0
+License: MIT
+Repository: https://github.com/fancy-regex/fancy-regex
+Description: An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around.
+
+Package: fastrand
+Version: 2.3.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/fastrand
+Description: A simple and fast random number generator
+
+Package: fax
+Version: 0.2.6
+License: MIT
+Repository: https://github.com/pdf-rs/fax
+Description: Decoder and Encoder for CCITT Group 3 and 4 bi-level image encodings used by fax machines TIFF and PDF.
+
+Package: fax_derive
+Version: 0.2.0
+License: MIT
+Repository: https://github.com/pdf-rs/fax
+Description: Bitstream matcher for the fax crate
+
+Package: fdeflate
+Version: 0.3.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/image-rs/fdeflate
+Description: Fast specialized deflate implementation
+
+Package: filedescriptor
+Version: 0.8.3
+License: MIT
+Repository: https://github.com/wezterm/wezterm
+Description: More ergonomic wrappers around RawFd and RawHandle
+
+Package: finl_unicode
+Version: 1.4.0
+License: (Apache-2.0 OR MIT) AND Unicode-DFS-2016
+Repository: https://github.com/dahosek/finl_unicode
+Description: Library for handling Unicode functionality for finl (categories and grapheme segmentation)
+
+Package: fixedbitset
+Version: 0.4.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/petgraph/fixedbitset
+Description: FixedBitSet is a simple bitset collection
+
+Package: flate2
+Version: 1.1.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/flate2-rs
+Description: DEFLATE compression and decompression exposed as Read/BufRead/Write streams. Supports miniz_oxide and multiple zlib implementations. Supports zlib, gzip, and raw deflate streams.
+
+Package: fnv
+Version: 1.0.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-fnv
+Description: Fowler–Noll–Vo hash function
+
+Package: foldhash
+Version: 0.2.0
+License: Zlib
+Repository: https://github.com/orlp/foldhash
+Description: A fast, non-cryptographic, minimally DoS-resistant hashing algorithm.
+
+Package: foreign-types
+Version: 0.3.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/sfackler/foreign-types
+Description: A framework for Rust wrappers over C APIs
+
+Package: foreign-types-shared
+Version: 0.1.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/sfackler/foreign-types
+Description: An internal crate used by foreign-types
+
+Package: form_urlencoded
+Version: 1.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-url
+Description: Parser and serializer for the application/x-www-form-urlencoded syntax, as used by HTML forms.
+
+Package: fslock
+Version: 0.2.1
+License: MIT
+Repository: https://github.com/brunoczim/fslock
+Description: A library to use files as locks
+
+Package: futf
+Version: 0.1.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/futf
+Description: Handling fragments of UTF-8
+
+Package: futures
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: An implementation of futures and streams featuring zero allocations, composability, and iterator-like interfaces.
+
+Package: futures-channel
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: Channels for asynchronous communication using futures-rs.
+
+Package: futures-core
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: The core traits and types in for the `futures` library.
+
+Package: futures-executor
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: Executors for asynchronous tasks based on the futures-rs library.
+
+Package: futures-io
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: The `AsyncRead`, `AsyncWrite`, `AsyncSeek`, and `AsyncBufRead` traits for the futures-rs library.
+
+Package: futures-macro
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: The futures-rs procedural macro implementations.
+
+Package: futures-sink
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: The asynchronous `Sink` trait for the futures-rs library.
+
+Package: futures-task
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: Tools for working with tasks.
+
+Package: futures-util
+Version: 0.3.31
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/futures-rs
+Description: Common utilities and extension traits for the futures-rs library.
+
+Package: generic-array
+Version: 0.14.7
+License: MIT
+Repository: https://github.com/fizyk20/generic-array.git
+Description: Generic types implementing functionality of arrays
+
+Package: gethostname
+Version: 1.1.0
+License: Apache-2.0
+Repository: https://codeberg.org/swsnr/gethostname.rs.git
+Description: gethostname for all platforms
+
+Package: getopts
+Version: 0.2.24
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/getopts
+Description: getopts-like option parsing
+
+Package: getrandom
+Version: 0.2.16
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/getrandom
+Description: A small cross-platform library for retrieving random data from system source
+
+Package: getrandom
+Version: 0.3.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/getrandom
+Description: A small cross-platform library for retrieving random data from system source
+
+Package: half
+Version: 2.7.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/VoidStarKat/half-rs
+Description: Half-precision floating point f16 and bf16 types for Rust implementing the IEEE 754-2008 standard binary16 and bfloat16 types.
+
+Package: hashbrown
+Version: 0.16.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/hashbrown
+Description: A Rust port of Google's SwissTable hash map
+
+Package: heck
+Version: 0.5.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/withoutboats/heck
+Description: heck is a case conversion library.
+
+Package: hex
+Version: 0.4.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/KokaKiwi/rust-hex
+Description: Encoding and decoding data into/from hexadecimal representation.
+
+Package: html5ever
+Version: 0.36.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/html5ever
+Description: High-performance browser-grade HTML5 parser
+
+Package: http
+Version: 1.3.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/hyperium/http
+Description: A set of types for representing HTTP requests and responses.
+
+Package: http-body
+Version: 1.0.1
+License: MIT
+Repository: https://github.com/hyperium/http-body
+Description: Trait representing an asynchronous, streaming, HTTP request or response body.
+
+Package: http-body-util
+Version: 0.1.3
+License: MIT
+Repository: https://github.com/hyperium/http-body
+Description: Combinators and adapters for HTTP request or response bodies.
+
+Package: httparse
+Version: 1.10.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/seanmonstar/httparse
+Description: A tiny, safe, speedy, zero-copy HTTP/1.x parser.
+
+Package: hyper
+Version: 1.6.0
+License: MIT
+Repository: https://github.com/hyperium/hyper
+Description: A protective and efficient HTTP library for all.
+
+Package: hyper-tls
+Version: 0.6.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/hyperium/hyper-tls
+Description: Default TLS implementation for use with hyper
+
+Package: hyper-util
+Version: 0.1.12
+License: MIT
+Repository: https://github.com/hyperium/hyper-util
+Description: hyper utilities
+
+Package: iana-time-zone
+Version: 0.1.63
+License: Apache-2.0 OR MIT
+Repository: https://github.com/strawlab/iana-time-zone
+Description: get the IANA time zone for the current system
+
+Package: iana-time-zone-haiku
+Version: 0.1.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/strawlab/iana-time-zone
+Description: iana-time-zone support crate for Haiku OS
+
+Package: icu_collections
+Version: 2.0.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Collection of API for use in ICU libraries.
+
+Package: icu_locale_core
+Version: 2.0.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: API for managing Unicode Language and Locale Identifiers
+
+Package: icu_normalizer
+Version: 2.0.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: API for normalizing text into Unicode Normalization Forms
+
+Package: icu_normalizer_data
+Version: 2.0.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Data for the icu_normalizer crate
+
+Package: icu_properties
+Version: 2.0.1
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Definitions for Unicode properties
+
+Package: icu_properties_data
+Version: 2.0.1
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Data for the icu_properties crate
+
+Package: icu_provider
+Version: 2.0.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Trait and struct definitions for the ICU data provider
+
+Package: ident_case
+Version: 1.0.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/TedDriggs/ident_case
+Description: Utility for applying case rules to Rust identifiers.
+
+Package: idna
+Version: 1.0.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-url/
+Description: IDNA (Internationalizing Domain Names in Applications) and Punycode.
+
+Package: idna_adapter
+Version: 1.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/hsivonen/idna_adapter
+Description: Back end adapter for idna
+
+Package: image
+Version: 0.25.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/image-rs/image
+Description: Imaging library. Provides basic image processing and encoders/decoders for common image formats.
+
+Package: indexmap
+Version: 2.12.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/indexmap-rs/indexmap
+Description: A hash table with consistent order and fast iteration.
+
+Package: indoc
+Version: 2.0.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/indoc
+Description: Indented document literals
+
+Package: insta
+Version: 1.44.3
+License: Apache-2.0
+Repository: https://github.com/mitsuhiko/insta
+Description: A snapshot testing library for Rust
+
+Package: instability
+Version: 0.3.7
+License: MIT
+Repository: https://github.com/ratatui-org/instability
+Description: Rust API stability attributes for the rest of us. A fork of the `stability` crate.
+
+Package: ipnet
+Version: 2.11.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/krisprice/ipnet
+Description: Provides types and useful methods for working with IPv4 and IPv6 network addresses, commonly called IP prefixes. The new `IpNet`, `Ipv4Net`, and `Ipv6Net` types build on the existing `IpAddr`, `Ipv4Addr`, and `Ipv6Addr` types already provided in Rust's standard library and align to their design to stay consistent. The module also provides useful traits that extend `Ipv4Addr` and `Ipv6Addr` with methods for `Add`, `Sub`, `BitAnd`, and `BitOr` operations. The module only uses stable feature so it is guaranteed to compile using the stable toolchain.
+
+Package: iri-string
+Version: 0.7.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/lo48576/iri-string
+Description: IRI as string types
+
+Package: is_terminal_polyfill
+Version: 1.70.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/polyfill-rs/is_terminal_polyfill
+Description: Polyfill for `is_terminal` stdlib feature for use with older MSRVs
+
+Package: itertools
+Version: 0.13.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-itertools/itertools
+Description: Extra iterator adaptors, iterator methods, free functions, and macros.
+
+Package: itertools
+Version: 0.14.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-itertools/itertools
+Description: Extra iterator adaptors, iterator methods, free functions, and macros.
+
+Package: itoa
+Version: 1.0.15
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/itoa
+Description: Fast integer primitive to string conversion
+
+Package: js-sys
+Version: 0.3.77
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/js-sys
+Description: Bindings for all JS global objects and functions in all JS environments like Node.js and browsers, built on `#[wasm_bindgen]` using the `wasm-bindgen` crate.
+
+Package: kasuari
+Version: 0.4.11
+License: Apache-2.0 OR MIT
+Repository: https://github.com/ratatui/kasuari
+Description: A rust layout solver for GUIs, based on the Cassowary algorithm. A fork of the unmaintained cassowary-rs crate with improvments and bug fixes. Kasuari is the indonesian name for the cassowary bird.
+
+Package: lab
+Version: 0.11.0
+License: MIT
+Repository: https://github.com/TooManyBees/lab
+Description: Tools for converting RGB colors to the CIE-L*a*b* color space, and comparing differences in color.
+
+Package: lazy_static
+Version: 1.5.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang-nursery/lazy-static.rs
+Description: A macro for declaring lazily evaluated statics in Rust.
+
+Package: libc
+Version: 0.2.180
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/libc
+Description: Raw FFI bindings to platform libraries like libc.
+
+Package: libredox
+Version: 0.1.4
+License: MIT
+Repository: https://gitlab.redox-os.org/redox-os/libredox.git
+Description: Redox stable ABI
+
+Package: line-clipping
+Version: 0.3.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/joshka/line-clipping
+Description: A simple crate implementing line clipping algorithms.
+
+Package: linux-raw-sys
+Version: 0.11.0
+License: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+Repository: https://github.com/sunfishcode/linux-raw-sys
+Description: Generated bindings for Linux's userspace API
+
+Package: litemap
+Version: 0.8.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: A key-value Map implementation based on a flat, sorted Vec.
+
+Package: litrs
+Version: 1.0.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/LukasKalbertodt/litrs
+Description: Parse and inspect Rust literals (i.e. tokens in the Rust programming language representing fixed values). Particularly useful for proc macros, but can also be used outside of a proc-macro context.
+
+Package: lock_api
+Version: 0.4.12
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Amanieu/parking_lot
+Description: Wrappers to create fully-featured Mutex and RwLock types. Compatible with no_std.
+
+Package: log
+Version: 0.4.27
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/log
+Description: A lightweight logging facade for Rust
+
+Package: lru
+Version: 0.16.2
+License: MIT
+Repository: https://github.com/jeromefroe/lru-rs.git
+Description: A LRU cache implementation
+
+Package: mac
+Version: 0.1.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/reem/rust-mac.git
+Description: A collection of great and ubiqutitous macros.
+
+Package: mac_address
+Version: 1.1.8
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rep-nop/mac_address
+Description: Cross-platform retrieval of a network interface MAC address.
+
+Package: markup5ever
+Version: 0.36.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/html5ever
+Description: Common code for xml5ever and html5ever
+
+Package: matchers
+Version: 0.2.0
+License: MIT
+Repository: https://github.com/hawkw/matchers
+Description: Regex matching on character and byte streams.
+
+Package: memchr
+Version: 2.7.4
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/memchr
+Description: Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for 1, 2 or 3 byte search and single substring search.
+
+Package: memmem
+Version: 0.1.1
+License: Apache-2.0 OR MIT
+Repository: http://github.com/jneem/memmem
+Description: Substring searching
+
+Package: memoffset
+Version: 0.9.1
+License: MIT
+Repository: https://github.com/Gilnaa/memoffset
+Description: offset_of functionality for Rust structs.
+
+Package: mergers
+Version: 0.3.0
+License: MIT
+Repository: https://github.com/egeapak/mergers
+Description: A comprehensive tool for managing Azure DevOps pull request merging and migration workflows
+
+Package: minimal-lexical
+Version: 0.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Alexhuszagh/minimal-lexical
+Description: Fast float parsing conversion routines.
+
+Package: miniz_oxide
+Version: 0.8.9
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
+Description: DEFLATE compression and decompression library rewritten in Rust based on miniz
+
+Package: mio
+Version: 1.0.3
+License: MIT
+Repository: https://github.com/tokio-rs/mio
+Description: Lightweight non-blocking I/O.
+
+Package: moxcms
+Version: 0.7.11
+License: Apache-2.0 OR BSD-3-Clause
+Repository: https://github.com/awxkee/moxcms.git
+Description: Simple Color Management in Rust
+
+Package: native-tls
+Version: 0.2.14
+License: Apache-2.0 OR MIT
+Repository: https://github.com/sfackler/rust-native-tls
+Description: A wrapper over a platform's native TLS implementation
+
+Package: new_debug_unreachable
+Version: 1.0.6
+License: MIT
+Repository: https://github.com/mbrubeck/rust-debug-unreachable
+Description: panic in debug, intrinsics::unreachable() in release (fork of debug_unreachable)
+
+Package: nix
+Version: 0.29.0
+License: MIT
+Repository: https://github.com/nix-rust/nix
+Description: Rust friendly bindings to *nix APIs
+
+Package: nom
+Version: 7.1.3
+License: MIT
+Repository: https://github.com/Geal/nom
+Description: A byte-oriented, zero-copy, parser combinators library
+
+Package: nu-ansi-term
+Version: 0.50.3
+License: MIT
+Repository: https://github.com/nushell/nu-ansi-term
+Description: Library for ANSI terminal colors and styles (bold, underline)
+
+Package: num-conv
+Version: 0.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/jhpratt/num-conv
+Description: `num_conv` is a crate to convert between integer types without using `as` casts. This provides better certainty when refactoring, makes the exact behavior of code more explicit, and allows using turbofish syntax.
+
+Package: num-derive
+Version: 0.4.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-num/num-derive
+Description: Numeric syntax extensions
+
+Package: num-traits
+Version: 0.2.19
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-num/num-traits
+Description: Numeric traits for generic mathematics
+
+Package: num_threads
+Version: 0.1.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/jhpratt/num_threads
+Description: A minimal library that determines the number of running threads for the current process.
+
+Package: objc2
+Version: 0.6.3
+License: MIT
+Repository: https://github.com/madsmtm/objc2
+Description: Objective-C interface and runtime bindings
+
+Package: objc2-app-kit
+Version: 0.3.2
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings to the AppKit framework
+
+Package: objc2-core-foundation
+Version: 0.3.2
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings to the CoreFoundation framework
+
+Package: objc2-core-graphics
+Version: 0.3.2
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings to the CoreGraphics framework
+
+Package: objc2-encode
+Version: 4.1.0
+License: MIT
+Repository: https://github.com/madsmtm/objc2
+Description: Objective-C type-encoding representation and parsing
+
+Package: objc2-foundation
+Version: 0.3.2
+License: MIT
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings to the Foundation framework
+
+Package: objc2-io-surface
+Version: 0.3.2
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/madsmtm/objc2
+Description: Bindings to the IOSurface framework
+
+Package: once_cell
+Version: 1.21.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/matklad/once_cell
+Description: Single assignment cells and lazy values.
+
+Package: oorandom
+Version: 11.1.5
+License: MIT
+Repository: https://hg.sr.ht/~icefox/oorandom
+Description: A tiny, robust PRNG implementation.
+
+Package: openssl
+Version: 0.10.72
+License: Apache-2.0
+Repository: https://github.com/sfackler/rust-openssl
+Description: OpenSSL bindings
+
+Package: openssl-macros
+Version: 0.1.1
+License: Apache-2.0 OR MIT
+Description: Internal macros used by the openssl crate.
+
+Package: openssl-probe
+Version: 0.1.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/alexcrichton/openssl-probe
+Description: Tool for helping to find SSL certificate locations on the system for OpenSSL
+
+Package: openssl-sys
+Version: 0.9.108
+License: MIT
+Repository: https://github.com/sfackler/rust-openssl
+Description: FFI bindings to OpenSSL
+
+Package: option-ext
+Version: 0.2.0
+License: MPL-2.0
+Repository: https://github.com/soc/option-ext.git
+Description: Extends `Option` with additional operations
+
+Package: ordered-float
+Version: 4.6.0
+License: MIT
+Repository: https://github.com/reem/rust-ordered-float
+Description: Wrappers for total ordering on floats
+
+Package: page_size
+Version: 0.6.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Elzair/page_size_rs
+Description: Provides an easy, fast, cross-platform way to retrieve the memory page size
+
+Package: parking
+Version: 2.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/smol-rs/parking
+Description: Thread parking and unparking
+
+Package: parking_lot
+Version: 0.12.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Amanieu/parking_lot
+Description: More compact and efficient implementations of the standard synchronization primitives.
+
+Package: parking_lot_core
+Version: 0.9.10
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Amanieu/parking_lot
+Description: An advanced API for creating custom synchronization primitives.
+
+Package: percent-encoding
+Version: 2.3.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-url/
+Description: Percent encoding and decoding
+
+Package: pest
+Version: 2.8.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/pest-parser/pest
+Description: The Elegant Parser
+
+Package: pest_derive
+Version: 2.8.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/pest-parser/pest
+Description: pest's derive macro
+
+Package: pest_generator
+Version: 2.8.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/pest-parser/pest
+Description: pest code generator
+
+Package: pest_meta
+Version: 2.8.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/pest-parser/pest
+Description: pest meta language parser and validator
+
+Package: phf
+Version: 0.11.3
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Runtime support for perfect hash function data structures
+
+Package: phf
+Version: 0.13.1
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Runtime support for perfect hash function data structures
+
+Package: phf_codegen
+Version: 0.11.3
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Codegen library for PHF types
+
+Package: phf_codegen
+Version: 0.13.1
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Codegen library for PHF types
+
+Package: phf_generator
+Version: 0.11.3
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: PHF generation logic
+
+Package: phf_generator
+Version: 0.13.1
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: PHF generation logic
+
+Package: phf_macros
+Version: 0.11.3
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Macros to generate types in the phf crate
+
+Package: phf_macros
+Version: 0.13.1
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Macros to generate types in the phf crate
+
+Package: phf_shared
+Version: 0.11.3
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Support code shared by PHF libraries
+
+Package: phf_shared
+Version: 0.13.1
+License: MIT
+Repository: https://github.com/rust-phf/rust-phf
+Description: Support code shared by PHF libraries
+
+Package: pin-project
+Version: 1.1.10
+License: Apache-2.0 OR MIT
+Repository: https://github.com/taiki-e/pin-project
+Description: A crate for safe and ergonomic pin-projection.
+
+Package: pin-project-internal
+Version: 1.1.10
+License: Apache-2.0 OR MIT
+Repository: https://github.com/taiki-e/pin-project
+Description: Implementation detail of the `pin-project` crate.
+
+Package: pin-project-lite
+Version: 0.2.16
+License: Apache-2.0 OR MIT
+Repository: https://github.com/taiki-e/pin-project-lite
+Description: A lightweight version of pin-project written with declarative macros.
+
+Package: pin-utils
+Version: 0.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang-nursery/pin-utils
+Description: Utilities for pinning
+
+Package: pkg-config
+Version: 0.3.32
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/pkg-config-rs
+Description: A library to run the pkg-config system tool at build time in order to be used in Cargo build scripts.
+
+Package: plotters
+Version: 0.3.7
+License: MIT
+Repository: https://github.com/plotters-rs/plotters
+Description: A Rust drawing library focus on data plotting for both WASM and native applications
+
+Package: plotters-backend
+Version: 0.3.7
+License: MIT
+Repository: https://github.com/plotters-rs/plotters
+Description: Plotters Backend API
+
+Package: plotters-svg
+Version: 0.3.7
+License: MIT
+Repository: https://github.com/plotters-rs/plotters.git
+Description: Plotters SVG backend
+
+Package: png
+Version: 0.18.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/image-rs/image-png
+Description: PNG decoding and encoding library in pure Rust
+
+Package: portable-atomic
+Version: 1.13.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/taiki-e/portable-atomic
+Description: Portable atomic types including support for 128-bit atomics, atomic float, etc.
+
+Package: potential_utf
+Version: 0.1.2
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Unvalidated string and character types
+
+Package: powerfmt
+Version: 0.2.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/jhpratt/powerfmt
+Description: `powerfmt` is a library that provides utilities for formatting values. This crate makes it     significantly easier to support filling to a minimum width with alignment, avoid heap     allocation, and avoid repetitive calculations.
+
+Package: ppv-lite86
+Version: 0.2.21
+License: Apache-2.0 OR MIT
+Repository: https://github.com/cryptocorrosion/cryptocorrosion
+Description: Cross-platform cryptography-oriented low-level SIMD library.
+
+Package: precomputed-hash
+Version: 0.1.1
+License: MIT
+Repository: https://github.com/emilio/precomputed-hash
+Description: A library intending to be a base dependency to expose a precomputed hash
+
+Package: proc-macro2
+Version: 1.0.103
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/proc-macro2
+Description: A substitute implementation of the compiler's `proc_macro` API to decouple token-based libraries from the procedural macro use case.
+
+Package: pxfm
+Version: 0.1.27
+License: Apache-2.0 OR BSD-3-Clause
+Repository: https://github.com/awxkee/pxfm
+Description: Fast and accurate math
+
+Package: quick-error
+Version: 2.0.1
+License: Apache-2.0 OR MIT
+Repository: http://github.com/tailhook/quick-error
+Description: A macro which makes error types pleasant to write.
+
+Package: quote
+Version: 1.0.40
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/quote
+Description: Quasi-quoting macro quote!(...)
+
+Package: r-efi
+Version: 5.2.0
+License: Apache-2.0 OR LGPL-2.1-or-later OR MIT
+Repository: https://github.com/r-efi/r-efi
+Description: UEFI Reference Specification Protocol Constants and Definitions
+
+Package: rand
+Version: 0.8.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/rand
+Description: Random number generators and other randomness functionality.
+
+Package: rand
+Version: 0.9.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/rand
+Description: Random number generators and other randomness functionality.
+
+Package: rand_chacha
+Version: 0.9.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/rand
+Description: ChaCha random number generator
+
+Package: rand_core
+Version: 0.6.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/rand
+Description: Core random number generator traits and tools for implementation.
+
+Package: rand_core
+Version: 0.9.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-random/rand
+Description: Core random number generator traits and tools for implementation.
+
+Package: ratatui
+Version: 0.30.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: A library that's all about cooking up terminal user interfaces
+
+Package: ratatui-core
+Version: 0.1.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: Core types and traits for the Ratatui Terminal UI library.     Widget libraries should use this crate. Applications should use the main Ratatui crate.
+
+Package: ratatui-crossterm
+Version: 0.1.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: Crossterm backend for the Ratatui Terminal UI library.
+
+Package: ratatui-macros
+Version: 0.7.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: Macros for Ratatui
+
+Package: ratatui-termwiz
+Version: 0.1.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: Termwiz backend for the Ratatui Terminal UI library.
+
+Package: ratatui-widgets
+Version: 0.3.0
+License: MIT
+Repository: https://github.com/ratatui/ratatui
+Description: A collection of Ratatui widgets for building terminal user interfaces using Ratatui.
+
+Package: rayon
+Version: 1.11.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rayon-rs/rayon
+Description: Simple work-stealing parallelism for Rust
+
+Package: rayon-core
+Version: 1.13.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rayon-rs/rayon
+Description: Core APIs for Rayon
+
+Package: redox_syscall
+Version: 0.5.12
+License: MIT
+Repository: https://gitlab.redox-os.org/redox-os/syscall
+Description: A Rust library to access raw Redox system calls
+
+Package: redox_users
+Version: 0.5.2
+License: MIT
+Repository: https://gitlab.redox-os.org/redox-os/users
+Description: A Rust library to access Redox users and groups functionality
+
+Package: regex
+Version: 1.12.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/regex
+Description: An implementation of regular expressions for Rust. This implementation uses finite automata and guarantees linear time matching on all inputs.
+
+Package: regex-automata
+Version: 0.4.13
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/regex
+Description: Automata construction and matching using regular expressions.
+
+Package: regex-syntax
+Version: 0.8.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/regex/tree/master/regex-syntax
+Description: A regular expression parser.
+
+Package: reqwest
+Version: 0.12.24
+License: Apache-2.0 OR MIT
+Repository: https://github.com/seanmonstar/reqwest
+Description: higher level HTTP client library
+
+Package: roaring
+Version: 0.10.12
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RoaringBitmap/roaring-rs
+Description: A better compressed bitset - pure Rust implementation
+
+Package: rustc-hash
+Version: 2.1.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/rustc-hash
+Description: A speedy, non-cryptographic hashing algorithm used by rustc
+
+Package: rustc_version
+Version: 0.4.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/djc/rustc-version-rs
+Description: A library for querying the version of a installed rustc compiler
+
+Package: rustix
+Version: 1.1.3
+License: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+Repository: https://github.com/bytecodealliance/rustix
+Description: Safe Rust bindings to POSIX/Unix/Linux/Winsock-like syscalls
+
+Package: rustls-pki-types
+Version: 1.12.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustls/pki-types
+Description: Shared types for the rustls PKI ecosystem
+
+Package: rustversion
+Version: 1.0.20
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/rustversion
+Description: Conditional compilation according to rustc compiler version
+
+Package: ryu
+Version: 1.0.20
+License: Apache-2.0 OR BSL-1.0
+Repository: https://github.com/dtolnay/ryu
+Description: Fast floating point to string conversion
+
+Package: same-file
+Version: 1.0.6
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/same-file
+Description: A simple crate for determining whether two file paths point to the same file.
+
+Package: scc
+Version: 2.4.0
+License: Apache-2.0
+Repository: https://github.com/wvwwvwwv/scalable-concurrent-containers/
+Description: High-performance containers and utilities for concurrent and asynchronous programming
+
+Package: schannel
+Version: 0.1.27
+License: MIT
+Repository: https://github.com/steffengy/schannel-rs
+Description: Schannel bindings for rust, allowing SSL/TLS (e.g. https) without openssl
+
+Package: scopeguard
+Version: 1.2.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/bluss/scopeguard
+Description: A RAII scope guard that will run a given closure when it goes out of scope, even if the code between panics (assuming unwinding panic).  Defines the macros `defer!`, `defer_on_unwind!`, `defer_on_success!` as shorthands for guards with one of the implemented strategies.
+
+Package: scraper
+Version: 0.25.0
+License: ISC
+Repository: https://github.com/rust-scraper/scraper
+Description: HTML parsing and querying with CSS selectors
+
+Package: sdd
+Version: 3.0.10
+License: Apache-2.0
+Repository: https://github.com/wvwwvwwv/scalable-delayed-dealloc/
+Description: Scalable lock-free delayed memory reclaimer
+
+Package: secrecy
+Version: 0.10.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/iqlusioninc/crates/tree/main/secrecy
+Description: Wrapper types and traits for secret management which help ensure they aren't accidentally copied, logged, or otherwise exposed (as much as possible), and also ensure secrets are securely wiped from memory when dropped.
+
+Package: security-framework
+Version: 2.11.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/kornelski/rust-security-framework
+Description: Security.framework bindings for macOS and iOS
+
+Package: security-framework-sys
+Version: 2.14.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/kornelski/rust-security-framework
+Description: Apple `Security.framework` low-level FFI bindings
+
+Package: selectors
+Version: 0.33.0
+License: MPL-2.0
+Repository: https://github.com/servo/stylo
+Description: CSS Selectors matching for Rust
+
+Package: semver
+Version: 1.0.27
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/semver
+Description: Parser and evaluator for Cargo's flavor of Semantic Versioning
+
+Package: serde
+Version: 1.0.228
+License: Apache-2.0 OR MIT
+Repository: https://github.com/serde-rs/serde
+Description: A generic serialization/deserialization framework
+
+Package: serde_core
+Version: 1.0.228
+License: Apache-2.0 OR MIT
+Repository: https://github.com/serde-rs/serde
+Description: Serde traits only, with no support for derive -- use the `serde` crate instead
+
+Package: serde_derive
+Version: 1.0.228
+License: Apache-2.0 OR MIT
+Repository: https://github.com/serde-rs/serde
+Description: Macros 1.1 implementation of #[derive(Serialize, Deserialize)]
+
+Package: serde_json
+Version: 1.0.149
+License: Apache-2.0 OR MIT
+Repository: https://github.com/serde-rs/json
+Description: A JSON serialization file format
+
+Package: serde_spanned
+Version: 1.0.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/toml-rs/toml
+Description: Serde-compatible spanned Value
+
+Package: serde_urlencoded
+Version: 0.7.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/nox/serde_urlencoded
+Description: `x-www-form-urlencoded` meets Serde
+
+Package: serial_test
+Version: 3.2.0
+License: MIT
+Repository: https://github.com/palfrey/serial_test/
+Description: Allows for the creation of serialised Rust tests
+
+Package: serial_test_derive
+Version: 3.2.0
+License: MIT
+Repository: https://github.com/palfrey/serial_test/
+Description: Helper crate for serial_test
+
+Package: servo_arc
+Version: 0.4.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/stylo
+Description: A fork of std::sync::Arc with some extra functionality and without weak references
+
+Package: sha2
+Version: 0.10.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/hashes
+Description: Pure Rust implementation of the SHA-2 hash function family including SHA-224, SHA-256, SHA-384, and SHA-512.
+
+Package: sharded-slab
+Version: 0.1.7
+License: MIT
+Repository: https://github.com/hawkw/sharded-slab
+Description: A lock-free concurrent slab.
+
+Package: shlex
+Version: 1.3.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/comex/rust-shlex
+Description: Split a string into shell words, like Python's shlex.
+
+Package: signal-hook
+Version: 0.3.18
+License: Apache-2.0 OR MIT
+Repository: https://github.com/vorner/signal-hook
+Description: Unix signal handling
+
+Package: signal-hook-mio
+Version: 0.2.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/vorner/signal-hook
+Description: MIO support for signal-hook
+
+Package: signal-hook-registry
+Version: 1.4.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/vorner/signal-hook
+Description: Backend crate for signal-hook
+
+Package: simd-adler32
+Version: 0.3.8
+License: MIT
+Repository: https://github.com/mcountryman/simd-adler32
+Description: A SIMD-accelerated Adler-32 hash algorithm implementation.
+
+Package: similar
+Version: 2.7.0
+License: Apache-2.0
+Repository: https://github.com/mitsuhiko/similar
+Description: A diff library for Rust
+
+Package: siphasher
+Version: 1.0.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/jedisct1/rust-siphash
+Description: SipHash-2-4, SipHash-1-3 and 128-bit variants in pure Rust
+
+Package: slab
+Version: 0.4.11
+License: MIT
+Repository: https://github.com/tokio-rs/slab
+Description: Pre-allocated storage for a uniform data type
+
+Package: smallvec
+Version: 1.15.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-smallvec
+Description: 'Small vector' optimization: store up to a small number of items on the stack
+
+Package: socket2
+Version: 0.5.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/socket2
+Description: Utilities for handling networking sockets with a maximal amount of configuration possible intended.
+
+Package: socket2
+Version: 0.6.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rust-lang/socket2
+Description: Utilities for handling networking sockets with a maximal amount of configuration possible intended.
+
+Package: stable_deref_trait
+Version: 1.2.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/storyyeller/stable_deref_trait
+Description: An unsafe marker trait for types like Box and Rc that dereference to a stable address even when moved, and hence can be used with libraries such as owning_ref and rental.
+
+Package: static_assertions
+Version: 1.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/nvzqz/static-assertions-rs
+Description: Compile-time assertions to ensure that invariants are met.
+
+Package: string_cache
+Version: 0.9.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/string-cache
+Description: A string interning library for Rust, developed as part of the Servo project.
+
+Package: string_cache_codegen
+Version: 0.6.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/string-cache
+Description: A codegen library for string-cache, developed as part of the Servo project.
+
+Package: strsim
+Version: 0.11.1
+License: MIT
+Repository: https://github.com/rapidfuzz/strsim-rs
+Description: Implementations of string similarity metrics. Includes Hamming, Levenshtein, OSA, Damerau-Levenshtein, Jaro, Jaro-Winkler, and Sørensen-Dice.
+
+Package: strum
+Version: 0.27.2
+License: MIT
+Repository: https://github.com/Peternator7/strum
+Description: Helpful macros for working with enums and strings
+
+Package: strum_macros
+Version: 0.27.2
+License: MIT
+Repository: https://github.com/Peternator7/strum
+Description: Helpful macros for working with enums and strings
+
+Package: syn
+Version: 1.0.109
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/syn
+Description: Parser for Rust source code
+
+Package: syn
+Version: 2.0.101
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/syn
+Description: Parser for Rust source code
+
+Package: sync_wrapper
+Version: 1.0.2
+License: Apache-2.0
+Repository: https://github.com/Actyx/sync_wrapper
+Description: A tool for enlisting the compiler's help in proving the absence of concurrency
+
+Package: synstructure
+Version: 0.13.2
+License: MIT
+Repository: https://github.com/mystor/synstructure
+Description: Helper methods and macros for custom derives
+
+Package: tempfile
+Version: 3.24.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Stebalien/tempfile
+Description: A library for managing temporary files and directories.
+
+Package: tendril
+Version: 0.4.3
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/tendril
+Description: Compact buffer/string type for zero-copy parsing
+
+Package: terminfo
+Version: 0.9.0
+License: WTFPL
+Repository: https://github.com/meh/rust-terminfo
+Description: Terminal information.
+
+Package: termios
+Version: 0.3.3
+License: MIT
+Repository: https://github.com/dcuddeback/termios-rs
+Description: Safe bindings for the termios library.
+
+Package: termwiz
+Version: 0.23.3
+License: MIT
+Repository: https://github.com/wezterm/wezterm
+Description: Terminal Wizardry for Unix and Windows
+
+Package: thiserror
+Version: 1.0.69
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/thiserror
+Description: derive(Error)
+
+Package: thiserror
+Version: 2.0.17
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/thiserror
+Description: derive(Error)
+
+Package: thiserror-impl
+Version: 1.0.69
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/thiserror
+Description: Implementation detail of the `thiserror` crate
+
+Package: thiserror-impl
+Version: 2.0.17
+License: Apache-2.0 OR MIT
+Repository: https://github.com/dtolnay/thiserror
+Description: Implementation detail of the `thiserror` crate
+
+Package: thread_local
+Version: 1.1.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Amanieu/thread_local-rs
+Description: Per-object thread-local storage
+
+Package: tiff
+Version: 0.10.3
+License: MIT
+Repository: https://github.com/image-rs/image-tiff
+Description: TIFF decoding and encoding library in pure Rust
+
+Package: time
+Version: 0.3.44
+License: Apache-2.0 OR MIT
+Repository: https://github.com/time-rs/time
+Description: Date and time library. Fully interoperable with the standard library. Mostly compatible with #![no_std].
+
+Package: time-core
+Version: 0.1.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/time-rs/time
+Description: This crate is an implementation detail and should not be relied upon directly.
+
+Package: time-macros
+Version: 0.2.24
+License: Apache-2.0 OR MIT
+Repository: https://github.com/time-rs/time
+Description: Procedural macros for the time crate.     This crate is an implementation detail and should not be relied upon directly.
+
+Package: tinystr
+Version: 0.8.1
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: A small ASCII-only bounded length string representation.
+
+Package: tinytemplate
+Version: 1.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/bheisler/TinyTemplate
+Description: Simple, lightweight template engine
+
+Package: tokio
+Version: 1.49.0
+License: MIT
+Repository: https://github.com/tokio-rs/tokio
+Description: An event-driven, non-blocking I/O platform for writing asynchronous I/O backed applications.
+
+Package: tokio-macros
+Version: 2.6.0
+License: MIT
+Repository: https://github.com/tokio-rs/tokio
+Description: Tokio's proc macros.
+
+Package: tokio-native-tls
+Version: 0.3.1
+License: MIT
+Repository: https://github.com/tokio-rs/tls
+Description: An implementation of TLS/SSL streams for Tokio using native-tls giving an implementation of TLS for nonblocking I/O streams.
+
+Package: tokio-stream
+Version: 0.1.17
+License: MIT
+Repository: https://github.com/tokio-rs/tokio
+Description: Utilities to work with `Stream` and `tokio`.
+
+Package: tokio-test
+Version: 0.4.4
+License: MIT
+Repository: https://github.com/tokio-rs/tokio
+Description: Testing utilities for Tokio- and futures-based code
+
+Package: tokio-util
+Version: 0.7.16
+License: MIT
+Repository: https://github.com/tokio-rs/tokio
+Description: Additional utilities for working with Tokio.
+
+Package: toml
+Version: 0.9.11+spec-1.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/toml-rs/toml
+Description: A native Rust encoder and decoder of TOML-formatted files and streams. Provides implementations of the standard Serialize/Deserialize traits for TOML data to facilitate deserializing and serializing Rust structures.
+
+Package: toml_datetime
+Version: 0.7.5+spec-1.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/toml-rs/toml
+Description: A TOML-compatible datetime type
+
+Package: toml_parser
+Version: 1.0.6+spec-1.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/toml-rs/toml
+Description: Yet another format-preserving TOML parser.
+
+Package: toml_writer
+Version: 1.0.6+spec-1.1.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/toml-rs/toml
+Description: A low-level interface for writing out TOML
+
+Package: tower
+Version: 0.5.2
+License: MIT
+Repository: https://github.com/tower-rs/tower
+Description: Tower is a library of modular and reusable components for building robust clients and servers.
+
+Package: tower-http
+Version: 0.6.7
+License: MIT
+Repository: https://github.com/tower-rs/tower-http
+Description: Tower middleware and utilities for HTTP clients and servers
+
+Package: tower-layer
+Version: 0.3.3
+License: MIT
+Repository: https://github.com/tower-rs/tower
+Description: Decorates a `Service` to allow easy composition between `Service`s.
+
+Package: tower-service
+Version: 0.3.3
+License: MIT
+Repository: https://github.com/tower-rs/tower
+Description: Trait representing an asynchronous, request / response based, client or server.
+
+Package: tracing
+Version: 0.1.41
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Application-level tracing for Rust.
+
+Package: tracing-appender
+Version: 0.2.4
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Provides utilities for file appenders and making non-blocking writers.
+
+Package: tracing-attributes
+Version: 0.1.31
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Procedural macro attributes for automatically instrumenting functions.
+
+Package: tracing-core
+Version: 0.1.33
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Core primitives for application-level tracing.
+
+Package: tracing-log
+Version: 0.2.0
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Provides compatibility between `tracing` and the `log` crate.
+
+Package: tracing-serde
+Version: 0.2.0
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: A compatibility layer for serializing trace data with `serde`
+
+Package: tracing-subscriber
+Version: 0.3.20
+License: MIT
+Repository: https://github.com/tokio-rs/tracing
+Description: Utilities for implementing and composing `tracing` subscribers.
+
+Package: try-lock
+Version: 0.2.5
+License: MIT
+Repository: https://github.com/seanmonstar/try-lock
+Description: A lightweight atomic lock.
+
+Package: typenum
+Version: 1.19.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/paholg/typenum
+Description: Typenum is a Rust library for type-level numbers evaluated at     compile time. It currently supports bits, unsigned integers, and signed     integers. It also provides a type-level array of type-level numbers, but its     implementation is incomplete.
+
+Package: typespec
+Version: 0.8.0
+License: MIT
+Repository: https://github.com/azure/azure-sdk-for-rust
+Description: Project root for all TypeSpec-related crates.
+
+Package: typespec_client_core
+Version: 0.7.0
+License: MIT
+Repository: https://github.com/azure/azure-sdk-for-rust
+Description: Client runtime for TypeSpec-generated libraries.
+
+Package: typespec_macros
+Version: 0.7.0
+License: MIT
+Repository: https://github.com/azure/azure-sdk-for-rust
+Description: Procedural macros for client libraries built on typespec.
+
+Package: ucd-trie
+Version: 0.1.7
+License: Apache-2.0 OR MIT
+Repository: https://github.com/BurntSushi/ucd-generate
+Description: A trie for storing Unicode codepoint sets and maps.
+
+Package: unicode-ident
+Version: 1.0.18
+License: (Apache-2.0 OR MIT) AND Unicode-3.0
+Repository: https://github.com/dtolnay/unicode-ident
+Description: Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31
+
+Package: unicode-segmentation
+Version: 1.12.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/unicode-rs/unicode-segmentation
+Description: This crate provides Grapheme Cluster, Word and Sentence boundaries according to Unicode Standard Annex #29 rules.
+
+Package: unicode-truncate
+Version: 2.0.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/Aetf/unicode-truncate
+Description: Unicode-aware algorithm to pad or truncate `str` in terms of displayed width.
+
+Package: unicode-width
+Version: 0.2.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/unicode-rs/unicode-width
+Description: Determine displayed width of `char` and `str` types according to Unicode Standard Annex #11 rules.
+
+Package: url
+Version: 2.5.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/rust-url
+Description: URL library for Rust, based on the WHATWG URL Standard
+
+Package: utf-8
+Version: 0.7.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/SimonSapin/rust-utf8
+Description: Incremental, zero-copy UTF-8 decoding with error handling
+
+Package: utf8_iter
+Version: 1.0.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/hsivonen/utf8_iter
+Description: Iterator by char over potentially-invalid UTF-8 in &[u8]
+
+Package: utf8parse
+Version: 0.2.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/alacritty/vte
+Description: Table-driven UTF-8 parser
+
+Package: uuid
+Version: 1.19.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/uuid-rs/uuid
+Description: A library to generate and parse UUIDs.
+
+Package: valuable
+Version: 0.1.1
+License: MIT
+Repository: https://github.com/tokio-rs/valuable
+Description: Object-safe value inspection, used to pass un-typed structured data across trait-object boundaries.
+
+Package: vcpkg
+Version: 0.2.15
+License: Apache-2.0 OR MIT
+Repository: https://github.com/mcgoo/vcpkg-rs
+Description: A library to find native dependencies in a vcpkg tree at build time in order to be used in Cargo build scripts.
+
+Package: version_check
+Version: 0.9.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/SergioBenitez/version_check
+Description: Tiny crate to check the version of the installed/running rustc.
+
+Package: vtparse
+Version: 0.6.2
+License: MIT
+Repository: https://github.com/wez/wezterm
+Description: Low level escape sequence parser
+
+Package: walkdir
+Version: 2.5.0
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/walkdir
+Description: Recursively walk a directory.
+
+Package: want
+Version: 0.3.1
+License: MIT
+Repository: https://github.com/seanmonstar/want
+Description: Detect when another Future wants a result.
+
+Package: wasi
+Version: 0.11.0+wasi-snapshot-preview1
+License: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+Repository: https://github.com/bytecodealliance/wasi
+Description: Experimental WASI API bindings for Rust
+
+Package: wasi
+Version: 0.14.2+wasi-0.2.4
+License: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+Repository: https://github.com/bytecodealliance/wasi-rs
+Description: WASI API bindings for Rust
+
+Package: wasm-bindgen
+Version: 0.2.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen
+Description: Easy support for interacting between JS and Rust.
+
+Package: wasm-bindgen-backend
+Version: 0.2.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/backend
+Description: Backend code generation of the wasm-bindgen tool
+
+Package: wasm-bindgen-futures
+Version: 0.4.50
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/futures
+Description: Bridging the gap between Rust Futures and JavaScript Promises
+
+Package: wasm-bindgen-macro
+Version: 0.2.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro
+Description: Definition of the `#[wasm_bindgen]` attribute, an internal dependency
+
+Package: wasm-bindgen-macro-support
+Version: 0.2.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/macro-support
+Description: The part of the implementation of the `#[wasm_bindgen]` attribute that is not in the shared backend crate
+
+Package: wasm-bindgen-shared
+Version: 0.2.100
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/shared
+Description: Shared support between wasm-bindgen and wasm-bindgen cli, an internal dependency.
+
+Package: wasm-streams
+Version: 0.4.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/MattiasBuelens/wasm-streams/
+Description: Bridging between web streams and Rust streams using WebAssembly
+
+Package: web-sys
+Version: 0.3.77
+License: Apache-2.0 OR MIT
+Repository: https://github.com/rustwasm/wasm-bindgen/tree/master/crates/web-sys
+Description: Bindings for all Web APIs, a procedurally generated crate from WebIDL
+
+Package: web_atoms
+Version: 0.2.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/servo/html5ever
+Description: Atoms for xml5ever and html5ever
+
+Package: weezl
+Version: 0.1.12
+License: Apache-2.0 OR MIT
+Repository: https://github.com/image-rs/weezl
+Description: Fast LZW compression and decompression.
+
+Package: wezterm-bidi
+Version: 0.2.3
+License: MIT AND Unicode-DFS-2016
+Repository: https://github.com/wez/wezterm
+Description: The Unicode Bidi Algorithm (UBA)
+
+Package: wezterm-blob-leases
+Version: 0.1.1
+License: MIT
+Repository: https://github.com/wezterm/wezterm
+Description: Manage image blob caching/leasing for wezterm
+
+Package: wezterm-color-types
+Version: 0.3.0
+License: MIT
+Repository: https://github.com/wez/wezterm
+Description: Types for working with colors
+
+Package: wezterm-dynamic
+Version: 0.2.1
+License: MIT
+Repository: https://github.com/wezterm/wezterm
+Description: config serialization for wezterm via dynamic json-like data values
+
+Package: wezterm-dynamic-derive
+Version: 0.1.1
+License: MIT
+Repository: https://github.com/wezterm/wezterm
+Description: config serialization for wezterm via dynamic json-like data values
+
+Package: wezterm-input-types
+Version: 0.1.0
+License: MIT
+Repository: https://github.com/wez/wezterm
+Description: config serialization for wezterm via dynamic json-like data values
+
+Package: winapi
+Version: 0.3.9
+License: Apache-2.0 OR MIT
+Repository: https://github.com/retep998/winapi-rs
+Description: Raw FFI bindings for all of Windows API.
+
+Package: winapi-i686-pc-windows-gnu
+Version: 0.4.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/retep998/winapi-rs
+Description: Import libraries for the i686-pc-windows-gnu target. Please don't use this crate directly, depend on winapi instead.
+
+Package: winapi-util
+Version: 0.1.11
+License: MIT OR Unlicense
+Repository: https://github.com/BurntSushi/winapi-util
+Description: A dumping ground for high level safe wrappers over windows-sys.
+
+Package: winapi-x86_64-pc-windows-gnu
+Version: 0.4.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/retep998/winapi-rs
+Description: Import libraries for the x86_64-pc-windows-gnu target. Please don't use this crate directly, depend on winapi instead.
+
+Package: windows-core
+Version: 0.61.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Core type support for COM and Windows
+
+Package: windows-implement
+Version: 0.60.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: The implement macro for the windows crate
+
+Package: windows-interface
+Version: 0.59.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: The interface macro for the windows crate
+
+Package: windows-link
+Version: 0.1.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Linking for Windows
+
+Package: windows-link
+Version: 0.2.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Linking for Windows
+
+Package: windows-result
+Version: 0.3.4
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Windows error handling
+
+Package: windows-strings
+Version: 0.4.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Windows string types
+
+Package: windows-sys
+Version: 0.52.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Rust for Windows
+
+Package: windows-sys
+Version: 0.59.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Rust for Windows
+
+Package: windows-sys
+Version: 0.60.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Rust for Windows
+
+Package: windows-sys
+Version: 0.61.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Rust for Windows
+
+Package: windows-targets
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import libs for Windows
+
+Package: windows-targets
+Version: 0.53.5
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import libs for Windows
+
+Package: windows_aarch64_gnullvm
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_aarch64_gnullvm
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_aarch64_msvc
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_aarch64_msvc
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_gnu
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_gnu
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_gnullvm
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_gnullvm
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_msvc
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_i686_msvc
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_gnu
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_gnu
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_gnullvm
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_gnullvm
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_msvc
+Version: 0.52.6
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: windows_x86_64_msvc
+Version: 0.53.0
+License: Apache-2.0 OR MIT
+Repository: https://github.com/microsoft/windows-rs
+Description: Import lib for Windows
+
+Package: winnow
+Version: 0.7.14
+License: MIT
+Repository: https://github.com/winnow-rs/winnow
+Description: A byte-oriented, zero-copy, parser combinators library
+
+Package: wit-bindgen-rt
+Version: 0.39.0
+License: Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT
+Repository: https://github.com/bytecodealliance/wit-bindgen
+Description: Runtime support for the `wit-bindgen` crate
+
+Package: writeable
+Version: 0.6.1
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: A more efficient alternative to fmt::Display
+
+Package: x11rb
+Version: 0.13.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/psychon/x11rb
+Description: Rust bindings to X11
+
+Package: x11rb-protocol
+Version: 0.13.2
+License: Apache-2.0 OR MIT
+Repository: https://github.com/psychon/x11rb
+Description: Rust bindings to X11
+
+Package: yoke
+Version: 0.8.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Abstraction allowing borrowed data to be carried along with the backing data it borrows from
+
+Package: yoke-derive
+Version: 0.8.0
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Custom derive for the yoke crate
+
+Package: zerocopy
+Version: 0.8.27
+License: Apache-2.0 OR BSD-2-Clause OR MIT
+Repository: https://github.com/google/zerocopy
+Description: Zerocopy makes zero-cost memory manipulation effortless. We write "unsafe" so you don't have to.
+
+Package: zerocopy-derive
+Version: 0.8.27
+License: Apache-2.0 OR BSD-2-Clause OR MIT
+Repository: https://github.com/google/zerocopy
+Description: Custom derive for traits from the zerocopy crate
+
+Package: zerofrom
+Version: 0.1.6
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: ZeroFrom trait for constructing
+
+Package: zerofrom-derive
+Version: 0.1.6
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Custom derive for the zerofrom crate
+
+Package: zeroize
+Version: 1.8.1
+License: Apache-2.0 OR MIT
+Repository: https://github.com/RustCrypto/utils/tree/master/zeroize
+Description: Securely clear secrets from memory with a simple trait built on stable Rust primitives which guarantee memory is zeroed using an operation will not be 'optimized away' by the compiler. Uses a portable pure Rust implementation that works everywhere, even WASM!
+
+Package: zerotrie
+Version: 0.2.2
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: A data structure that efficiently maps strings to integers
+
+Package: zerovec
+Version: 0.11.2
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Zero-copy vector backed by a byte array
+
+Package: zerovec-derive
+Version: 0.11.1
+License: Unicode-3.0
+Repository: https://github.com/unicode-org/icu4x
+Description: Custom derive for the zerovec crate
+
+Package: zmij
+Version: 1.0.2
+License: MIT
+Repository: https://github.com/dtolnay/zmij
+Description: A double-to-string conversion algorithm based on Schubfach and yy
+
+Package: zune-core
+Version: 0.4.12
+License: Apache-2.0 OR MIT OR Zlib
+Description: Core utilities for image processing in the zune family of crates
+
+Package: zune-jpeg
+Version: 0.4.21
+License: Apache-2.0 OR MIT OR Zlib
+Repository: https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
+Description: A fast, correct and safe jpeg decoder
+

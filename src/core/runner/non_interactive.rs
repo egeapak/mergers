@@ -213,7 +213,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
             Err(e) => {
                 // Dependency analysis failure is non-fatal, just log a warning
-                eprintln!("Warning: Dependency analysis failed: {}", e);
+                tracing::warn!("Warning: Dependency analysis failed: {}", e);
             }
         }
 
@@ -262,7 +262,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         if let Some(conflict) = conflict_info {
             // Output conflict info
             if let Err(e) = self.output.write_conflict(&conflict) {
-                eprintln!("Warning: Failed to write conflict info: {}", e);
+                tracing::warn!("Warning: Failed to write conflict info: {}", e);
             }
 
             return RunResult::conflict(state_path);
@@ -395,7 +395,7 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         if let Some(conflict) = conflict_info {
             if let Err(e) = self.output.write_conflict(&conflict) {
-                eprintln!("Warning: Failed to write conflict info: {}", e);
+                tracing::warn!("Warning: Failed to write conflict info: {}", e);
             }
             return RunResult::conflict(state_path);
         }
@@ -536,7 +536,7 @@ impl<W: Write> NonInteractiveRunner<W> {
                 };
 
                 if let Err(e) = self.output.write_status(&status_info) {
-                    eprintln!("Warning: Failed to write status: {}", e);
+                    tracing::warn!("Warning: Failed to write status: {}", e);
                 }
 
                 return RunResult::success();
@@ -610,7 +610,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         };
 
         if let Err(e) = self.output.write_status(&status_info) {
-            eprintln!("Warning: Failed to write status: {}", e);
+            tracing::warn!("Warning: Failed to write status: {}", e);
         }
 
         if state.phase == MergePhase::AwaitingConflictResolution {
@@ -730,7 +730,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         };
 
         if let Err(e) = self.output.write_summary(&summary) {
-            eprintln!("Warning: Failed to write summary: {}", e);
+            tracing::warn!("Warning: Failed to write summary: {}", e);
         }
 
         if failed_count > 0 {
@@ -773,7 +773,7 @@ impl<W: Write> NonInteractiveRunner<W> {
 
     fn emit_event(&mut self, event: ProgressEvent) {
         if let Err(e) = self.output.write_event(&event) {
-            eprintln!("Warning: Failed to write event: {}", e);
+            tracing::warn!("Warning: Failed to write event: {}", e);
         }
     }
 
@@ -783,7 +783,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             code: None,
         };
         if let Err(e) = self.output.write_event(&event) {
-            eprintln!("Warning: Failed to write error: {}", e);
+            tracing::warn!("Warning: Failed to write error: {}", e);
         }
     }
 
