@@ -88,12 +88,18 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Detect revert pairs
+              id: reverts
+              run: |
+                  SKIP_FLAGS=$(bash scripts/find-revert-pairs.sh)
+                  echo "flags=${SKIP_FLAGS}" >> "$GITHUB_OUTPUT"
+
             - name: Generate release notes
               uses: orhun/git-cliff-action@v4
               id: git-cliff
               with:
                   config: cliff.toml
-                  args: --latest --strip header
+                  args: ${{ steps.reverts.outputs.flags }} --latest --strip header
               env:
                   GITHUB_REPO: ${{ github.repository }}
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
