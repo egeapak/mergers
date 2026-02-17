@@ -37,8 +37,7 @@ pub mod traits;
 
 // Re-export the client and its public items
 pub use client::{
-    AzureDevOpsClient, DEFAULT_MAX_RETRIES, extract_merged_tags, filter_prs_with_tag,
-    filter_prs_without_merged_tag,
+    AzureDevOpsClient, extract_merged_tags, filter_prs_with_tag, filter_prs_without_merged_tag,
 };
 pub use traits::{
     GitOperations, PullRequestOperations, PullRequestWorkItemsOperations, RealGitOperations,

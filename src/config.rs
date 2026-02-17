@@ -51,25 +51,40 @@ struct ConfigFile {
     pub repo_aliases: Option<std::collections::HashMap<String, String>>,
 }
 
+/// Application configuration assembled from CLI arguments, environment variables, config file, and defaults.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Config {
+    /// Azure DevOps organization name.
     pub organization: Option<ParsedProperty<String>>,
+    /// Azure DevOps project name.
     pub project: Option<ParsedProperty<String>>,
+    /// Azure DevOps repository name.
     pub repository: Option<ParsedProperty<String>>,
+    /// Personal access token for authenticating with Azure DevOps.
     pub pat: Option<ParsedProperty<String>>,
+    /// Name of the development branch to fetch pull requests from.
     pub dev_branch: Option<ParsedProperty<String>>,
+    /// Name of the target branch to merge pull requests into.
     pub target_branch: Option<ParsedProperty<String>>,
+    /// Path to a local repository to use instead of cloning.
     pub local_repo: Option<ParsedProperty<String>>,
+    /// Work item state to set after a successful merge operation.
     pub work_item_state: Option<ParsedProperty<String>>,
+    /// Maximum number of parallel operations for API calls.
     pub parallel_limit: Option<ParsedProperty<usize>>,
+    /// Maximum number of concurrent network requests.
     pub max_concurrent_network: Option<ParsedProperty<usize>>,
+    /// Maximum number of concurrent processing tasks.
     pub max_concurrent_processing: Option<ParsedProperty<usize>>,
+    /// Prefix applied to git tags created during merge operations.
     pub tag_prefix: Option<ParsedProperty<String>>,
+    /// Whether to run git hooks during merge operations.
     pub run_hooks: Option<ParsedProperty<bool>>,
-    // UI Settings
+    /// Whether to highlight PR dependency relationships in the TUI.
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
+    /// Whether to highlight work item relationships in the TUI.
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
-    /// Repository aliases (e.g., "th" -> "/path/to/telehealth")
+    /// Repository aliases (e.g., "api" -> "/path/to/api-backend")
     pub repo_aliases: Option<ParsedProperty<std::collections::HashMap<String, String>>>,
 }
 
@@ -421,8 +436,8 @@ show_work_item_highlights = true
 # Repository aliases for quick access
 # Maps short names to full paths (usable with any command)
 # [repo_aliases]
-# th = "/path/to/telehealth-backend"
-# gk = "/path/to/gatekeeper-backend"
+# api = "/path/to/api-backend"
+# web = "/path/to/web-frontend"
 "#;
 
         fs::write(&config_path, sample_config).with_context(|| {
