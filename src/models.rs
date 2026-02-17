@@ -1537,6 +1537,40 @@ mod tests {
         }
     }
 
+    fn create_sample_release_notes_args() -> Args {
+        Args {
+            command: Some(Commands::ReleaseNotes(ReleaseNotesArgs {
+                shared: SharedArgs {
+                    path: Some("/test/repo".to_string()),
+                    organization: Some("test-org".to_string()),
+                    project: Some("test-project".to_string()),
+                    repository: Some("test-repo".to_string()),
+                    pat: Some("test-pat".to_string()),
+                    dev_branch: Some("dev".to_string()),
+                    target_branch: Some("main".to_string()),
+                    local_repo: None,
+                    tag_prefix: Some("merged-".to_string()),
+                    parallel_limit: Some(50),
+                    max_concurrent_network: Some(20),
+                    max_concurrent_processing: Some(5),
+                    since: Some("1w".to_string()),
+                    skip_confirmation: true,
+                    log_level: None,
+                    log_file: None,
+                    log_format: None,
+                },
+                output: ReleaseNotesOutputFormat::Markdown,
+                copy: false,
+                group: false,
+                include_prs: false,
+                from: Some("v1.0.0".to_string()),
+                to: Some("v2.0.0".to_string()),
+                no_cache: false,
+            })),
+            create_config: false,
+        }
+    }
+
     fn create_sample_pull_request() -> PullRequest {
         PullRequest {
             id: 123,
@@ -3286,6 +3320,3347 @@ mod tests {
                 "{}: version mismatch",
                 name
             );
+        }
+    }
+
+    // ========================================================================
+    // Short flag parsing tests
+    // ========================================================================
+
+    /// # Short Flags for Azure DevOps Connection
+    ///
+    /// Tests that short flags -o, -p, -r, -t correctly map to their long
+    /// counterparts for Azure DevOps connection arguments.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command using only short flags
+    /// - Verifies each short flag maps to the correct field
+    ///
+    /// ## Expected Outcome
+    /// - -o maps to organization
+    /// - -p maps to project
+    /// - -r maps to repository
+    /// - -t maps to pat
+    #[test]
+    fn test_short_flags_azure_devops_connection() {
+        let args = Args::parse_from([
+            "mergers", "merge", "-o", "my-org", "-p", "my-proj", "-r", "my-repo", "-t", "my-token",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("my-token".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Short Flags Mixed with Long Flags
+    ///
+    /// Tests that short and long flags can be freely mixed in the same command.
+    ///
+    /// ## Test Scenario
+    /// - Uses -o (short) and --project (long) in the same invocation
+    /// - Mixes short and long throughout the argument list
+    ///
+    /// ## Expected Outcome
+    /// - All flags are correctly parsed regardless of short/long form
+    #[test]
+    fn test_short_and_long_flags_mixed() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-o",
+            "my-org",
+            "--project",
+            "my-proj",
+            "-r",
+            "my-repo",
+            "--pat",
+            "my-token",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("my-token".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Short Flags -n and -q on Merge
+    ///
+    /// Tests that -n (non-interactive) and -q (quiet) short flags work on merge.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge -n -q` with required args
+    /// - Both boolean short flags should activate their respective modes
+    ///
+    /// ## Expected Outcome
+    /// - non_interactive is true
+    /// - quiet is true
+    #[test]
+    fn test_short_flags_non_interactive_and_quiet() {
+        let args = Args::parse_from([
+            "mergers", "merge", "-n", "-q", "-o", "org", "-p", "proj", "-r", "repo", "-t", "pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert!(merge_args.ni.non_interactive);
+            assert!(merge_args.ni.quiet);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // Default value tests
+    // ========================================================================
+
+    /// # SharedArgs Default Trait Values
+    ///
+    /// Tests that SharedArgs::default() produces the expected default values
+    /// for all fields.
+    ///
+    /// ## Test Scenario
+    /// - Creates SharedArgs using Default trait
+    /// - Checks every field for its expected default
+    ///
+    /// ## Expected Outcome
+    /// - All Option fields are None
+    /// - Boolean fields are false
+    /// - tag_prefix is None (default_value is applied by clap at parse time)
+    #[test]
+    fn test_shared_args_default_values() {
+        let shared = SharedArgs::default();
+
+        assert_eq!(shared.path, None);
+        assert_eq!(shared.organization, None);
+        assert_eq!(shared.project, None);
+        assert_eq!(shared.repository, None);
+        assert_eq!(shared.pat, None);
+        assert_eq!(shared.dev_branch, None);
+        assert_eq!(shared.target_branch, None);
+        assert_eq!(shared.local_repo, None);
+        // tag_prefix: default_value on clap attribute means clap sets it at parse time;
+        // Default trait gives None
+        assert_eq!(shared.tag_prefix, None);
+        assert_eq!(shared.parallel_limit, None);
+        assert_eq!(shared.max_concurrent_network, None);
+        assert_eq!(shared.max_concurrent_processing, None);
+        assert_eq!(shared.since, None);
+        assert!(!shared.skip_confirmation);
+        assert_eq!(shared.log_level, None);
+        assert_eq!(shared.log_file, None);
+        assert_eq!(shared.log_format, None);
+    }
+
+    /// # NonInteractiveArgs Default Trait Values
+    ///
+    /// Tests that NonInteractiveArgs::default() produces the expected defaults.
+    ///
+    /// ## Test Scenario
+    /// - Creates NonInteractiveArgs using Default trait
+    /// - Checks every field for its expected default
+    ///
+    /// ## Expected Outcome
+    /// - Boolean fields are false
+    /// - Option fields are None
+    /// - Output format defaults to Text
+    #[test]
+    fn test_non_interactive_args_default_values() {
+        let ni = NonInteractiveArgs::default();
+
+        assert!(!ni.non_interactive);
+        assert_eq!(ni.version, None);
+        assert_eq!(ni.select_by_state, None);
+        assert_eq!(ni.output, OutputFormat::Text);
+        assert!(!ni.quiet);
+    }
+
+    /// # Clap Default Values Applied at Parse Time
+    ///
+    /// Tests that clap's default_value attributes are applied when args are
+    /// parsed without explicit values for those fields.
+    ///
+    /// ## Test Scenario
+    /// - Parses a minimal merge command (no optional flags)
+    /// - Checks that clap-level defaults are applied
+    ///
+    /// ## Expected Outcome
+    /// - tag_prefix gets "merged-" from clap default_value
+    /// - output gets Text from default_value_t
+    /// - Boolean flags default to false
+    #[test]
+    fn test_clap_default_values_at_parse_time() {
+        let args = Args::parse_from(["mergers", "merge"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.tag_prefix, Some("merged-".to_string()));
+            assert_eq!(merge_args.ni.output, OutputFormat::Text);
+            assert!(!merge_args.ni.non_interactive);
+            assert!(!merge_args.ni.quiet);
+            assert!(!merge_args.run_hooks);
+            assert!(!merge_args.shared.skip_confirmation);
+            assert_eq!(merge_args.shared.dev_branch, None);
+            assert_eq!(merge_args.shared.target_branch, None);
+            assert_eq!(merge_args.work_item_state, None);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Migrate Default Terminal States
+    ///
+    /// Tests that --terminal-states defaults to "Closed,Next Closed,Next Merged"
+    /// when not explicitly provided.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate command without --terminal-states
+    /// - Checks the default value is applied
+    ///
+    /// ## Expected Outcome
+    /// - terminal_states is "Closed,Next Closed,Next Merged"
+    #[test]
+    fn test_migrate_default_terminal_states() {
+        let args = Args::parse_from(["mergers", "migrate"]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(
+                migrate_args.terminal_states,
+                "Closed,Next Closed,Next Merged"
+            );
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    // ========================================================================
+    // Cleanup command tests
+    // ========================================================================
+
+    /// # Cleanup Command Parsing
+    ///
+    /// Tests that the cleanup command parses correctly with shared args.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers cleanup` with standard shared arguments
+    /// - Verifies command is recognized as Cleanup variant
+    ///
+    /// ## Expected Outcome
+    /// - Command is Cleanup variant
+    /// - Shared args are correctly populated
+    #[test]
+    fn test_cleanup_command_parsing() {
+        let args = Args::parse_from([
+            "mergers", "cleanup", "-o", "my-org", "-p", "my-proj", "-r", "my-repo", "-t", "my-pat",
+        ]);
+
+        assert!(matches!(args.command, Some(Commands::Cleanup(_))));
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert_eq!(cleanup_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(cleanup_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(cleanup_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(cleanup_args.shared.pat, Some("my-pat".to_string()));
+        }
+    }
+
+    /// # Cleanup Command Alias
+    ///
+    /// Tests that the 'c' alias correctly parses as cleanup command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers c` with standard arguments
+    /// - Verifies alias maps to Cleanup
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'c' is recognized as cleanup command
+    #[test]
+    fn test_cleanup_command_alias() {
+        let args = Args::parse_from(["mergers", "c", "-o", "org", "-p", "proj"]);
+
+        assert!(matches!(args.command, Some(Commands::Cleanup(_))));
+    }
+
+    /// # Cleanup --target Flag
+    ///
+    /// Tests that the --target flag on cleanup is correctly parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses cleanup with --target flag
+    /// - Verifies the target field is populated
+    ///
+    /// ## Expected Outcome
+    /// - target field contains the specified branch name
+    #[test]
+    fn test_cleanup_target_flag() {
+        let args = Args::parse_from(["mergers", "cleanup", "--target", "release/v2"]);
+
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert_eq!(cleanup_args.target, Some("release/v2".to_string()));
+        } else {
+            panic!("Expected Cleanup command");
+        }
+    }
+
+    /// # Cleanup with Positional Path
+    ///
+    /// Tests that cleanup command accepts a positional path argument.
+    ///
+    /// ## Test Scenario
+    /// - Parses cleanup with a positional path argument
+    /// - Verifies path is captured in shared.path
+    ///
+    /// ## Expected Outcome
+    /// - Path argument is correctly captured
+    #[test]
+    fn test_cleanup_with_positional_path() {
+        let args = Args::parse_from(["mergers", "cleanup", "/path/to/repo"]);
+
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert_eq!(cleanup_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected Cleanup command");
+        }
+    }
+
+    /// # HasSharedArgs Trait on CleanupArgs
+    ///
+    /// Tests that the HasSharedArgs trait works correctly on CleanupArgs.
+    ///
+    /// ## Test Scenario
+    /// - Creates CleanupArgs with shared arguments
+    /// - Uses the trait method to extract and mutate shared args
+    ///
+    /// ## Expected Outcome
+    /// - Trait methods return correct shared arguments
+    /// - Mutable access works correctly
+    #[test]
+    fn test_has_shared_args_trait_cleanup() {
+        let mut cleanup_args = CleanupArgs {
+            shared: SharedArgs {
+                organization: Some("cleanup-org".to_string()),
+                project: Some("cleanup-proj".to_string()),
+                ..Default::default()
+            },
+            target: Some("main".to_string()),
+        };
+
+        assert_eq!(
+            cleanup_args.shared_args().organization,
+            Some("cleanup-org".to_string())
+        );
+
+        // Test mutable access
+        cleanup_args.shared_args_mut().organization = Some("modified-org".to_string());
+        assert_eq!(
+            cleanup_args.shared_args().organization,
+            Some("modified-org".to_string())
+        );
+    }
+
+    /// # Commands Shared Args Extraction Includes Cleanup
+    ///
+    /// Tests that Commands::shared_args() works for the Cleanup variant.
+    ///
+    /// ## Test Scenario
+    /// - Creates a Cleanup command variant
+    /// - Uses Commands::shared_args() to extract shared args
+    ///
+    /// ## Expected Outcome
+    /// - Shared args are correctly extracted from Cleanup
+    #[test]
+    fn test_commands_shared_args_extraction_cleanup() {
+        let cleanup_cmd = Commands::Cleanup(CleanupArgs {
+            shared: SharedArgs {
+                organization: Some("cleanup-org".to_string()),
+                ..Default::default()
+            },
+            target: None,
+        });
+
+        assert_eq!(
+            cleanup_cmd.shared_args().organization,
+            Some("cleanup-org".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Merge subcommand parsing tests
+    // ========================================================================
+
+    /// # Merge Continue Subcommand Parsing
+    ///
+    /// Tests that `merge continue` subcommand parses correctly with all its flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge continue --repo /path --output json --quiet`
+    /// - Verifies all fields are captured
+    ///
+    /// ## Expected Outcome
+    /// - Subcommand is Continue variant
+    /// - repo, output, and quiet are correctly parsed
+    #[test]
+    fn test_merge_continue_subcommand_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "continue",
+            "--repo",
+            "/path/to/repo",
+            "--output",
+            "json",
+            "-q",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Continue(continue_args)) = merge_args.subcommand {
+                assert_eq!(continue_args.repo, Some("/path/to/repo".to_string()));
+                assert_eq!(continue_args.output, OutputFormat::Json);
+                assert!(continue_args.quiet);
+            } else {
+                panic!("Expected Continue subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Continue Subcommand Defaults
+    ///
+    /// Tests that `merge continue` without flags uses defaults.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge continue` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - repo is None
+    /// - output defaults to Text
+    /// - quiet defaults to false
+    #[test]
+    fn test_merge_continue_subcommand_defaults() {
+        let args = Args::parse_from(["mergers", "merge", "continue"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Continue(continue_args)) = merge_args.subcommand {
+                assert_eq!(continue_args.repo, None);
+                assert_eq!(continue_args.output, OutputFormat::Text);
+                assert!(!continue_args.quiet);
+            } else {
+                panic!("Expected Continue subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Abort Subcommand Parsing
+    ///
+    /// Tests that `merge abort` subcommand parses correctly with all its flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge abort --repo /path --output ndjson`
+    /// - Verifies all fields are captured
+    ///
+    /// ## Expected Outcome
+    /// - Subcommand is Abort variant
+    /// - repo and output are correctly parsed
+    #[test]
+    fn test_merge_abort_subcommand_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "abort",
+            "--repo",
+            "/path/to/repo",
+            "--output",
+            "ndjson",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Abort(abort_args)) = merge_args.subcommand {
+                assert_eq!(abort_args.repo, Some("/path/to/repo".to_string()));
+                assert_eq!(abort_args.output, OutputFormat::Ndjson);
+            } else {
+                panic!("Expected Abort subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Abort Subcommand Defaults
+    ///
+    /// Tests that `merge abort` without flags uses defaults.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge abort` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - repo is None
+    /// - output defaults to Text
+    #[test]
+    fn test_merge_abort_subcommand_defaults() {
+        let args = Args::parse_from(["mergers", "merge", "abort"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Abort(abort_args)) = merge_args.subcommand {
+                assert_eq!(abort_args.repo, None);
+                assert_eq!(abort_args.output, OutputFormat::Text);
+            } else {
+                panic!("Expected Abort subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Status Subcommand Parsing
+    ///
+    /// Tests that `merge status` subcommand parses correctly with all its flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge status --repo /path --output json`
+    /// - Verifies all fields are captured
+    ///
+    /// ## Expected Outcome
+    /// - Subcommand is Status variant
+    /// - repo and output are correctly parsed
+    #[test]
+    fn test_merge_status_subcommand_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "status",
+            "--repo",
+            "/path/to/repo",
+            "--output",
+            "json",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Status(status_args)) = merge_args.subcommand {
+                assert_eq!(status_args.repo, Some("/path/to/repo".to_string()));
+                assert_eq!(status_args.output, OutputFormat::Json);
+            } else {
+                panic!("Expected Status subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Status Subcommand Defaults
+    ///
+    /// Tests that `merge status` without flags uses defaults.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge status` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - repo is None
+    /// - output defaults to Text
+    #[test]
+    fn test_merge_status_subcommand_defaults() {
+        let args = Args::parse_from(["mergers", "merge", "status"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Status(status_args)) = merge_args.subcommand {
+                assert_eq!(status_args.repo, None);
+                assert_eq!(status_args.output, OutputFormat::Text);
+            } else {
+                panic!("Expected Status subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Complete Subcommand Parsing
+    ///
+    /// Tests that `merge complete` subcommand parses correctly with all its flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge complete --next-state Done --repo /path --output ndjson -q`
+    /// - Verifies all fields including required --next-state
+    ///
+    /// ## Expected Outcome
+    /// - Subcommand is Complete variant
+    /// - next_state, repo, output, and quiet are correctly parsed
+    #[test]
+    fn test_merge_complete_subcommand_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "complete",
+            "--next-state",
+            "Done",
+            "--repo",
+            "/path/to/repo",
+            "--output",
+            "ndjson",
+            "-q",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Complete(complete_args)) = merge_args.subcommand {
+                assert_eq!(complete_args.next_state, "Done");
+                assert_eq!(complete_args.repo, Some("/path/to/repo".to_string()));
+                assert_eq!(complete_args.output, OutputFormat::Ndjson);
+                assert!(complete_args.quiet);
+            } else {
+                panic!("Expected Complete subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Merge Complete Requires --next-state
+    ///
+    /// Tests that `merge complete` fails without --next-state (required argument).
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse `mergers merge complete` without --next-state
+    /// - Verifies parsing fails
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error about missing --next-state
+    #[test]
+    fn test_merge_complete_requires_next_state() {
+        let result = Args::try_parse_from(["mergers", "merge", "complete"]);
+        match result {
+            Err(err) => {
+                let err_msg = err.to_string();
+                assert!(
+                    err_msg.contains("--next-state"),
+                    "Error should mention --next-state: {}",
+                    err_msg
+                );
+            }
+            Ok(_) => panic!("Expected parsing to fail without --next-state"),
+        }
+    }
+
+    // ========================================================================
+    // OutputFormat value_enum tests
+    // ========================================================================
+
+    /// # OutputFormat Enum Parsing
+    ///
+    /// Tests that all OutputFormat variants can be parsed from command line.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with --output set to each valid value
+    /// - Tests text, json, and ndjson
+    ///
+    /// ## Expected Outcome
+    /// - Each value maps to the correct OutputFormat variant
+    #[test]
+    fn test_output_format_enum_parsing() {
+        for (input, expected) in [
+            ("text", OutputFormat::Text),
+            ("json", OutputFormat::Json),
+            ("ndjson", OutputFormat::Ndjson),
+        ] {
+            let args = Args::parse_from(["mergers", "merge", "--output", input]);
+
+            if let Some(Commands::Merge(merge_args)) = args.command {
+                assert_eq!(
+                    merge_args.ni.output, expected,
+                    "Output format '{}' should parse to {:?}",
+                    input, expected
+                );
+            } else {
+                panic!("Expected Merge command for output '{}'", input);
+            }
+        }
+    }
+
+    /// # Invalid OutputFormat Value Rejected
+    ///
+    /// Tests that invalid --output values are rejected by clap.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse merge command with --output invalid_format
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error
+    #[test]
+    fn test_invalid_output_format_rejected() {
+        let result = Args::try_parse_from(["mergers", "merge", "--output", "xml"]);
+        assert!(result.is_err());
+    }
+
+    /// # OutputFormat Display Trait
+    ///
+    /// Tests the Display implementation for all OutputFormat variants.
+    ///
+    /// ## Test Scenario
+    /// - Calls to_string() on each OutputFormat variant
+    ///
+    /// ## Expected Outcome
+    /// - Text displays as "text"
+    /// - Json displays as "json"
+    /// - Ndjson displays as "ndjson"
+    #[test]
+    fn test_output_format_display() {
+        assert_eq!(OutputFormat::Text.to_string(), "text");
+        assert_eq!(OutputFormat::Json.to_string(), "json");
+        assert_eq!(OutputFormat::Ndjson.to_string(), "ndjson");
+    }
+
+    /// # OutputFormat on Merge Subcommands
+    ///
+    /// Tests that --output works on continue, abort, and status subcommands.
+    ///
+    /// ## Test Scenario
+    /// - Parses each subcommand with different output formats
+    ///
+    /// ## Expected Outcome
+    /// - Each subcommand correctly handles its own --output flag
+    #[test]
+    fn test_output_format_on_merge_subcommands() {
+        // Continue with ndjson
+        let args = Args::parse_from(["mergers", "merge", "continue", "--output", "ndjson"]);
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Continue(c)) = m.subcommand {
+                assert_eq!(c.output, OutputFormat::Ndjson);
+            } else {
+                panic!("Expected Continue");
+            }
+        }
+
+        // Abort with json
+        let args = Args::parse_from(["mergers", "merge", "abort", "--output", "json"]);
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Abort(a)) = m.subcommand {
+                assert_eq!(a.output, OutputFormat::Json);
+            } else {
+                panic!("Expected Abort");
+            }
+        }
+
+        // Status with text
+        let args = Args::parse_from(["mergers", "merge", "status", "--output", "text"]);
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Status(s)) = m.subcommand {
+                assert_eq!(s.output, OutputFormat::Text);
+            } else {
+                panic!("Expected Status");
+            }
+        }
+
+        // Complete with ndjson
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "complete",
+            "--next-state",
+            "Done",
+            "--output",
+            "ndjson",
+        ]);
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Complete(c)) = m.subcommand {
+                assert_eq!(c.output, OutputFormat::Ndjson);
+            } else {
+                panic!("Expected Complete");
+            }
+        }
+    }
+
+    // ========================================================================
+    // Logging argument tests
+    // ========================================================================
+
+    /// # Log Level Parsing
+    ///
+    /// Tests that --log-level is correctly parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with --log-level set to various values
+    ///
+    /// ## Expected Outcome
+    /// - log_level field contains the specified value
+    #[test]
+    fn test_log_level_parsing() {
+        for level in ["trace", "debug", "info", "warn", "error"] {
+            let args = Args::parse_from(["mergers", "merge", "--log-level", level]);
+
+            if let Some(Commands::Merge(merge_args)) = args.command {
+                assert_eq!(merge_args.shared.log_level, Some(level.to_string()));
+            } else {
+                panic!("Expected Merge command");
+            }
+        }
+    }
+
+    /// # Log File Parsing
+    ///
+    /// Tests that --log-file is correctly parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with --log-file flag
+    ///
+    /// ## Expected Outcome
+    /// - log_file field contains the specified path
+    #[test]
+    fn test_log_file_parsing() {
+        let args = Args::parse_from(["mergers", "merge", "--log-file", "/var/log/mergers.log"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.log_file,
+                Some("/var/log/mergers.log".to_string())
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Log Format Valid Values
+    ///
+    /// Tests that --log-format accepts only "text" and "json".
+    ///
+    /// ## Test Scenario
+    /// - Parses with valid log-format values (text, json)
+    /// - Attempts parsing with invalid value
+    ///
+    /// ## Expected Outcome
+    /// - Valid values are accepted
+    /// - Invalid values cause parsing to fail
+    #[test]
+    fn test_log_format_valid_values() {
+        // Test valid "text"
+        let args = Args::parse_from(["mergers", "merge", "--log-format", "text"]);
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.log_format, Some("text".to_string()));
+        }
+
+        // Test valid "json"
+        let args = Args::parse_from(["mergers", "merge", "--log-format", "json"]);
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.log_format, Some("json".to_string()));
+        }
+    }
+
+    /// # Log Format Invalid Value Rejected
+    ///
+    /// Tests that --log-format rejects values not in the value_parser list.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse with --log-format yaml (not in allowed list)
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error
+    #[test]
+    fn test_log_format_invalid_value_rejected() {
+        let result = Args::try_parse_from(["mergers", "merge", "--log-format", "yaml"]);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Numeric argument edge cases
+    // ========================================================================
+
+    /// # Numeric Arguments Parsed Correctly
+    ///
+    /// Tests that --parallel-limit, --max-concurrent-network, and
+    /// --max-concurrent-processing are parsed as usize values.
+    ///
+    /// ## Test Scenario
+    /// - Parses each numeric flag individually
+    /// - Verifies values are correctly converted to usize
+    ///
+    /// ## Expected Outcome
+    /// - Each numeric field contains the parsed value
+    #[test]
+    fn test_numeric_arguments_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--parallel-limit",
+            "500",
+            "--max-concurrent-network",
+            "200",
+            "--max-concurrent-processing",
+            "25",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.parallel_limit, Some(500));
+            assert_eq!(merge_args.shared.max_concurrent_network, Some(200));
+            assert_eq!(merge_args.shared.max_concurrent_processing, Some(25));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Numeric Argument Zero Value
+    ///
+    /// Tests that numeric arguments accept zero.
+    ///
+    /// ## Test Scenario
+    /// - Parses --parallel-limit 0
+    ///
+    /// ## Expected Outcome
+    /// - Value is parsed as 0
+    #[test]
+    fn test_numeric_argument_zero() {
+        let args = Args::parse_from(["mergers", "merge", "--parallel-limit", "0"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.parallel_limit, Some(0));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Non-Numeric Value for Numeric Argument Rejected
+    ///
+    /// Tests that non-numeric values for --parallel-limit are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse --parallel-limit with a non-numeric string
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error about invalid value
+    #[test]
+    fn test_non_numeric_parallel_limit_rejected() {
+        let result = Args::try_parse_from(["mergers", "merge", "--parallel-limit", "abc"]);
+        assert!(result.is_err());
+    }
+
+    /// # Negative Value for Numeric Argument Rejected
+    ///
+    /// Tests that negative values are rejected for usize arguments.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse --max-concurrent-network with a negative number
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because usize cannot be negative
+    #[test]
+    fn test_negative_numeric_argument_rejected() {
+        let result = Args::try_parse_from(["mergers", "merge", "--max-concurrent-network", "-5"]);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Boolean flag tests
+    // ========================================================================
+
+    /// # Boolean Flags Default to False
+    ///
+    /// Tests that all boolean flags default to false when not specified.
+    ///
+    /// ## Test Scenario
+    /// - Parses a minimal merge command without boolean flags
+    ///
+    /// ## Expected Outcome
+    /// - skip_confirmation, run_hooks, non_interactive, quiet all false
+    #[test]
+    fn test_boolean_flags_default_false() {
+        let args = Args::parse_from(["mergers", "merge"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert!(!merge_args.shared.skip_confirmation);
+            assert!(!merge_args.run_hooks);
+            assert!(!merge_args.ni.non_interactive);
+            assert!(!merge_args.ni.quiet);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Boolean Flags Activated by Presence
+    ///
+    /// Tests that boolean flags are set to true when present.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with all boolean flags present
+    ///
+    /// ## Expected Outcome
+    /// - All boolean flags are true
+    #[test]
+    fn test_boolean_flags_activated() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--skip-confirmation",
+            "--run-hooks",
+            "-n",
+            "-q",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert!(merge_args.shared.skip_confirmation);
+            assert!(merge_args.run_hooks);
+            assert!(merge_args.ni.non_interactive);
+            assert!(merge_args.ni.quiet);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // --create-config flag tests
+    // ========================================================================
+
+    /// # Create Config Flag
+    ///
+    /// Tests that --create-config flag is parsed at the top level.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers --create-config`
+    ///
+    /// ## Expected Outcome
+    /// - create_config is true
+    /// - No command is set
+    #[test]
+    fn test_create_config_flag() {
+        let args = Args::parse_from(["mergers", "--create-config"]);
+
+        assert!(args.create_config);
+        assert!(args.command.is_none());
+    }
+
+    /// # Create Config Flag with Command
+    ///
+    /// Tests that --create-config can coexist with a command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers --create-config merge`
+    ///
+    /// ## Expected Outcome
+    /// - create_config is true
+    /// - Command is still parsed
+    #[test]
+    fn test_create_config_flag_with_command() {
+        let args = Args::parse_from(["mergers", "--create-config", "merge"]);
+
+        assert!(args.create_config);
+        assert!(matches!(args.command, Some(Commands::Merge(_))));
+    }
+
+    // ========================================================================
+    // Invalid/error argument tests
+    // ========================================================================
+
+    /// # Unknown Flag Rejected
+    ///
+    /// Tests that unrecognized flags are rejected by clap.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse with an unknown --foo flag
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error
+    #[test]
+    fn test_unknown_flag_rejected() {
+        let result = Args::try_parse_from(["mergers", "merge", "--foo", "bar"]);
+        assert!(result.is_err());
+    }
+
+    /// # Unknown Subcommand Rejected
+    ///
+    /// Tests that an unknown subcommand is rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse `mergers unknown`
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_unknown_subcommand_rejected() {
+        let result = Args::try_parse_from(["mergers", "unknown"]);
+        assert!(result.is_err());
+    }
+
+    /// # Flag Without Required Value Rejected
+    ///
+    /// Tests that flags requiring values fail when no value is provided.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse --organization without a value
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails with an error about missing value
+    #[test]
+    fn test_flag_without_required_value_rejected() {
+        // --organization requires a value
+        let result = Args::try_parse_from(["mergers", "merge", "--organization"]);
+        assert!(result.is_err());
+    }
+
+    /// # Unknown Merge Subcommand Rejected
+    ///
+    /// Tests that an unknown merge subcommand is rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse `mergers merge unknown`
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because "unknown" is not a valid merge subcommand
+    ///   and cannot be interpreted as a path-like positional argument either
+    ///   (clap will attempt positional matching first)
+    #[test]
+    fn test_unknown_merge_subcommand_treated_as_path() {
+        // "unknown" isn't a recognized subcommand, but the positional `path`
+        // argument will capture it since it's a free-form string
+        let result = Args::try_parse_from(["mergers", "merge", "unknown"]);
+        // This actually succeeds because "unknown" gets captured as the path positional
+        assert!(result.is_ok());
+        if let Ok(args) = result
+            && let Some(Commands::Merge(merge_args)) = args.command
+        {
+            assert_eq!(merge_args.shared.path, Some("unknown".to_string()));
+        }
+    }
+
+    // ========================================================================
+    // Argument order tests
+    // ========================================================================
+
+    /// # Flags Can Appear in Any Order
+    ///
+    /// Tests that named flags can appear in any order and produce the same result.
+    ///
+    /// ## Test Scenario
+    /// - Parses the same flags in two different orders
+    /// - Compares the resulting values
+    ///
+    /// ## Expected Outcome
+    /// - Both orderings produce identical parsed values
+    #[test]
+    fn test_flags_any_order() {
+        // Order 1: org, proj, repo, pat
+        let args1 = Args::parse_from([
+            "mergers",
+            "merge",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "--dev-branch",
+            "develop",
+        ]);
+
+        // Order 2: pat, repo, dev-branch, proj, org (reversed and shuffled)
+        let args2 = Args::parse_from([
+            "mergers",
+            "merge",
+            "-t",
+            "pat",
+            "--dev-branch",
+            "develop",
+            "-r",
+            "repo",
+            "-p",
+            "proj",
+            "-o",
+            "org",
+        ]);
+
+        let m1 = match args1.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge"),
+        };
+        let m2 = match args2.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge"),
+        };
+
+        assert_eq!(m1.shared.organization, m2.shared.organization);
+        assert_eq!(m1.shared.project, m2.shared.project);
+        assert_eq!(m1.shared.repository, m2.shared.repository);
+        assert_eq!(m1.shared.pat, m2.shared.pat);
+        assert_eq!(m1.shared.dev_branch, m2.shared.dev_branch);
+    }
+
+    /// # Positional Path Before and After Flags
+    ///
+    /// Tests that the positional path argument can appear before or after flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses path before flags and after flags
+    /// - Verifies both produce the same path value
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured regardless of position relative to flags
+    #[test]
+    fn test_positional_path_before_and_after_flags() {
+        let args_before = Args::parse_from(["mergers", "merge", "/my/path", "-o", "org"]);
+        let args_after = Args::parse_from(["mergers", "merge", "-o", "org", "/my/path"]);
+
+        let m_before = match args_before.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge"),
+        };
+        let m_after = match args_after.command {
+            Some(Commands::Merge(m)) => m,
+            _ => panic!("Expected Merge"),
+        };
+
+        assert_eq!(m_before.shared.path, Some("/my/path".to_string()));
+        assert_eq!(m_after.shared.path, Some("/my/path".to_string()));
+    }
+
+    // ========================================================================
+    // Edge case / special value tests
+    // ========================================================================
+
+    /// # Empty String Arguments
+    ///
+    /// Tests that empty strings are accepted as argument values.
+    ///
+    /// ## Test Scenario
+    /// - Parses --organization with an empty string
+    ///
+    /// ## Expected Outcome
+    /// - The field contains Some("") - clap does not reject empty strings
+    #[test]
+    fn test_empty_string_argument() {
+        let args = Args::parse_from(["mergers", "merge", "--organization", ""]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Arguments with Spaces
+    ///
+    /// Tests that argument values containing spaces are handled correctly.
+    ///
+    /// ## Test Scenario
+    /// - Parses --work-item-state with a value containing spaces
+    /// - Parses --select-by-state with spaces
+    ///
+    /// ## Expected Outcome
+    /// - Values with spaces are preserved as-is
+    #[test]
+    fn test_arguments_with_spaces() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--work-item-state",
+            "Ready for Next",
+            "--select-by-state",
+            "Ready for Next,In Review",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.work_item_state,
+                Some("Ready for Next".to_string())
+            );
+            assert_eq!(
+                merge_args.ni.select_by_state,
+                Some("Ready for Next,In Review".to_string())
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Arguments with Special Characters
+    ///
+    /// Tests that argument values with special characters are preserved.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments with special chars like @, #, !, etc.
+    ///
+    /// ## Expected Outcome
+    /// - Special characters are preserved in the parsed values
+    #[test]
+    fn test_arguments_with_special_characters() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-o",
+            "org@special#chars",
+            "--tag-prefix",
+            "v/release-",
+            "--pat",
+            "token!with$pecial",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.organization,
+                Some("org@special#chars".to_string())
+            );
+            assert_eq!(merge_args.shared.tag_prefix, Some("v/release-".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("token!with$pecial".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Path with Relative Notation
+    ///
+    /// Tests that paths with . and .. are preserved as-is (no canonicalization).
+    ///
+    /// ## Test Scenario
+    /// - Parses a relative path as the positional argument
+    ///
+    /// ## Expected Outcome
+    /// - Path is stored exactly as provided, without resolution
+    #[test]
+    fn test_relative_path_preserved() {
+        let args = Args::parse_from(["mergers", "merge", "../my-repo"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.path, Some("../my-repo".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Dot Path Preserved
+    ///
+    /// Tests that "." as a path is preserved.
+    ///
+    /// ## Test Scenario
+    /// - Parses "." as the positional path argument
+    ///
+    /// ## Expected Outcome
+    /// - Path contains exactly "."
+    #[test]
+    fn test_dot_path_preserved() {
+        let args = Args::parse_from(["mergers", "merge", "."]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.path, Some(".".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // MergeArgsParser fallback tests
+    // ========================================================================
+
+    /// # MergeArgsParser Rejects Unknown Flags
+    ///
+    /// Tests that the fallback parser also rejects unknown flags.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse with MergeArgsParser using an unknown flag
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_merge_args_parser_rejects_unknown_flags() {
+        let result = MergeArgsParser::try_parse_from(["mergers", "--unknown-flag", "value"]);
+        assert!(result.is_err());
+    }
+
+    /// # MergeArgsParser with Minimal Args
+    ///
+    /// Tests that MergeArgsParser works with no arguments at all (all defaults).
+    ///
+    /// ## Test Scenario
+    /// - Parses just "mergers" with MergeArgsParser
+    ///
+    /// ## Expected Outcome
+    /// - Parsing succeeds with all defaults
+    #[test]
+    fn test_merge_args_parser_minimal() {
+        let result = MergeArgsParser::try_parse_from(["mergers"]);
+
+        assert!(result.is_ok());
+        let parser = result.unwrap();
+        assert_eq!(parser.merge_args.shared.path, None);
+        assert_eq!(parser.merge_args.shared.organization, None);
+        assert!(!parser.merge_args.ni.non_interactive);
+        assert_eq!(
+            parser.merge_args.shared.tag_prefix,
+            Some("merged-".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Branch configuration tests
+    // ========================================================================
+
+    /// # Dev Branch and Target Branch Parsing
+    ///
+    /// Tests that --dev-branch and --target-branch are correctly parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with custom branch names
+    ///
+    /// ## Expected Outcome
+    /// - Both branches are captured with their specified values
+    #[test]
+    fn test_branch_configuration_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release/v3",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.dev_branch, Some("develop".to_string()));
+            assert_eq!(
+                merge_args.shared.target_branch,
+                Some("release/v3".to_string())
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Branch Names with Slashes
+    ///
+    /// Tests that branch names containing slashes are preserved.
+    ///
+    /// ## Test Scenario
+    /// - Parses branch names like feature/my-branch
+    ///
+    /// ## Expected Outcome
+    /// - Branch names with slashes are stored as-is
+    #[test]
+    fn test_branch_names_with_slashes() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--dev-branch",
+            "feature/my-branch",
+            "--target-branch",
+            "release/2024/q1",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.shared.dev_branch,
+                Some("feature/my-branch".to_string())
+            );
+            assert_eq!(
+                merge_args.shared.target_branch,
+                Some("release/2024/q1".to_string())
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // Migrate command detailed tests
+    // ========================================================================
+
+    /// # Migrate with Custom Terminal States
+    ///
+    /// Tests that --terminal-states overrides the default value.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate command with custom terminal states
+    ///
+    /// ## Expected Outcome
+    /// - terminal_states contains the custom value
+    #[test]
+    fn test_migrate_custom_terminal_states() {
+        let args = Args::parse_from(["mergers", "migrate", "--terminal-states", "Done,Resolved"]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(migrate_args.terminal_states, "Done,Resolved");
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    /// # Migrate with All Shared Args
+    ///
+    /// Tests that migrate command correctly receives all shared arguments.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate with shared args and migrate-specific args
+    ///
+    /// ## Expected Outcome
+    /// - All shared args and terminal_states are correctly populated
+    #[test]
+    fn test_migrate_with_all_shared_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "--dev-branch",
+            "dev",
+            "--target-branch",
+            "next",
+            "--parallel-limit",
+            "100",
+            "--since",
+            "2w",
+            "--skip-confirmation",
+            "--terminal-states",
+            "Done",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(migrate_args.shared.organization, Some("org".to_string()));
+            assert_eq!(migrate_args.shared.project, Some("proj".to_string()));
+            assert_eq!(migrate_args.shared.repository, Some("repo".to_string()));
+            assert_eq!(migrate_args.shared.pat, Some("pat".to_string()));
+            assert_eq!(migrate_args.shared.dev_branch, Some("dev".to_string()));
+            assert_eq!(migrate_args.shared.target_branch, Some("next".to_string()));
+            assert_eq!(migrate_args.shared.parallel_limit, Some(100));
+            assert_eq!(migrate_args.shared.since, Some("2w".to_string()));
+            assert!(migrate_args.shared.skip_confirmation);
+            assert_eq!(migrate_args.terminal_states, "Done");
+            assert_eq!(migrate_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    // ========================================================================
+    // No subcommand (bare mergers invocation) tests
+    // ========================================================================
+
+    /// # Bare Invocation Has No Command
+    ///
+    /// Tests that `mergers` with no arguments produces command: None.
+    ///
+    /// ## Test Scenario
+    /// - Parses just "mergers" with no args
+    ///
+    /// ## Expected Outcome
+    /// - command is None, create_config is false
+    #[test]
+    fn test_bare_invocation_no_command() {
+        let args = Args::parse_from(["mergers"]);
+
+        assert!(args.command.is_none());
+        assert!(!args.create_config);
+    }
+
+    // ========================================================================
+    // Merge-specific flag tests
+    // ========================================================================
+
+    /// # Work Item State Parsing
+    ///
+    /// Tests that --work-item-state is correctly parsed on merge command.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with --work-item-state
+    /// - Tests that it's None when not provided
+    ///
+    /// ## Expected Outcome
+    /// - work_item_state contains the specified value when provided
+    /// - work_item_state is None when not provided
+    #[test]
+    fn test_work_item_state_parsing() {
+        // With value
+        let args = Args::parse_from(["mergers", "merge", "--work-item-state", "Next Merged"]);
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.work_item_state, Some("Next Merged".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+
+        // Without value (should be None)
+        let args = Args::parse_from(["mergers", "merge"]);
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.work_item_state, None);
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Run Hooks Flag Parsing
+    ///
+    /// Tests that --run-hooks flag activates hook running.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with and without --run-hooks
+    ///
+    /// ## Expected Outcome
+    /// - run_hooks is true when flag present, false when absent
+    #[test]
+    fn test_run_hooks_flag_parsing() {
+        let args_with = Args::parse_from(["mergers", "merge", "--run-hooks"]);
+        let args_without = Args::parse_from(["mergers", "merge"]);
+
+        if let Some(Commands::Merge(m)) = args_with.command {
+            assert!(m.run_hooks);
+        }
+        if let Some(Commands::Merge(m)) = args_without.command {
+            assert!(!m.run_hooks);
+        }
+    }
+
+    /// # Select By State Parsing
+    ///
+    /// Tests that --select-by-state is correctly parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with --select-by-state containing comma-separated values
+    ///
+    /// ## Expected Outcome
+    /// - select_by_state contains the full comma-separated string
+    #[test]
+    fn test_select_by_state_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--select-by-state",
+            "Ready for Next,In Progress",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(
+                merge_args.ni.select_by_state,
+                Some("Ready for Next,In Progress".to_string())
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Version Flag Parsing
+    ///
+    /// Tests that --version on merge (not the binary --version) is parsed.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge command with --version value
+    ///
+    /// ## Expected Outcome
+    /// - version field contains the specified value
+    #[test]
+    fn test_merge_version_flag_parsing() {
+        let args = Args::parse_from(["mergers", "merge", "--version", "v3.2.1"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.ni.version, Some("v3.2.1".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // Quiet flag on subcommands tests
+    // ========================================================================
+
+    /// # Quiet Flag on Continue Subcommand
+    ///
+    /// Tests that -q works on merge continue subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge continue -q`
+    ///
+    /// ## Expected Outcome
+    /// - quiet is true on the continue args
+    #[test]
+    fn test_quiet_flag_on_continue() {
+        let args = Args::parse_from(["mergers", "merge", "continue", "-q"]);
+
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Continue(c)) = m.subcommand {
+                assert!(c.quiet);
+            } else {
+                panic!("Expected Continue");
+            }
+        } else {
+            panic!("Expected Merge");
+        }
+    }
+
+    /// # Quiet Flag on Complete Subcommand
+    ///
+    /// Tests that -q works on merge complete subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge complete --next-state Done -q`
+    ///
+    /// ## Expected Outcome
+    /// - quiet is true on the complete args
+    #[test]
+    fn test_quiet_flag_on_complete() {
+        let args = Args::parse_from(["mergers", "merge", "complete", "--next-state", "Done", "-q"]);
+
+        if let Some(Commands::Merge(m)) = args.command {
+            if let Some(MergeSubcommand::Complete(c)) = m.subcommand {
+                assert!(c.quiet);
+                assert_eq!(c.next_state, "Done");
+            } else {
+                panic!("Expected Complete");
+            }
+        } else {
+            panic!("Expected Merge");
+        }
+    }
+
+    // ========================================================================
+    // Commands::shared_args_mut tests
+    // ========================================================================
+
+    /// # Commands Shared Args Mut for All Variants
+    ///
+    /// Tests that Commands::shared_args_mut() works for all command variants.
+    ///
+    /// ## Test Scenario
+    /// - Creates each command variant
+    /// - Mutates shared args through the trait method
+    ///
+    /// ## Expected Outcome
+    /// - Mutations are visible through shared_args()
+    #[test]
+    fn test_commands_shared_args_mut_all_variants() {
+        let mut merge_cmd = Commands::Merge(MergeArgs {
+            shared: SharedArgs::default(),
+            ni: NonInteractiveArgs::default(),
+            work_item_state: None,
+            run_hooks: false,
+            subcommand: None,
+        });
+        merge_cmd.shared_args_mut().organization = Some("mutated".to_string());
+        assert_eq!(
+            merge_cmd.shared_args().organization,
+            Some("mutated".to_string())
+        );
+
+        let mut migrate_cmd = Commands::Migrate(MigrateArgs {
+            shared: SharedArgs::default(),
+            terminal_states: "Closed".to_string(),
+        });
+        migrate_cmd.shared_args_mut().project = Some("mutated".to_string());
+        assert_eq!(
+            migrate_cmd.shared_args().project,
+            Some("mutated".to_string())
+        );
+
+        let mut cleanup_cmd = Commands::Cleanup(CleanupArgs {
+            shared: SharedArgs::default(),
+            target: None,
+        });
+        cleanup_cmd.shared_args_mut().repository = Some("mutated".to_string());
+        assert_eq!(
+            cleanup_cmd.shared_args().repository,
+            Some("mutated".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Comprehensive integration: parse then resolve
+    // ========================================================================
+
+    /// # Cleanup with Shared Args Resolves Config
+    ///
+    /// Tests that a cleanup command with required fields resolves config.
+    ///
+    /// ## Test Scenario
+    /// - Creates Args with Cleanup command and required shared fields
+    /// - Resolves config
+    ///
+    /// ## Expected Outcome
+    /// - Config resolution succeeds for cleanup mode
+    #[test]
+    fn test_cleanup_resolves_config() {
+        let args = Args {
+            command: Some(Commands::Cleanup(CleanupArgs {
+                shared: SharedArgs {
+                    organization: Some("org".to_string()),
+                    project: Some("proj".to_string()),
+                    repository: Some("repo".to_string()),
+                    pat: Some("pat".to_string()),
+                    ..Default::default()
+                },
+                target: Some("main".to_string()),
+            })),
+            create_config: false,
+        };
+
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(!config.is_migration_mode());
+    }
+
+    /// # Full Parse-to-Config Pipeline for Merge
+    ///
+    /// Tests the full pipeline: parse_from -> resolve_config for merge command.
+    ///
+    /// ## Test Scenario
+    /// - Parses a complete merge command from CLI args
+    /// - Resolves the configuration
+    /// - Verifies CLI values are marked as ParsedProperty::Cli
+    ///
+    /// ## Expected Outcome
+    /// - Config resolves successfully
+    /// - CLI values have Cli source annotation
+    #[test]
+    fn test_full_parse_to_config_pipeline_merge() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-o",
+            "test-org",
+            "-p",
+            "test-proj",
+            "-r",
+            "test-repo",
+            "-t",
+            "test-pat",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release",
+            "--parallel-limit",
+            "150",
+        ]);
+
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert!(!config.is_migration_mode());
+        assert_eq!(
+            config.shared().organization,
+            ParsedProperty::Cli("test-org".to_string(), "test-org".to_string())
+        );
+        assert_eq!(
+            config.shared().dev_branch,
+            ParsedProperty::Cli("develop".to_string(), "develop".to_string())
+        );
+        assert_eq!(
+            config.shared().parallel_limit,
+            ParsedProperty::Cli(150, "150".to_string())
+        );
+    }
+
+    /// # Full Parse-to-Config Pipeline for Migrate
+    ///
+    /// Tests the full pipeline: parse_from -> resolve_config for migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses a migrate command from CLI args with custom terminal states
+    /// - Resolves the configuration
+    ///
+    /// ## Expected Outcome
+    /// - Config resolves to migration mode
+    /// - Terminal states are correctly split and annotated as Cli source
+    #[test]
+    fn test_full_parse_to_config_pipeline_migrate() {
+        let args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "--terminal-states",
+            "Done,Resolved,Closed",
+        ]);
+
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert!(config.is_migration_mode());
+
+        if let AppConfig::Migration { migration, .. } = config {
+            assert_eq!(
+                migration.terminal_states,
+                ParsedProperty::Cli(
+                    vec![
+                        "Done".to_string(),
+                        "Resolved".to_string(),
+                        "Closed".to_string()
+                    ],
+                    "Done,Resolved,Closed".to_string()
+                )
+            );
+        } else {
+            panic!("Expected migration config");
+        }
+    }
+
+    // ========================================================================
+    // Logging args on non-merge commands
+    // ========================================================================
+
+    /// # Logging Args on Migrate Command
+    ///
+    /// Tests that logging arguments are available on migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate with logging flags
+    ///
+    /// ## Expected Outcome
+    /// - Logging fields are populated on migrate's shared args
+    #[test]
+    fn test_logging_args_on_migrate() {
+        let args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "--log-level",
+            "debug",
+            "--log-file",
+            "/tmp/migrate.log",
+            "--log-format",
+            "json",
+        ]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(migrate_args.shared.log_level, Some("debug".to_string()));
+            assert_eq!(
+                migrate_args.shared.log_file,
+                Some("/tmp/migrate.log".to_string())
+            );
+            assert_eq!(migrate_args.shared.log_format, Some("json".to_string()));
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    /// # Logging Args on Cleanup Command
+    ///
+    /// Tests that logging arguments are available on cleanup command.
+    ///
+    /// ## Test Scenario
+    /// - Parses cleanup with --log-level
+    ///
+    /// ## Expected Outcome
+    /// - log_level is populated on cleanup's shared args
+    #[test]
+    fn test_logging_args_on_cleanup() {
+        let args = Args::parse_from(["mergers", "cleanup", "--log-level", "warn"]);
+
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert_eq!(cleanup_args.shared.log_level, Some("warn".to_string()));
+        } else {
+            panic!("Expected Cleanup command");
+        }
+    }
+
+    // ========================================================================
+    // Since parameter parsing tests
+    // ========================================================================
+
+    /// # Since Parameter Various Formats
+    ///
+    /// Tests that --since accepts various date format strings.
+    ///
+    /// ## Test Scenario
+    /// - Parses --since with different format strings (relative dates, ISO dates)
+    ///
+    /// ## Expected Outcome
+    /// - All formats are accepted as-is (validation happens later in config resolution)
+    #[test]
+    fn test_since_parameter_various_formats() {
+        for since_val in ["1mo", "2w", "3d", "6mo", "2025-01-15"] {
+            let args = Args::parse_from(["mergers", "merge", "--since", since_val]);
+
+            if let Some(Commands::Merge(merge_args)) = args.command {
+                assert_eq!(
+                    merge_args.shared.since,
+                    Some(since_val.to_string()),
+                    "Since value '{}' should be preserved",
+                    since_val
+                );
+            } else {
+                panic!("Expected Merge command for since '{}'", since_val);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Concurrent network/processing on different commands
+    // ========================================================================
+
+    /// # Performance Tuning Args on Migrate
+    ///
+    /// Tests that performance tuning arguments work on the migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate with --parallel-limit, --max-concurrent-network,
+    ///   --max-concurrent-processing
+    ///
+    /// ## Expected Outcome
+    /// - All numeric performance args are captured correctly
+    #[test]
+    fn test_performance_tuning_on_migrate() {
+        let args = Args::parse_from([
+            "mergers",
+            "migrate",
+            "--parallel-limit",
+            "400",
+            "--max-concurrent-network",
+            "150",
+            "--max-concurrent-processing",
+            "20",
+        ]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert_eq!(migrate_args.shared.parallel_limit, Some(400));
+            assert_eq!(migrate_args.shared.max_concurrent_network, Some(150));
+            assert_eq!(migrate_args.shared.max_concurrent_processing, Some(20));
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    // ========================================================================
+    // Tag prefix tests
+    // ========================================================================
+
+    /// # Custom Tag Prefix
+    ///
+    /// Tests that --tag-prefix overrides the default "merged-" value.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with a custom --tag-prefix
+    ///
+    /// ## Expected Outcome
+    /// - tag_prefix contains the custom value
+    #[test]
+    fn test_custom_tag_prefix() {
+        let args = Args::parse_from(["mergers", "merge", "--tag-prefix", "release-v"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.tag_prefix, Some("release-v".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Tag Prefix Default Value at Parse Time
+    ///
+    /// Tests that tag_prefix gets its default "merged-" from clap parse.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge without --tag-prefix
+    /// - Checks the default value was applied
+    ///
+    /// ## Expected Outcome
+    /// - tag_prefix is Some("merged-") (clap default_value applied at parse)
+    #[test]
+    fn test_tag_prefix_default_at_parse_time() {
+        let args = Args::parse_from(["mergers", "merge"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.tag_prefix, Some("merged-".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    // ========================================================================
+    // Skip confirmation on different commands
+    // ========================================================================
+
+    /// # Skip Confirmation on Migrate
+    ///
+    /// Tests that --skip-confirmation works on the migrate command.
+    ///
+    /// ## Test Scenario
+    /// - Parses migrate with --skip-confirmation
+    ///
+    /// ## Expected Outcome
+    /// - skip_confirmation is true on migrate's shared args
+    #[test]
+    fn test_skip_confirmation_on_migrate() {
+        let args = Args::parse_from(["mergers", "migrate", "--skip-confirmation"]);
+
+        if let Some(Commands::Migrate(migrate_args)) = args.command {
+            assert!(migrate_args.shared.skip_confirmation);
+        } else {
+            panic!("Expected Migrate command");
+        }
+    }
+
+    /// # Skip Confirmation on Cleanup
+    ///
+    /// Tests that --skip-confirmation works on the cleanup command.
+    ///
+    /// ## Test Scenario
+    /// - Parses cleanup with --skip-confirmation
+    ///
+    /// ## Expected Outcome
+    /// - skip_confirmation is true on cleanup's shared args
+    #[test]
+    fn test_skip_confirmation_on_cleanup() {
+        let args = Args::parse_from(["mergers", "cleanup", "--skip-confirmation"]);
+
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert!(cleanup_args.shared.skip_confirmation);
+        } else {
+            panic!("Expected Cleanup command");
+        }
+    }
+
+    // ========================================================================
+    // ReleaseNotes command parsing tests
+    // ========================================================================
+
+    /// # Release Notes Basic Command Parsing
+    ///
+    /// Tests that `mergers release-notes` is recognized as the ReleaseNotes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - Command is recognized as Commands::ReleaseNotes
+    #[test]
+    fn test_release_notes_command_basic_parsing() {
+        let args = Args::parse_from(["mergers", "release-notes"]);
+
+        assert!(matches!(args.command, Some(Commands::ReleaseNotes(_))));
+    }
+
+    /// # Release Notes Command Alias
+    ///
+    /// Tests that the 'rn' alias correctly parses as release-notes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn`
+    ///
+    /// ## Expected Outcome
+    /// - The alias 'rn' is recognized as ReleaseNotes command
+    #[test]
+    fn test_release_notes_command_alias_rn() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        assert!(matches!(args.command, Some(Commands::ReleaseNotes(_))));
+    }
+
+    /// # Release Notes with Shared Args
+    ///
+    /// Tests that shared arguments (-o, -p, -r, -t) work on release-notes.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all short shared flags
+    ///
+    /// ## Expected Outcome
+    /// - All shared arg fields are correctly populated
+    #[test]
+    fn test_release_notes_with_shared_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "-o",
+            "my-org",
+            "-p",
+            "my-proj",
+            "-r",
+            "my-repo",
+            "-t",
+            "my-token",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(rn_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(rn_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(rn_args.shared.pat, Some("my-token".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes with Positional Path
+    ///
+    /// Tests that a positional path argument is captured on release-notes.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes /path/to/repo`
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in shared.path
+    #[test]
+    fn test_release_notes_with_positional_path() {
+        let args = Args::parse_from(["mergers", "release-notes", "/path/to/repo"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes All Fields Explicit
+    ///
+    /// Tests that every release-notes flag is correctly parsed when explicitly set.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all possible flags
+    ///
+    /// ## Expected Outcome
+    /// - Every field has the explicit value provided
+    #[test]
+    fn test_release_notes_all_fields_explicit() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "--output",
+            "json",
+            "--copy",
+            "--group",
+            "--include-prs",
+            "--from",
+            "v1.0.0",
+            "--to",
+            "v2.0.0",
+            "--no-cache",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "--dev-branch",
+            "develop",
+            "--target-branch",
+            "release",
+            "--tag-prefix",
+            "released-",
+            "--since",
+            "2w",
+            "--skip-confirmation",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            // Release-notes specific
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Json);
+            assert!(rn_args.copy);
+            assert!(rn_args.group);
+            assert!(rn_args.include_prs);
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+            assert!(rn_args.no_cache);
+            // Shared args
+            assert_eq!(rn_args.shared.organization, Some("org".to_string()));
+            assert_eq!(rn_args.shared.project, Some("proj".to_string()));
+            assert_eq!(rn_args.shared.repository, Some("repo".to_string()));
+            assert_eq!(rn_args.shared.pat, Some("pat".to_string()));
+            assert_eq!(rn_args.shared.dev_branch, Some("develop".to_string()));
+            assert_eq!(rn_args.shared.target_branch, Some("release".to_string()));
+            assert_eq!(rn_args.shared.tag_prefix, Some("released-".to_string()));
+            assert_eq!(rn_args.shared.since, Some("2w".to_string()));
+            assert!(rn_args.shared.skip_confirmation);
+            assert_eq!(rn_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Default Values
+    ///
+    /// Tests that release-notes fields use correct defaults when no flags provided.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers release-notes` with no optional flags
+    ///
+    /// ## Expected Outcome
+    /// - output defaults to Markdown, booleans to false, from/to to None
+    #[test]
+    fn test_release_notes_default_values() {
+        let args = Args::parse_from(["mergers", "release-notes"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Markdown);
+            assert!(!rn_args.copy);
+            assert!(!rn_args.group);
+            assert!(!rn_args.include_prs);
+            assert_eq!(rn_args.from, None);
+            assert_eq!(rn_args.to, None);
+            assert!(!rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Boolean Flags Default False
+    ///
+    /// Tests that all boolean flags on release-notes default to false.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn` with no boolean flags
+    ///
+    /// ## Expected Outcome
+    /// - copy, group, include_prs, no_cache are all false
+    #[test]
+    fn test_release_notes_boolean_flags_default_false() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert!(!rn_args.copy);
+            assert!(!rn_args.group);
+            assert!(!rn_args.include_prs);
+            assert!(!rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Boolean Flags Activated
+    ///
+    /// Tests that all boolean flags are true when present.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with all boolean flags
+    ///
+    /// ## Expected Outcome
+    /// - copy, group, include_prs, no_cache are all true
+    #[test]
+    fn test_release_notes_boolean_flags_activated() {
+        let args = Args::parse_from([
+            "mergers",
+            "rn",
+            "--copy",
+            "--group",
+            "--include-prs",
+            "--no-cache",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert!(rn_args.copy);
+            assert!(rn_args.group);
+            assert!(rn_args.include_prs);
+            assert!(rn_args.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes From and To Version Range
+    ///
+    /// Tests that --from and --to capture version range.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --from v1.0.0 --to v2.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - Both from and to contain the specified versions
+    #[test]
+    fn test_release_notes_from_and_to_version_range() {
+        let args = Args::parse_from(["mergers", "rn", "--from", "v1.0.0", "--to", "v2.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes From Without To
+    ///
+    /// Tests that --from can be specified alone (--to defaults to HEAD at runtime).
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --from v1.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - from is Some, to is None
+    #[test]
+    fn test_release_notes_from_without_to() {
+        let args = Args::parse_from(["mergers", "rn", "--from", "v1.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0".to_string()));
+            assert_eq!(rn_args.to, None);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes To Without From
+    ///
+    /// Tests that --to can be specified alone.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers rn --to v2.0.0`
+    ///
+    /// ## Expected Outcome
+    /// - from is None, to is Some
+    #[test]
+    fn test_release_notes_to_without_from() {
+        let args = Args::parse_from(["mergers", "rn", "--to", "v2.0.0"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, None);
+            assert_eq!(rn_args.to, Some("v2.0.0".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Path Before and After Flags
+    ///
+    /// Tests that the positional path works regardless of position relative to flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses path before flags and after flags
+    ///
+    /// ## Expected Outcome
+    /// - Path is captured in both orderings
+    #[test]
+    fn test_release_notes_path_before_and_after_flags() {
+        // Path before flags
+        let args_before =
+            Args::parse_from(["mergers", "rn", "/my/repo", "--from", "v1.0", "--group"]);
+        // Path after flags
+        let args_after =
+            Args::parse_from(["mergers", "rn", "--from", "v1.0", "--group", "/my/repo"]);
+
+        if let Some(Commands::ReleaseNotes(rn_before)) = args_before.command {
+            assert_eq!(rn_before.shared.path, Some("/my/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command (before)");
+        }
+
+        if let Some(Commands::ReleaseNotes(rn_after)) = args_after.command {
+            assert_eq!(rn_after.shared.path, Some("/my/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command (after)");
+        }
+    }
+
+    // ========================================================================
+    // ReleaseNotesOutputFormat enum tests
+    // ========================================================================
+
+    /// # Release Notes Output Format All Values
+    ///
+    /// Tests that all ReleaseNotesOutputFormat values parse correctly.
+    ///
+    /// ## Test Scenario
+    /// - Parses --output with each valid value (markdown, json, plain)
+    ///
+    /// ## Expected Outcome
+    /// - Each string maps to the correct enum variant
+    #[test]
+    fn test_release_notes_output_format_all_values() {
+        for (input, expected) in [
+            ("markdown", ReleaseNotesOutputFormat::Markdown),
+            ("json", ReleaseNotesOutputFormat::Json),
+            ("plain", ReleaseNotesOutputFormat::Plain),
+        ] {
+            let args = Args::parse_from(["mergers", "rn", "--output", input]);
+
+            if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+                assert_eq!(
+                    rn_args.output, expected,
+                    "Output format '{}' should parse to {:?}",
+                    input, expected
+                );
+            } else {
+                panic!("Expected ReleaseNotes command for output '{}'", input);
+            }
+        }
+    }
+
+    /// # Release Notes Output Format Invalid Rejected
+    ///
+    /// Tests that invalid --output values are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse --output with invalid value "xml"
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_release_notes_output_format_invalid_rejected() {
+        let result = Args::try_parse_from(["mergers", "rn", "--output", "xml"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes Output Format Default Markdown
+    ///
+    /// Tests that output defaults to Markdown when --output is not specified.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes without --output
+    ///
+    /// ## Expected Outcome
+    /// - output field is ReleaseNotesOutputFormat::Markdown
+    #[test]
+    fn test_release_notes_output_format_default_markdown() {
+        let args = Args::parse_from(["mergers", "rn"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Markdown);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Output Format Display
+    ///
+    /// Tests the Display implementation for ReleaseNotesOutputFormat.
+    ///
+    /// ## Test Scenario
+    /// - Calls to_string() on each variant
+    ///
+    /// ## Expected Outcome
+    /// - Markdown -> "markdown", Json -> "json", Plain -> "plain"
+    #[test]
+    fn test_release_notes_output_format_display() {
+        assert_eq!(ReleaseNotesOutputFormat::Markdown.to_string(), "markdown");
+        assert_eq!(ReleaseNotesOutputFormat::Json.to_string(), "json");
+        assert_eq!(ReleaseNotesOutputFormat::Plain.to_string(), "plain");
+    }
+
+    // ========================================================================
+    // TaskGroup enum tests
+    // ========================================================================
+
+    /// # TaskGroup All Variants
+    ///
+    /// Tests that all TaskGroup variants can be constructed and matched.
+    ///
+    /// ## Test Scenario
+    /// - Creates each TaskGroup variant
+    /// - Pattern matches to verify correctness
+    ///
+    /// ## Expected Outcome
+    /// - All variants are constructible and matchable
+    #[test]
+    fn test_task_group_all_variants() {
+        let groups = [
+            TaskGroup::Feature,
+            TaskGroup::Fix,
+            TaskGroup::Refactor,
+            TaskGroup::Other,
+        ];
+
+        assert!(matches!(groups[0], TaskGroup::Feature));
+        assert!(matches!(groups[1], TaskGroup::Fix));
+        assert!(matches!(groups[2], TaskGroup::Refactor));
+        assert!(matches!(groups[3], TaskGroup::Other));
+    }
+
+    /// # TaskGroup Default Is Other
+    ///
+    /// Tests that TaskGroup::default() returns Other.
+    ///
+    /// ## Test Scenario
+    /// - Creates a default TaskGroup
+    ///
+    /// ## Expected Outcome
+    /// - Default variant is Other
+    #[test]
+    fn test_task_group_default_is_other() {
+        assert_eq!(TaskGroup::default(), TaskGroup::Other);
+    }
+
+    /// # TaskGroup Display
+    ///
+    /// Tests the Display implementation for all TaskGroup variants.
+    ///
+    /// ## Test Scenario
+    /// - Calls to_string() on each variant
+    ///
+    /// ## Expected Outcome
+    /// - Feature -> "Features", Fix -> "Fixes", Refactor -> "Refactors", Other -> "Other"
+    #[test]
+    fn test_task_group_display() {
+        assert_eq!(TaskGroup::Feature.to_string(), "Features");
+        assert_eq!(TaskGroup::Fix.to_string(), "Fixes");
+        assert_eq!(TaskGroup::Refactor.to_string(), "Refactors");
+        assert_eq!(TaskGroup::Other.to_string(), "Other");
+    }
+
+    // ========================================================================
+    // Commands::ReleaseNotes integration tests
+    // ========================================================================
+
+    /// # Commands is_release_notes True
+    ///
+    /// Tests that is_release_notes() returns true for ReleaseNotes command.
+    ///
+    /// ## Test Scenario
+    /// - Creates a Commands::ReleaseNotes variant
+    /// - Calls is_release_notes()
+    ///
+    /// ## Expected Outcome
+    /// - Returns true
+    #[test]
+    fn test_commands_is_release_notes_true() {
+        let cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs::default(),
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        assert!(cmd.is_release_notes());
+    }
+
+    /// # Commands is_release_notes False for Others
+    ///
+    /// Tests that is_release_notes() returns false for non-ReleaseNotes commands.
+    ///
+    /// ## Test Scenario
+    /// - Creates Merge, Migrate, and Cleanup commands
+    /// - Calls is_release_notes() on each
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for all three
+    #[test]
+    fn test_commands_is_release_notes_false_for_others() {
+        let merge_cmd = Commands::Merge(MergeArgs {
+            shared: SharedArgs::default(),
+            ni: NonInteractiveArgs::default(),
+            work_item_state: None,
+            run_hooks: false,
+            subcommand: None,
+        });
+        let migrate_cmd = Commands::Migrate(MigrateArgs {
+            shared: SharedArgs::default(),
+            terminal_states: "Closed".to_string(),
+        });
+        let cleanup_cmd = Commands::Cleanup(CleanupArgs {
+            shared: SharedArgs::default(),
+            target: None,
+        });
+
+        assert!(!merge_cmd.is_release_notes());
+        assert!(!migrate_cmd.is_release_notes());
+        assert!(!cleanup_cmd.is_release_notes());
+    }
+
+    /// # Commands Shared Args Extraction for ReleaseNotes
+    ///
+    /// Tests that Commands::shared_args() works for the ReleaseNotes variant.
+    ///
+    /// ## Test Scenario
+    /// - Creates a Commands::ReleaseNotes with organization set
+    /// - Extracts shared args via Commands::shared_args()
+    ///
+    /// ## Expected Outcome
+    /// - Organization field is correctly extracted
+    #[test]
+    fn test_commands_shared_args_extraction_release_notes() {
+        let rn_cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs {
+                organization: Some("rn-org".to_string()),
+                ..Default::default()
+            },
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        assert_eq!(
+            rn_cmd.shared_args().organization,
+            Some("rn-org".to_string())
+        );
+    }
+
+    /// # Commands Shared Args Mut for ReleaseNotes
+    ///
+    /// Tests that Commands::shared_args_mut() allows mutation on ReleaseNotes.
+    ///
+    /// ## Test Scenario
+    /// - Creates a mutable Commands::ReleaseNotes
+    /// - Mutates organization via shared_args_mut()
+    ///
+    /// ## Expected Outcome
+    /// - Mutation is visible via shared_args()
+    #[test]
+    fn test_commands_shared_args_mut_release_notes() {
+        let mut rn_cmd = Commands::ReleaseNotes(ReleaseNotesArgs {
+            shared: SharedArgs::default(),
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        });
+
+        rn_cmd.shared_args_mut().organization = Some("mutated-org".to_string());
+        assert_eq!(
+            rn_cmd.shared_args().organization,
+            Some("mutated-org".to_string())
+        );
+    }
+
+    /// # HasSharedArgs Trait on ReleaseNotesArgs
+    ///
+    /// Tests that the HasSharedArgs trait works correctly on ReleaseNotesArgs.
+    ///
+    /// ## Test Scenario
+    /// - Creates ReleaseNotesArgs with shared arguments
+    /// - Uses trait methods to access and mutate shared args
+    ///
+    /// ## Expected Outcome
+    /// - Trait methods return correct shared arguments
+    /// - Mutable access works correctly
+    #[test]
+    fn test_has_shared_args_trait_release_notes() {
+        let mut rn_args = ReleaseNotesArgs {
+            shared: SharedArgs {
+                organization: Some("rn-org".to_string()),
+                project: Some("rn-proj".to_string()),
+                ..Default::default()
+            },
+            output: ReleaseNotesOutputFormat::Markdown,
+            copy: false,
+            group: false,
+            include_prs: false,
+            from: None,
+            to: None,
+            no_cache: false,
+        };
+
+        assert_eq!(
+            rn_args.shared_args().organization,
+            Some("rn-org".to_string())
+        );
+        assert_eq!(rn_args.shared_args().project, Some("rn-proj".to_string()));
+
+        rn_args.shared_args_mut().organization = Some("modified-org".to_string());
+        assert_eq!(
+            rn_args.shared_args().organization,
+            Some("modified-org".to_string())
+        );
+    }
+
+    // ========================================================================
+    // Release-notes config resolution tests
+    // ========================================================================
+
+    /// # Release Notes Resolve Config Success
+    ///
+    /// Tests that release-notes args resolve config successfully.
+    ///
+    /// ## Test Scenario
+    /// - Uses create_sample_release_notes_args() with all required fields
+    /// - Calls resolve_config()
+    ///
+    /// ## Expected Outcome
+    /// - Config resolves successfully
+    /// - Result is AppConfig::ReleaseNotes variant
+    #[test]
+    fn test_release_notes_resolve_config_success() {
+        let args = create_sample_release_notes_args();
+        let result = args.resolve_config();
+        assert!(result.is_ok());
+
+        let config = result.unwrap();
+        assert!(matches!(config, AppConfig::ReleaseNotes { .. }));
+        assert!(!config.is_migration_mode());
+    }
+
+    /// # Release Notes App Config Fields
+    ///
+    /// Tests that shared config fields have the correct Cli source annotation.
+    ///
+    /// ## Test Scenario
+    /// - Resolves config from sample release-notes args
+    /// - Checks shared config field sources
+    ///
+    /// ## Expected Outcome
+    /// - Organization and project are marked as Cli source
+    #[test]
+    fn test_release_notes_app_config_fields() {
+        let args = create_sample_release_notes_args();
+        let config = args.resolve_config().unwrap();
+
+        assert_eq!(
+            config.shared().organization,
+            ParsedProperty::Cli("test-org".to_string(), "test-org".to_string())
+        );
+        assert_eq!(
+            config.shared().project,
+            ParsedProperty::Cli("test-project".to_string(), "test-project".to_string())
+        );
+    }
+
+    /// # Release Notes Mode Config Maps from Args
+    ///
+    /// Tests that ReleaseNotesModeConfig fields correctly map from CLI args.
+    ///
+    /// ## Test Scenario
+    /// - Resolves config from sample release-notes args
+    /// - Checks each ReleaseNotesModeConfig field
+    ///
+    /// ## Expected Outcome
+    /// - All mode config fields match the original args
+    #[test]
+    fn test_release_notes_mode_config_maps_from_args() {
+        let args = create_sample_release_notes_args();
+        let config = args.resolve_config().unwrap();
+
+        if let AppConfig::ReleaseNotes { release_notes, .. } = config {
+            assert_eq!(release_notes.from_version, Some("v1.0.0".to_string()));
+            assert_eq!(release_notes.to_version, Some("v2.0.0".to_string()));
+            assert_eq!(
+                release_notes.output_format,
+                ReleaseNotesOutputFormat::Markdown
+            );
+            assert!(!release_notes.grouped);
+            assert!(!release_notes.include_prs);
+            assert!(!release_notes.copy_to_clipboard);
+            assert!(!release_notes.no_cache);
+        } else {
+            panic!("Expected ReleaseNotes config");
+        }
+    }
+
+    // ========================================================================
+    // Release-notes error/edge case tests
+    // ========================================================================
+
+    /// # Release Notes Unknown Flag Rejected
+    ///
+    /// Tests that unrecognized flags on release-notes are rejected.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse release-notes with an unknown --foo flag
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails
+    #[test]
+    fn test_release_notes_unknown_flag_rejected() {
+        let result = Args::try_parse_from(["mergers", "release-notes", "--foo", "bar"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes From/To with Spaces Preserved
+    ///
+    /// Tests that --from and --to values with spaces are preserved as-is.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with space-containing version strings
+    ///
+    /// ## Expected Outcome
+    /// - Values are preserved exactly including spaces
+    #[test]
+    fn test_release_notes_from_to_with_spaces_preserved() {
+        let args = Args::parse_from([
+            "mergers",
+            "rn",
+            "--from",
+            "v1.0.0 beta",
+            "--to",
+            "v2.0.0 release candidate",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0.0 beta".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0.0 release candidate".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Release Notes Not Available via MergeArgsParser Fallback
+    ///
+    /// Tests that release-notes-specific flags fail on MergeArgsParser.
+    ///
+    /// ## Test Scenario
+    /// - Attempts to parse release-notes flags via MergeArgsParser
+    /// - MergeArgsParser only knows MergeArgs, not ReleaseNotesArgs
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because --from is not a valid MergeArgs flag
+    #[test]
+    fn test_release_notes_not_on_merge_args_parser_fallback() {
+        let result =
+            MergeArgsParser::try_parse_from(["mergers", "release-notes", "--from", "v1.0"]);
+        assert!(result.is_err());
+    }
+
+    /// # Release Notes with Logging Args
+    ///
+    /// Tests that logging arguments work on the release-notes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes with --log-level, --log-file, --log-format
+    ///
+    /// ## Expected Outcome
+    /// - All logging fields are populated on shared args
+    #[test]
+    fn test_release_notes_with_logging_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "release-notes",
+            "--log-level",
+            "debug",
+            "--log-file",
+            "/tmp/rn.log",
+            "--log-format",
+            "json",
+        ]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.shared.log_level, Some("debug".to_string()));
+            assert_eq!(rn_args.shared.log_file, Some("/tmp/rn.log".to_string()));
+            assert_eq!(rn_args.shared.log_format, Some("json".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    // ========================================================================
+    // Cross-cutting clap behavior tests
+    // ========================================================================
+
+    /// # Equals Syntax for Flags
+    ///
+    /// Tests that `--flag=value` syntax is accepted alongside `--flag value`.
+    ///
+    /// ## Test Scenario
+    /// - Parses flags using `=` separator instead of space
+    /// - Tests multiple flags with equals syntax
+    ///
+    /// ## Expected Outcome
+    /// - All values are correctly parsed
+    #[test]
+    fn test_equals_syntax_on_flags() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--organization=my-org",
+            "--project=my-proj",
+            "--repository=my-repo",
+            "--pat=my-token",
+            "--dev-branch=develop",
+            "--parallel-limit=200",
+            "--tag-prefix=rel-",
+            "--work-item-state=Done",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("my-token".to_string()));
+            assert_eq!(merge_args.shared.dev_branch, Some("develop".to_string()));
+            assert_eq!(merge_args.shared.parallel_limit, Some(200));
+            assert_eq!(merge_args.shared.tag_prefix, Some("rel-".to_string()));
+            assert_eq!(merge_args.work_item_state, Some("Done".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Equals Syntax on Release Notes
+    ///
+    /// Tests that `--flag=value` syntax works on release-notes command.
+    ///
+    /// ## Test Scenario
+    /// - Parses release-notes flags using equals syntax
+    ///
+    /// ## Expected Outcome
+    /// - Values parsed correctly
+    #[test]
+    fn test_equals_syntax_on_release_notes() {
+        let args = Args::parse_from(["mergers", "rn", "--from=v1.0", "--to=v2.0", "--output=json"]);
+
+        if let Some(Commands::ReleaseNotes(rn_args)) = args.command {
+            assert_eq!(rn_args.from, Some("v1.0".to_string()));
+            assert_eq!(rn_args.to, Some("v2.0".to_string()));
+            assert_eq!(rn_args.output, ReleaseNotesOutputFormat::Json);
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Equals Syntax on Merge Subcommands
+    ///
+    /// Tests that `--flag=value` works on merge subcommands.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge complete with equals syntax
+    ///
+    /// ## Expected Outcome
+    /// - Values parsed correctly
+    #[test]
+    fn test_equals_syntax_on_merge_subcommands() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "complete",
+            "--next-state=Done",
+            "--repo=/path/to/repo",
+            "--output=ndjson",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            if let Some(MergeSubcommand::Complete(complete_args)) = merge_args.subcommand {
+                assert_eq!(complete_args.next_state, "Done");
+                assert_eq!(complete_args.repo, Some("/path/to/repo".to_string()));
+                assert_eq!(complete_args.output, OutputFormat::Ndjson);
+            } else {
+                panic!("Expected Complete subcommand");
+            }
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Repeated Flags Are Rejected
+    ///
+    /// Tests that providing the same flag multiple times is rejected by clap.
+    ///
+    /// ## Test Scenario
+    /// - Provides --organization twice with different values
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because clap 4 does not allow repeated flags by default
+    #[test]
+    fn test_repeated_flags_rejected() {
+        let result =
+            Args::try_parse_from(["mergers", "merge", "-o", "first-org", "-o", "second-org"]);
+        assert!(result.is_err(), "Repeated flags should be rejected by clap");
+    }
+
+    /// # Double Dash Ends Options
+    ///
+    /// Tests that `--` stops flag parsing, treating subsequent args as positional.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge -- -o` where `-o` should be treated as positional path
+    ///
+    /// ## Expected Outcome
+    /// - `-o` is captured as the positional path, not as the organization flag
+    #[test]
+    fn test_double_dash_ends_options() {
+        let args = Args::parse_from(["mergers", "merge", "--", "-o"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            // After --, "-o" should be treated as a positional argument (path)
+            assert_eq!(
+                merge_args.shared.path,
+                Some("-o".to_string()),
+                "-o after -- should be treated as positional path, not flag"
+            );
+            assert_eq!(
+                merge_args.shared.organization, None,
+                "Organization should be None since -o was after --"
+            );
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Combined Short Boolean Flags
+    ///
+    /// Tests that boolean short flags can be combined as `-nq` instead of `-n -q`.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge -nq` with combined flags
+    ///
+    /// ## Expected Outcome
+    /// - Both non_interactive and quiet are true
+    #[test]
+    fn test_combined_short_boolean_flags() {
+        let args = Args::parse_from([
+            "mergers", "merge", "-nq", "-o", "org", "-p", "proj", "-r", "repo", "-t", "pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert!(
+                merge_args.ni.non_interactive,
+                "-nq should activate non_interactive"
+            );
+            assert!(merge_args.ni.quiet, "-nq should activate quiet");
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Unicode Values in Arguments
+    ///
+    /// Tests that unicode/UTF-8 values in arguments are preserved correctly.
+    ///
+    /// ## Test Scenario
+    /// - Parses arguments with non-ASCII characters (Chinese, emoji, accented)
+    ///
+    /// ## Expected Outcome
+    /// - All unicode values are preserved as-is
+    #[test]
+    fn test_unicode_values_in_arguments() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "-o",
+            "组织名",
+            "-p",
+            "项目",
+            "--work-item-state",
+            "Résolu",
+            "--tag-prefix",
+            "版本-",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("组织名".to_string()));
+            assert_eq!(merge_args.shared.project, Some("项目".to_string()));
+            assert_eq!(merge_args.work_item_state, Some("Résolu".to_string()));
+            assert_eq!(merge_args.shared.tag_prefix, Some("版本-".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Long Non-Interactive Flag
+    ///
+    /// Tests that --non-interactive works as the long form of -n.
+    ///
+    /// ## Test Scenario
+    /// - Parses merge with --non-interactive (long form)
+    ///
+    /// ## Expected Outcome
+    /// - non_interactive is true, same as with -n
+    #[test]
+    fn test_long_non_interactive_flag() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--non-interactive",
+            "--version",
+            "v1.0",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert!(merge_args.ni.non_interactive);
+            assert_eq!(merge_args.ni.version, Some("v1.0".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Local Repo Flag on Non-Merge Commands
+    ///
+    /// Tests that --local-repo works on migrate, cleanup, and release-notes.
+    ///
+    /// ## Test Scenario
+    /// - Parses each non-merge command with --local-repo
+    ///
+    /// ## Expected Outcome
+    /// - local_repo is captured in shared args for all commands
+    #[test]
+    fn test_local_repo_on_all_commands() {
+        // Migrate
+        let args = Args::parse_from(["mergers", "migrate", "--local-repo", "/path/to/repo"]);
+        if let Some(Commands::Migrate(m)) = args.command {
+            assert_eq!(m.shared.local_repo, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected Migrate command");
+        }
+
+        // Cleanup
+        let args = Args::parse_from(["mergers", "cleanup", "--local-repo", "/path/to/repo"]);
+        if let Some(Commands::Cleanup(c)) = args.command {
+            assert_eq!(c.shared.local_repo, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected Cleanup command");
+        }
+
+        // Release-notes
+        let args = Args::parse_from(["mergers", "release-notes", "--local-repo", "/path/to/repo"]);
+        if let Some(Commands::ReleaseNotes(rn)) = args.command {
+            assert_eq!(rn.shared.local_repo, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected ReleaseNotes command");
+        }
+    }
+
+    /// # Cleanup Alias with Target Combined
+    ///
+    /// Tests that the 'c' alias works together with --target and shared args.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers c --target main -o org`
+    ///
+    /// ## Expected Outcome
+    /// - Command is Cleanup, target and shared args both populated
+    #[test]
+    fn test_cleanup_alias_with_target_and_shared_args() {
+        let args = Args::parse_from([
+            "mergers",
+            "c",
+            "--target",
+            "main",
+            "-o",
+            "org",
+            "-p",
+            "proj",
+            "-r",
+            "repo",
+            "-t",
+            "pat",
+            "/path/to/repo",
+        ]);
+
+        if let Some(Commands::Cleanup(cleanup_args)) = args.command {
+            assert_eq!(cleanup_args.target, Some("main".to_string()));
+            assert_eq!(cleanup_args.shared.organization, Some("org".to_string()));
+            assert_eq!(cleanup_args.shared.path, Some("/path/to/repo".to_string()));
+        } else {
+            panic!("Expected Cleanup command");
+        }
+    }
+
+    /// # Equals Syntax Mixed with Space Syntax
+    ///
+    /// Tests that equals and space flag syntax can be mixed freely.
+    ///
+    /// ## Test Scenario
+    /// - Uses --org=val for some flags and --proj val for others
+    ///
+    /// ## Expected Outcome
+    /// - All values parsed correctly regardless of syntax
+    #[test]
+    fn test_equals_and_space_syntax_mixed() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "--organization=my-org",
+            "--project",
+            "my-proj",
+            "--repository=my-repo",
+            "--pat",
+            "my-token",
+        ]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("my-org".to_string()));
+            assert_eq!(merge_args.shared.project, Some("my-proj".to_string()));
+            assert_eq!(merge_args.shared.repository, Some("my-repo".to_string()));
+            assert_eq!(merge_args.shared.pat, Some("my-token".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Equals Syntax with Empty Value
+    ///
+    /// Tests that `--flag=` (equals with empty string) is handled.
+    ///
+    /// ## Test Scenario
+    /// - Parses --organization= (empty value after equals)
+    ///
+    /// ## Expected Outcome
+    /// - Value is Some("") — an empty string
+    #[test]
+    fn test_equals_syntax_with_empty_value() {
+        let args = Args::parse_from(["mergers", "merge", "--organization="]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.organization, Some("".to_string()));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Repeated Boolean Flags Are Rejected
+    ///
+    /// Tests that specifying a boolean flag multiple times is rejected.
+    ///
+    /// ## Test Scenario
+    /// - Provides --skip-confirmation twice
+    ///
+    /// ## Expected Outcome
+    /// - Parsing fails because clap 4 does not allow repeated flags by default
+    #[test]
+    fn test_repeated_boolean_flags_rejected() {
+        let result = Args::try_parse_from([
+            "mergers",
+            "merge",
+            "--skip-confirmation",
+            "--skip-confirmation",
+        ]);
+        assert!(
+            result.is_err(),
+            "Repeated boolean flags should be rejected by clap"
+        );
+    }
+
+    /// # Numeric Argument with Equals Syntax
+    ///
+    /// Tests that numeric arguments work with equals syntax.
+    ///
+    /// ## Test Scenario
+    /// - Parses --parallel-limit=999
+    ///
+    /// ## Expected Outcome
+    /// - Value is parsed as 999
+    #[test]
+    fn test_numeric_argument_equals_syntax() {
+        let args = Args::parse_from(["mergers", "merge", "--parallel-limit=999"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.shared.parallel_limit, Some(999));
+        } else {
+            panic!("Expected Merge command");
+        }
+    }
+
+    /// # Value Enum with Equals Syntax
+    ///
+    /// Tests that value_enum arguments work with equals syntax.
+    ///
+    /// ## Test Scenario
+    /// - Parses --output=json and --log-format=text using equals
+    ///
+    /// ## Expected Outcome
+    /// - Enums are correctly parsed
+    #[test]
+    fn test_value_enum_equals_syntax() {
+        let args = Args::parse_from(["mergers", "merge", "--output=json", "--log-format=text"]);
+
+        if let Some(Commands::Merge(merge_args)) = args.command {
+            assert_eq!(merge_args.ni.output, OutputFormat::Json);
+            assert_eq!(merge_args.shared.log_format, Some("text".to_string()));
+        } else {
+            panic!("Expected Merge command");
         }
     }
 }
