@@ -190,7 +190,9 @@ impl ModeState for CherryPickState {
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch(),
-            app.version().as_ref().unwrap()
+            app.version()
+                .as_ref()
+                .expect("version must be set before cherry-pick state")
         );
 
         details_text.push(Line::from(vec![
@@ -237,7 +239,9 @@ impl ModeState for CherryPickState {
             self.processing = false;
 
             let repo_path_opt = app.repo_path();
-            let repo_path = repo_path_opt.as_ref().unwrap();
+            let repo_path = repo_path_opt
+                .as_ref()
+                .expect("repo_path must be set before cherry-pick state");
 
             // Fetch commits if needed (for cloned repositories)
             if app.local_repo().is_none() {
@@ -284,7 +288,9 @@ pub fn process_next_commit(app: &mut MergeApp) -> StateChange<MergeState> {
     let current_index = app.current_cherry_pick_index();
     let repo_path = {
         let repo_path_ref = app.repo_path();
-        repo_path_ref.unwrap().to_path_buf()
+        repo_path_ref
+            .expect("repo_path must be set before cherry-pick processing")
+            .to_path_buf()
     };
 
     let item = &mut app.cherry_pick_items_mut()[current_index];

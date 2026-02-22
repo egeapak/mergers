@@ -204,7 +204,7 @@ impl<C: AppModeConfig> AppBase<C> {
             .iter()
             .filter(|pr| pr.selected)
             .collect::<Vec<_>>();
-        prs.sort_by_key(|pr| pr.pr.closed_date.as_ref().unwrap());
+        prs.sort_by_key(|pr| pr.pr.closed_date.clone());
         prs
     }
 

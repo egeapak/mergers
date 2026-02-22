@@ -265,7 +265,9 @@ impl ModeState for CompletionState {
         let branch_name = format!(
             "patch/{}-{}",
             app.target_branch(),
-            app.version.as_ref().unwrap()
+            app.version
+                .as_ref()
+                .expect("version must be set before completion state")
         );
         summary_text.push(Line::from(vec![
             Span::raw("Branch: "),

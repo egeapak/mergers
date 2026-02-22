@@ -76,17 +76,19 @@ impl CleanupDataLoadingState {
             return;
         }
 
-        let local_repo = app.local_repo();
-        if local_repo.is_none() {
-            self.error = Some(
-                "No local repository path configured. Use --local-repo or path argument."
-                    .to_string(),
-            );
-            self.loaded = true;
-            return;
-        }
+        let local_repo = match app.local_repo() {
+            Some(repo) => repo,
+            None => {
+                self.error = Some(
+                    "No local repository path configured. Use --local-repo or path argument."
+                        .to_string(),
+                );
+                self.loaded = true;
+                return;
+            }
+        };
 
-        let repo_path = local_repo.unwrap().to_string();
+        let repo_path = local_repo.to_string();
         // With typed configs, we can directly access the cleanup target
         let target_branch = app.cleanup_target().to_string();
 

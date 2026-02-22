@@ -92,7 +92,10 @@ impl PostCompletionState {
             return; // Already initialized
         }
 
-        let _version = app.version().as_ref().unwrap();
+        let _version = app
+            .version()
+            .as_ref()
+            .expect("version must be set before post-completion");
 
         // Add tasks for tagging successful PRs
         for item in app.cherry_pick_items() {
@@ -143,7 +146,9 @@ impl PostCompletionState {
 
         let result = match &task_item.task {
             PostCompletionTask::TaggingPR { pr_id, .. } => {
-                let version = app.version().unwrap();
+                let version = app
+                    .version()
+                    .expect("version must be set during post-completion tagging");
                 let tag_name = format!("{}{}", app.tag_prefix(), version);
                 app.client().add_label_to_pr(*pr_id, &tag_name).await
             }
@@ -296,7 +301,9 @@ impl ModeState for PostCompletionState {
                 Line::from(format!(
                     "✅ PRs tagged with '{}{}' ",
                     app.tag_prefix(),
-                    app.version().as_ref().unwrap()
+                    app.version()
+                        .as_ref()
+                        .expect("version must be set during post-completion")
                 )),
                 Line::from(format!(
                     "✅ Work items updated to '{}'",
@@ -346,7 +353,9 @@ impl ModeState for PostCompletionState {
                 Line::from(format!(
                     "🏷️  Tagging PRs with '{}{}' ",
                     app.tag_prefix(),
-                    app.version().as_ref().unwrap()
+                    app.version()
+                        .as_ref()
+                        .expect("version must be set during post-completion")
                 )),
                 Line::from(format!(
                     "📝 Updating work items to '{}'",

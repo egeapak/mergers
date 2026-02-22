@@ -310,7 +310,11 @@ impl ModeState for ConflictResolutionState {
         self.render_work_item_details(f, right_chunks[1], work_items);
 
         // Bottom: Instructions and Help
-        let repo_path = app.repo_path().as_ref().unwrap().display();
+        let repo_path = app
+            .repo_path()
+            .as_ref()
+            .expect("repo_path must be set during conflict resolution")
+            .display();
         let key_style = Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD);
@@ -339,7 +343,9 @@ impl ModeState for ConflictResolutionState {
     async fn process_key(&mut self, code: KeyCode, app: &mut MergeApp) -> StateChange<MergeState> {
         let repo_path = {
             let repo_path_ref = app.repo_path();
-            repo_path_ref.unwrap().to_path_buf()
+            repo_path_ref
+                .expect("repo_path must be set during conflict resolution")
+                .to_path_buf()
         };
 
         match code {
@@ -378,7 +384,10 @@ impl ModeState for ConflictResolutionState {
             KeyCode::Char('a') => {
                 // Abort entire process with cleanup - use AbortingState for immediate UI feedback
                 let version_opt = app.version();
-                let version = version_opt.as_ref().unwrap().to_string();
+                let version = version_opt
+                    .as_ref()
+                    .expect("version must be set during conflict resolution")
+                    .to_string();
                 let target_branch = app.target_branch().to_string();
                 let base_repo_path = app.state_file().and_then(|sf| sf.base_repo_path.clone());
                 StateChange::Change(MergeState::Aborting(AbortingState::new(

@@ -390,9 +390,15 @@ impl ModeState for CherryPickContinueState {
                     KeyCode::Char('a') => {
                         // Abort entire process with cleanup - use AbortingState for immediate UI feedback
                         let repo_path_opt = app.repo_path();
-                        let repo_path = repo_path_opt.as_ref().unwrap().to_path_buf();
+                        let repo_path = repo_path_opt
+                            .as_ref()
+                            .expect("repo_path must be set during cherry-pick")
+                            .to_path_buf();
                         let version_opt = app.version();
-                        let version = version_opt.as_ref().unwrap().to_string();
+                        let version = version_opt
+                            .as_ref()
+                            .expect("version must be set during cherry-pick")
+                            .to_string();
                         let target_branch = app.target_branch().to_string();
                         let base_repo_path =
                             app.state_file().and_then(|sf| sf.base_repo_path.clone());

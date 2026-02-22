@@ -142,7 +142,10 @@ pub fn format_json(entries: &[ReleaseNoteEntry], grouped: bool) -> Result<String
             TaskGroup::Refactor => "refactors",
             TaskGroup::Other => "other",
         };
-        groups.get_mut(key).unwrap().push(entry);
+        groups
+            .get_mut(key)
+            .expect("key is always one of the predefined group keys")
+            .push(entry);
     }
 
     serde_json::to_string_pretty(&groups).context("Failed to serialize grouped JSON")

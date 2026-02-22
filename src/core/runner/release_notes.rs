@@ -139,7 +139,9 @@ impl ReleaseNotesRunner {
                 Ok((to_tag, version.to_string()))
             }
             (None, None) => {
-                let tag = all_tags.last().unwrap();
+                let tag = all_tags
+                    .last()
+                    .context("No tags found in PRs to generate release notes from")?;
                 let version = tag.strip_prefix(prefix).unwrap_or(tag);
                 Ok((tag.clone(), version.to_string()))
             }

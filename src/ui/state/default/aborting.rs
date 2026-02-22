@@ -64,8 +64,13 @@ impl AbortingState {
             );
 
             // Store the result
-            *cleanup_result_clone.lock().unwrap() = Some(result.map_err(|e| e.to_string()));
-            *is_complete_clone.lock().unwrap() = true;
+            *cleanup_result_clone
+                .lock()
+                .expect("cleanup_result mutex must not be poisoned") =
+                Some(result.map_err(|e| e.to_string()));
+            *is_complete_clone
+                .lock()
+                .expect("is_complete mutex must not be poisoned") = true;
         });
 
         Self {

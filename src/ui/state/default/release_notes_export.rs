@@ -216,7 +216,10 @@ impl ReleaseNotesExportState {
             0 => {}
             1 => {
                 // Single match - complete directly, no cycling needed
-                self.input = matches.into_iter().next().unwrap();
+                self.input = matches
+                    .into_iter()
+                    .next()
+                    .expect("match arm guarantees exactly one element");
                 self.cursor_pos = self.input.len();
             }
             _ => {

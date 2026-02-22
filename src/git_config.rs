@@ -111,9 +111,21 @@ fn extract_config_from_captures(
     repo_idx: usize,
 ) -> AzureDevOpsConfig {
     AzureDevOpsConfig {
-        organization: captures.get(org_idx).unwrap().as_str().to_string(),
-        project: captures.get(proj_idx).unwrap().as_str().to_string(),
-        repository: captures.get(repo_idx).unwrap().as_str().to_string(),
+        organization: captures
+            .get(org_idx)
+            .expect("organization capture group guaranteed by regex match")
+            .as_str()
+            .to_string(),
+        project: captures
+            .get(proj_idx)
+            .expect("project capture group guaranteed by regex match")
+            .as_str()
+            .to_string(),
+        repository: captures
+            .get(repo_idx)
+            .expect("repository capture group guaranteed by regex match")
+            .as_str()
+            .to_string(),
     }
 }
 
@@ -216,32 +228,64 @@ pub fn parse_generic_git_url(url: &str) -> Result<Option<GenericGitConfig>> {
     // Try GitHub SSH format: git@github.com:owner/repo.git
     if let Some(captures) = get_github_ssh_regex().captures(url) {
         return Ok(Some(GenericGitConfig {
-            owner: captures.get(1).unwrap().as_str().to_string(),
-            repository: captures.get(2).unwrap().as_str().to_string(),
+            owner: captures
+                .get(1)
+                .expect("owner capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
+            repository: captures
+                .get(2)
+                .expect("repository capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
         }));
     }
 
     // Try GitHub HTTPS format: https://github.com/owner/repo.git
     if let Some(captures) = get_github_https_regex().captures(url) {
         return Ok(Some(GenericGitConfig {
-            owner: captures.get(1).unwrap().as_str().to_string(),
-            repository: captures.get(2).unwrap().as_str().to_string(),
+            owner: captures
+                .get(1)
+                .expect("owner capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
+            repository: captures
+                .get(2)
+                .expect("repository capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
         }));
     }
 
     // Try generic SSH format: git@host:owner/repo.git
     if let Some(captures) = get_generic_ssh_regex().captures(url) {
         return Ok(Some(GenericGitConfig {
-            owner: captures.get(1).unwrap().as_str().to_string(),
-            repository: captures.get(2).unwrap().as_str().to_string(),
+            owner: captures
+                .get(1)
+                .expect("owner capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
+            repository: captures
+                .get(2)
+                .expect("repository capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
         }));
     }
 
     // Try generic HTTPS format: https://host/owner/repo.git
     if let Some(captures) = get_generic_https_regex().captures(url) {
         return Ok(Some(GenericGitConfig {
-            owner: captures.get(1).unwrap().as_str().to_string(),
-            repository: captures.get(2).unwrap().as_str().to_string(),
+            owner: captures
+                .get(1)
+                .expect("owner capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
+            repository: captures
+                .get(2)
+                .expect("repository capture group guaranteed by regex match")
+                .as_str()
+                .to_string(),
         }));
     }
 

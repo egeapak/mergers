@@ -594,7 +594,9 @@ impl SetupRepoState {
         app: &mut MergeApp,
         error: git::RepositorySetupError,
     ) -> StateChange<MergeState> {
-        let version = app.version().unwrap();
+        let version = app
+            .version()
+            .expect("version must be set before setup error resolution");
 
         match error {
             git::RepositorySetupError::BranchExists(branch_name) => {
@@ -956,7 +958,10 @@ async fn execute_step_impl(
         WizardStep::InitializeState => {
             // Create state file via StateManager (shared via Arc<Mutex<>>)
             if let Some(repo_path_ref) = repo_path {
-                let mut manager = ctx.state_manager.lock().unwrap();
+                let mut manager = ctx
+                    .state_manager
+                    .lock()
+                    .expect("state manager mutex must not be poisoned");
                 manager
                     .create_state_file(
                         repo_path_ref.clone(),

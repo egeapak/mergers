@@ -889,8 +889,14 @@ impl DependencyAnalyzer {
         // Build graph from collected dependencies (sequential - needs mutable access)
         let mut warnings = Vec::new();
         for (from_id, to_id, category) in dependencies {
-            let from_pr = prs.iter().find(|p| p.id == from_id).unwrap();
-            let to_pr = prs.iter().find(|p| p.id == to_id).unwrap();
+            let from_pr = prs
+                .iter()
+                .find(|p| p.id == from_id)
+                .expect("from_id originated from prs collection");
+            let to_pr = prs
+                .iter()
+                .find(|p| p.id == to_id)
+                .expect("to_id originated from prs collection");
 
             let dependency = PRDependency {
                 from_pr_id: from_id,

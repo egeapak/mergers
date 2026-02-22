@@ -94,7 +94,7 @@ impl MigrationDataLoadingState {
     pub fn new(config: AppConfig) -> Self {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock must not be before UNIX epoch")
             .as_secs();
 
         Self {
@@ -152,7 +152,10 @@ impl MigrationDataLoadingState {
         if let Some(task) = &mut self.pr_fetch_task
             && task.is_finished()
         {
-            let task = self.pr_fetch_task.take().unwrap();
+            let task = self
+                .pr_fetch_task
+                .take()
+                .expect("task must exist when is_finished() is true");
             match task.await {
                 Ok(Ok(prs)) => {
                     self.total_prs = prs.len();
@@ -256,7 +259,10 @@ impl MigrationDataLoadingState {
         if let Some(task) = &mut self.repo_setup_task
             && task.is_finished()
         {
-            let task = self.repo_setup_task.take().unwrap();
+            let task = self
+                .repo_setup_task
+                .take()
+                .expect("task must exist when is_finished() is true");
             match task.await {
                 Ok(Ok(result)) => {
                     self.repo_path = Some(result.repo_path.clone());
@@ -308,7 +314,11 @@ impl MigrationDataLoadingState {
         let mut tasks = Vec::new();
 
         // Clone the network processor for use in tasks
-        let network_processor = self.network_processor.as_ref().unwrap().clone();
+        let network_processor = self
+            .network_processor
+            .as_ref()
+            .expect("network_processor must be initialized before work item fetching")
+            .clone();
 
         // Start network requests with throttling
         for index in 0..self.prs.len() {
@@ -437,10 +447,22 @@ impl MigrationDataLoadingState {
             self.analysis_progress = Some(progress_counter.clone());
 
             let prs_with_work_items = self.prs_with_work_items.clone();
-            let repo_path = self.repo_path.clone().unwrap();
-            let terminal_states = self.terminal_states.clone().unwrap();
-            let commit_history = self.commit_history.clone().unwrap();
-            let config = self.config.clone().unwrap();
+            let repo_path = self
+                .repo_path
+                .clone()
+                .expect("repo_path must be set before analysis");
+            let terminal_states = self
+                .terminal_states
+                .clone()
+                .expect("terminal_states must be set before analysis");
+            let commit_history = self
+                .commit_history
+                .clone()
+                .expect("commit_history must be set before analysis");
+            let config = self
+                .config
+                .clone()
+                .expect("config must be set before analysis");
             let migration_id = self.migration_id.clone();
 
             self.analysis_task = Some(tokio::spawn(async move {
@@ -510,7 +532,10 @@ impl MigrationDataLoadingState {
     async fn check_analysis_progress(&mut self, app: &mut MigrationApp) -> Result<bool> {
         if let Some(task) = &mut self.analysis_task {
             if task.is_finished() {
-                let task = self.analysis_task.take().unwrap();
+                let task = self
+                    .analysis_task
+                    .take()
+                    .expect("task must exist when is_finished() is true");
                 match task.await {
                     Ok(Ok(analysis)) => {
                         self.loading_stage = LoadingStage::Complete;

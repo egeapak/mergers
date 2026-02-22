@@ -349,7 +349,10 @@ impl MergeEngine {
         loop {
             // Get current index and item info
             let (current_index, commit_id, pr_id, pr_title) = {
-                let state_file = self.state_manager.state_file().unwrap();
+                let state_file = self
+                    .state_manager
+                    .state_file()
+                    .expect("state file must exist during cherry-pick loop");
                 if state_file.current_index >= total {
                     break;
                 }
@@ -375,7 +378,10 @@ impl MergeEngine {
 
             // Update state based on outcome
             {
-                let state_file = self.state_manager.state_file_mut().unwrap();
+                let state_file = self
+                    .state_manager
+                    .state_file_mut()
+                    .expect("state file must exist during cherry-pick loop");
                 let item = &mut state_file.cherry_pick_items[current_index];
 
                 match outcome {

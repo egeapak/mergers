@@ -231,7 +231,9 @@ pub fn shallow_clone_repo(
             target_branch,
             "--no-tags",
             ssh_url,
-            repo_path.to_str().unwrap(),
+            repo_path
+                .to_str()
+                .context("Repository path contains invalid UTF-8")?,
         ])
         .output()
         .context("Failed to clone repository")?;
@@ -297,7 +299,9 @@ pub fn create_worktree(
         .args([
             "worktree",
             "add",
-            worktree_path.to_str().unwrap(),
+            worktree_path.to_str().ok_or_else(|| {
+                RepositorySetupError::Other("Worktree path contains invalid UTF-8".to_string())
+            })?,
             &format!("origin/{}", target_branch),
         ])
         .output()
@@ -1057,12 +1061,18 @@ pub fn cleanup_migration_worktrees(base_repo_path: &Path) -> Result<()> {
     // Parse worktree list and find migration worktrees
     for line in worktree_list.lines() {
         if line.starts_with("worktree ") {
-            let path = line.strip_prefix("worktree ").unwrap();
+            let path = line
+                .strip_prefix("worktree ")
+                .expect("prefix verified by starts_with check");
             if let Some(dir_name) = std::path::Path::new(path).file_name()
                 && let Some(name) = dir_name.to_str()
                 && name.starts_with("next-migration-")
             {
-                migration_worktrees.push(name.strip_prefix("next-").unwrap().to_string());
+                migration_worktrees.push(
+                    name.strip_prefix("next-")
+                        .expect("prefix verified by starts_with check")
+                        .to_string(),
+                );
             }
         }
     }

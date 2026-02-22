@@ -1285,8 +1285,7 @@ impl Args {
                 let target = cleanup_args
                     .target
                     .map(|t| ParsedProperty::Cli(t.clone(), t))
-                    .or_else(|| Some(shared_config.target_branch.clone()))
-                    .unwrap();
+                    .unwrap_or_else(|| shared_config.target_branch.clone());
                 Ok(AppConfig::Cleanup {
                     shared: shared_config,
                     cleanup: CleanupModeConfig { target },

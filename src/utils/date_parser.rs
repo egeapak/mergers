@@ -71,7 +71,9 @@ fn parse_absolute_date(since_str: &str) -> Result<DateTime<Utc>> {
 
         // For date-only formats
         if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(since_str, format) {
-            let naive_dt = naive_date.and_hms_opt(0, 0, 0).unwrap();
+            let naive_dt = naive_date
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight (00:00:00) is always a valid time");
             return Ok(DateTime::from_naive_utc_and_offset(naive_dt, Utc));
         }
     }

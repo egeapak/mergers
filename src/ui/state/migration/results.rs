@@ -216,7 +216,9 @@ impl MigrationState {
 
     fn render_tabs(&self, f: &mut Frame, app: &MigrationApp, area: Rect) {
         let migration_analysis_opt = app.migration_analysis();
-        let analysis = migration_analysis_opt.as_ref().unwrap();
+        let analysis = migration_analysis_opt
+            .as_ref()
+            .expect("migration analysis must be set before results rendering");
 
         let tab_titles = vec![
             format!("✅ Eligible ({})", analysis.eligible_prs.len()),
@@ -238,7 +240,9 @@ impl MigrationState {
 
     fn render_pr_list(&mut self, f: &mut Frame, app: &MigrationApp, area: Rect) {
         let migration_analysis_opt = app.migration_analysis();
-        let analysis = migration_analysis_opt.as_ref().unwrap();
+        let analysis = migration_analysis_opt
+            .as_ref()
+            .expect("migration analysis must be set before results rendering");
 
         let (prs, title, color) = match self.current_tab {
             MigrationTab::Eligible => (
