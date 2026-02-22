@@ -764,6 +764,9 @@ impl LockGuard {
 
     /// Attempts to acquire a lock for the given repository.
     ///
+    /// Uses atomic file creation (`create_new`) to prevent TOCTOU race conditions
+    /// where two processes could both think they acquired the lock.
+    ///
     /// Returns `Ok(Some(guard))` if the lock was acquired,
     /// `Ok(None)` if another process holds the lock,
     /// or `Err` if an error occurred.
@@ -777,33 +780,58 @@ impl LockGuard {
             })?;
         }
 
-        // Check if lock file exists and if the process is still alive
-        if lock_path.exists() {
-            if let Ok(content) = fs::read_to_string(&lock_path)
-                && let Ok(pid) = content.trim().parse::<u32>()
-                && is_process_alive(pid)
-            {
-                // Another process holds the lock
-                return Ok(None);
-            }
-            // Lock is stale or unreadable, remove it
-            let _ = fs::remove_file(&lock_path);
-        }
-
-        // Try to create the lock file
         let pid = std::process::id();
-        fs::write(&lock_path, pid.to_string())
-            .with_context(|| format!("Failed to create lock file: {}", lock_path.display()))?;
 
-        // Verify we own the lock (handle race condition)
-        if let Ok(content) = fs::read_to_string(&lock_path)
-            && content.trim() == pid.to_string()
+        // Try atomic creation first - this is the fast path with no race condition
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
         {
-            return Ok(Some(LockGuard { path: lock_path }));
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = write!(file, "{}", pid);
+                return Ok(Some(LockGuard { path: lock_path }));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Lock file exists - fall through to check if it's stale
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to create lock file {}: {}",
+                    lock_path.display(),
+                    e
+                ));
+            }
         }
 
-        // Someone else won the race
-        Ok(None)
+        // Lock file exists - check if it's held by an active process
+        if let Ok(content) = fs::read_to_string(&lock_path)
+            && let Ok(existing_pid) = content.trim().parse::<u32>()
+            && is_process_alive(existing_pid)
+        {
+            // An active process (possibly ourselves) holds the lock
+            return Ok(None);
+        }
+
+        // Lock is stale - remove and retry atomically
+        let _ = fs::remove_file(&lock_path);
+
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = write!(file, "{}", pid);
+                Ok(Some(LockGuard { path: lock_path }))
+            }
+            Err(_) => {
+                // Another process won the race after stale lock removal
+                Ok(None)
+            }
+        }
     }
 
     /// Returns the path to the lock file.
@@ -1778,5 +1806,193 @@ mod tests {
             .is_worktree(false)
             .run_hooks(false)
             .build();
+    }
+
+    /// # Lock Atomic Creation Prevents TOCTOU
+    ///
+    /// Verifies that lock acquisition uses atomic file creation to prevent
+    /// time-of-check-time-of-use race conditions.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock successfully
+    /// - Verifies the lock file was created atomically (contains correct PID)
+    /// - Releases and re-acquires to verify atomic create_new path works
+    ///
+    /// ## Expected Outcome
+    /// - Lock file contains correct PID after acquisition
+    /// - Re-acquisition after release succeeds via atomic creation
+    #[test]
+    #[serial]
+    fn test_lock_atomic_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let lock_path = lock_path_for_repo(&repo_path).unwrap();
+        let expected_pid = std::process::id().to_string();
+
+        // First acquisition - should use create_new (fast path)
+        {
+            let guard = LockGuard::acquire(&repo_path).unwrap();
+            assert!(guard.is_some(), "First lock acquisition should succeed");
+            assert!(
+                lock_path.exists(),
+                "Lock file should exist after acquisition"
+            );
+
+            let content = fs::read_to_string(&lock_path).unwrap();
+            assert_eq!(
+                content.trim(),
+                expected_pid,
+                "Lock file should contain current PID"
+            );
+        }
+        // Guard dropped, lock file removed
+
+        assert!(
+            !lock_path.exists(),
+            "Lock file should be removed after guard drop"
+        );
+
+        // Second acquisition - should succeed since lock was released
+        {
+            let guard = LockGuard::acquire(&repo_path).unwrap();
+            assert!(
+                guard.is_some(),
+                "Re-acquisition after release should succeed"
+            );
+        }
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Lock Stale Lock Cleanup
+    ///
+    /// Verifies that stale lock files (from dead processes) are cleaned up
+    /// and the lock can be re-acquired.
+    ///
+    /// ## Test Scenario
+    /// - Manually creates a lock file with a non-existent PID
+    /// - Attempts to acquire the lock
+    ///
+    /// ## Expected Outcome
+    /// - Stale lock is detected and cleaned up
+    /// - New lock acquisition succeeds
+    #[test]
+    #[serial]
+    fn test_lock_stale_cleanup() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let lock_path = lock_path_for_repo(&repo_path).unwrap();
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+
+        // Write a lock file with a PID that definitely doesn't exist
+        // PID 999999999 is virtually guaranteed to not exist
+        fs::write(&lock_path, "999999999").unwrap();
+        assert!(lock_path.exists());
+
+        // Acquisition should succeed after detecting stale lock
+        let guard = LockGuard::acquire(&repo_path).unwrap();
+        assert!(
+            guard.is_some(),
+            "Should acquire lock after stale lock cleanup"
+        );
+
+        // Verify our PID is now in the lock file
+        let content = fs::read_to_string(&lock_path).unwrap();
+        assert_eq!(content.trim(), std::process::id().to_string());
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Lock Same Process Blocked
+    ///
+    /// Verifies that the same process cannot acquire the lock twice, preventing
+    /// issues with multiple LockGuard instances pointing to the same file.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock
+    /// - Attempts to acquire the same lock again from the same process
+    ///
+    /// ## Expected Outcome
+    /// - Second acquisition returns None (blocked by own PID)
+    #[test]
+    #[serial]
+    fn test_lock_same_process_blocked() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        // Acquire first lock
+        let _guard1 = LockGuard::acquire(&repo_path).unwrap();
+        assert!(_guard1.is_some());
+
+        // Second acquisition from same process should be blocked
+        // (atomic create_new fails, then PID check sees our own alive PID)
+        let guard2 = LockGuard::acquire(&repo_path).unwrap();
+        assert!(
+            guard2.is_none(),
+            "Same process should not acquire lock twice"
+        );
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// # Lock File With Corrupt Content
+    ///
+    /// Verifies that a lock file with corrupt content (non-numeric PID) is
+    /// treated as stale and cleaned up.
+    ///
+    /// ## Test Scenario
+    /// - Creates a lock file with non-numeric content
+    /// - Attempts to acquire the lock
+    ///
+    /// ## Expected Outcome
+    /// - Corrupt lock file is treated as stale
+    /// - Lock acquisition succeeds
+    #[test]
+    #[serial]
+    fn test_lock_corrupt_content_treated_as_stale() {
+        let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::set_var(STATE_DIR_ENV, temp_dir.path()) };
+
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir(&repo_path).unwrap();
+
+        let lock_path = lock_path_for_repo(&repo_path).unwrap();
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+
+        // Write corrupt lock file content
+        fs::write(&lock_path, "not-a-pid").unwrap();
+        assert!(lock_path.exists());
+
+        // Acquisition should succeed - corrupt content treated as stale
+        let guard = LockGuard::acquire(&repo_path).unwrap();
+        assert!(
+            guard.is_some(),
+            "Should acquire lock when existing lock has corrupt content"
+        );
+
+        // SAFETY: Tests are run single-threaded
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
     }
 }

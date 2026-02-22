@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tempfile::TempDir;
 
 use crate::api::AzureDevOpsClient;
 use crate::core::operations::cherry_pick::{
@@ -50,6 +51,8 @@ pub struct MergeEngine {
     since: Option<String>,
     /// State manager for state file operations.
     state_manager: StateManager,
+    /// Keeps the TempDir alive for shallow clones so the directory isn't deleted prematurely.
+    _clone_temp_dir: Option<TempDir>,
 }
 
 impl MergeEngine {
@@ -87,6 +90,7 @@ impl MergeEngine {
             max_concurrent_processing,
             since,
             state_manager: StateManager::new(),
+            _clone_temp_dir: None,
         }
     }
 
@@ -196,7 +200,7 @@ impl MergeEngine {
     /// Sets up the repository for cherry-picking.
     ///
     /// Returns the path to the worktree/clone.
-    pub fn setup_repository(&self) -> Result<(PathBuf, bool)> {
+    pub fn setup_repository(&mut self) -> Result<(PathBuf, bool)> {
         // Check if we have a local repo configured
         if let Some(ref local_repo) = self.local_repo {
             tracing::info!(
@@ -219,7 +223,7 @@ impl MergeEngine {
             tracing::info!("Cloning repository (no local repo configured)");
             // Clone the repository
             // shallow_clone_repo(ssh_url, target_branch, run_hooks) -> (PathBuf, TempDir)
-            let (clone_path, _temp_dir) = git::shallow_clone_repo(
+            let (clone_path, temp_dir) = git::shallow_clone_repo(
                 &format!(
                     "https://dev.azure.com/{}/{}/_git/{}",
                     self.organization, self.project, self.repository
@@ -229,9 +233,10 @@ impl MergeEngine {
             )
             .context("Failed to clone repository")?;
 
-            // Note: We intentionally drop _temp_dir which means the cloned repo
-            // will be deleted when this function returns. For persistent clones,
-            // use a worktree approach instead.
+            // Store TempDir in the engine so the cloned directory lives as long
+            // as the engine does. Previously, _temp_dir was dropped here which
+            // deleted the clone before cherry-picks could run.
+            self._clone_temp_dir = Some(temp_dir);
             Ok((clone_path, false))
         }
     }
@@ -1354,5 +1359,103 @@ mod tests {
         assert_eq!(prs_with_work_items.len(), 1);
         assert_eq!(prs_with_work_items[0].pr.id, 1);
         assert_eq!(prs_with_work_items[0].pr.title, "Ready PR");
+    }
+
+    /// # Engine Stores Clone TempDir
+    ///
+    /// Verifies that MergeEngine has a field to hold the TempDir from shallow
+    /// clones, preventing premature directory deletion.
+    ///
+    /// ## Test Scenario
+    /// - Creates a new MergeEngine
+    /// - Verifies _clone_temp_dir starts as None
+    /// - Sets it to a TempDir and verifies the directory persists
+    ///
+    /// ## Expected Outcome
+    /// - Engine can hold a TempDir that stays alive with the engine
+    /// - TempDir is cleaned up when engine is dropped
+    #[test]
+    fn test_engine_stores_clone_temp_dir() {
+        let mut engine = create_test_engine();
+
+        // Initially no temp dir
+        assert!(engine._clone_temp_dir.is_none());
+
+        // Create a TempDir and store it
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_path_buf();
+
+        // Write a marker file to verify the dir is alive
+        std::fs::write(temp_path.join("marker.txt"), "alive").unwrap();
+
+        engine._clone_temp_dir = Some(temp_dir);
+
+        // Directory should still exist while engine holds the TempDir
+        assert!(temp_path.join("marker.txt").exists());
+
+        // Drop engine
+        drop(engine);
+
+        // Directory should be cleaned up
+        assert!(!temp_path.join("marker.txt").exists());
+    }
+
+    /// # Engine Setup Repository Takes Mutable Reference
+    ///
+    /// Verifies that setup_repository takes &mut self so it can store
+    /// the TempDir from shallow clones.
+    ///
+    /// ## Test Scenario
+    /// - Creates a MergeEngine with local_repo set to a temp directory
+    /// - Calls setup_repository which requires &mut self
+    ///
+    /// ## Expected Outcome
+    /// - Compiles with &mut self (compile-time check)
+    /// - Returns the worktree path correctly
+    #[test]
+    fn test_setup_repository_is_mut() {
+        // This is a compile-time check: setup_repository takes &mut self
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        // Initialize a git repo in the temp dir for worktree creation
+        let repo_path = temp_dir.path();
+        let _ = std::process::Command::new("git")
+            .args(["init", "--initial-branch=main"])
+            .current_dir(repo_path)
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "init"])
+            .current_dir(repo_path)
+            .output();
+
+        let mut engine = MergeEngine::new(
+            create_mock_client(),
+            "test-org".to_string(),
+            "test-project".to_string(),
+            "test-repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            Some(repo_path.to_path_buf()),
+            100,
+            10,
+            None,
+        );
+
+        // This call requires &mut self - if it only took &self,
+        // the TempDir couldn't be stored and would be dropped immediately
+        let result = engine.setup_repository();
+        // May fail if git isn't configured, but we're testing the signature
+        if let Ok((path, is_worktree)) = result {
+            assert!(is_worktree);
+            // Clean up worktree
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "remove", "--force", path.to_str().unwrap()])
+                .current_dir(repo_path)
+                .output();
+        }
     }
 }

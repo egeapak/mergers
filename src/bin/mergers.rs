@@ -124,6 +124,15 @@ async fn run_interactive_tui(args: Args) -> Result<()> {
     // Pull requests will be fetched by the appropriate loading state
     let pr_with_work_items = Vec::new();
 
+    // Install panic hook to restore terminal on panic, preventing raw mode from
+    // being left active (which would leave the user's terminal unusable).
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        original_hook(panic_info);
+    }));
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
