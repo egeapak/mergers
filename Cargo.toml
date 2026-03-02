@@ -30,21 +30,21 @@ serde_json = "=1.0.149"
 ratatui = "=0.30.0"
 crossterm = "=0.29.0"
 chrono = { version = "=0.4.43", features = ["serde"] }
-anyhow = "=1.0.100"
-thiserror = "=2.0.17"
+anyhow = "=1.0.102"
+thiserror = "=2.0.18"
 secrecy = "=0.10.3"
-clap = { version = "=4.5.59", features = ["derive", "color"] }
+clap = { version = "=4.5.60", features = ["derive", "color"] }
 async-trait = "=0.1.89"
-futures = "=0.3.31"
+futures = "=0.3.32"
 tempfile = "=3.25.0"
 scraper = "=0.25.0"
 ego-tree = "=0.10.0"
-toml = "=0.9.11"
+toml = "=1.0.3"
 dirs = "=6.0.0"
-regex = "=1.12.2"
-url = "=2.5.4"
+regex = "=1.12.3"
+url = "=2.5.8"
 sha2 = "=0.10.9"
-libc = "=0.2.180"
+libc = "=0.2.182"
 time = "=0.3.47"
 rayon = "=1.11.0"
 roaring = "=0.11.3"
@@ -67,10 +67,10 @@ windows-sys = { version = "=0.61.2", features = [
 ] }
 
 [dev-dependencies]
-tokio-test = "=0.4.4"
+tokio-test = "=0.4.5"
 tempfile = "=3.25.0"
 insta = { version = "=1.46.3", features = ["yaml"] }
-serial_test = { version = "=3.2.0", features = ["file_locks"] }
+serial_test = { version = "=3.3.1", features = ["file_locks"] }
 criterion = { version = "=0.8.2", features = ["html_reports"] }
 
 [[bench]]
