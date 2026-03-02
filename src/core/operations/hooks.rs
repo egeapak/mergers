@@ -55,6 +55,10 @@ pub enum HookFailureMode {
 }
 
 /// Whether to run hooks synchronously or asynchronously.
+///
+/// Note: Async mode is currently a placeholder for future implementation.
+/// When set to Async, hooks return `HookOutcome::Async` immediately without
+/// executing. Full async execution support is planned for a future release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HookExecutionMode {
@@ -62,6 +66,7 @@ pub enum HookExecutionMode {
     #[default]
     Blocking,
     /// Fire and forget - start hook and continue immediately.
+    /// Note: Currently a placeholder; returns immediately without execution.
     Async,
 }
 
@@ -195,6 +200,7 @@ pub struct HookTriggerConfig {
     #[serde(default)]
     pub execution: HookExecutionMode,
     /// Timeout in seconds per command (default: 300).
+    /// Note: Reserved for future use. Currently commands run without timeout.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }

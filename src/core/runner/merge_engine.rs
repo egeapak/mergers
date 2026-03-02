@@ -1626,4 +1626,225 @@ mod tests {
         assert_eq!(prs_with_work_items[0].pr.id, 1);
         assert_eq!(prs_with_work_items[0].pr.title, "Ready PR");
     }
+
+    // ==========================================================================
+    // CherryPickProcessResult Tests
+    // ==========================================================================
+
+    /// # CherryPickProcessResult Complete Variant
+    ///
+    /// Verifies the Complete variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates Complete variant
+    /// - Checks is_hook_abort returns false
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns false for Complete
+    #[test]
+    fn test_cherry_pick_result_complete() {
+        let result = CherryPickProcessResult::Complete;
+        assert!(!result.is_hook_abort());
+    }
+
+    /// # CherryPickProcessResult Conflict Variant
+    ///
+    /// Verifies the Conflict variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates Conflict variant with ConflictInfo
+    /// - Checks is_hook_abort returns false
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns false for Conflict
+    #[test]
+    fn test_cherry_pick_result_conflict() {
+        let conflict = ConflictInfo::new(
+            123,
+            "Test PR".to_string(),
+            "abc123".to_string(),
+            vec!["file.rs".to_string()],
+            std::path::PathBuf::from("/test/repo"),
+        );
+        let result = CherryPickProcessResult::Conflict(conflict);
+        assert!(!result.is_hook_abort());
+    }
+
+    /// # CherryPickProcessResult HookAbort Variant
+    ///
+    /// Verifies the HookAbort variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates HookAbort variant with trigger, command, and error
+    /// - Checks is_hook_abort returns true
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns true for HookAbort
+    #[test]
+    fn test_cherry_pick_result_hook_abort() {
+        use crate::core::operations::HookTrigger;
+
+        let result = CherryPickProcessResult::HookAbort {
+            trigger: HookTrigger::PreCherryPick,
+            command: "failing-command".to_string(),
+            error: "Command failed with exit code 1".to_string(),
+        };
+        assert!(result.is_hook_abort());
+    }
+
+    // ==========================================================================
+    // Hook Context Tests
+    // ==========================================================================
+
+    /// # Create Hook Context
+    ///
+    /// Verifies that create_hook_context populates correct fields.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with specific version and branches
+    /// - Calls create_hook_context
+    ///
+    /// ## Expected Outcome
+    /// - Context has version, target_branch, dev_branch, and repo_path
+    #[test]
+    fn test_create_hook_context() {
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "develop".to_string(),
+            "release".to_string(),
+            "v2.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            None,
+            100,
+            10,
+            None,
+        );
+
+        let repo_path = std::path::PathBuf::from("/test/repo");
+        let context = engine.create_hook_context(&repo_path);
+        let env_vars = context.to_env_vars();
+
+        assert_eq!(env_vars.get("MERGERS_VERSION"), Some(&"v2.0.0".to_string()));
+        assert_eq!(
+            env_vars.get("MERGERS_TARGET_BRANCH"),
+            Some(&"release".to_string())
+        );
+        assert_eq!(
+            env_vars.get("MERGERS_DEV_BRANCH"),
+            Some(&"develop".to_string())
+        );
+        assert_eq!(
+            env_vars.get("MERGERS_REPO_PATH"),
+            Some(&"/test/repo".to_string())
+        );
+    }
+
+    /// # Hooks Config Accessor
+    ///
+    /// Verifies that hooks_config() returns the correct config.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with hooks config
+    /// - Calls hooks_config()
+    ///
+    /// ## Expected Outcome
+    /// - Returns the configured hooks config
+    #[test]
+    fn test_hooks_config_accessor() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let config = engine.hooks_config();
+        assert!(config.has_hooks_for(HookTrigger::PostMerge));
+        assert!(!config.has_hooks_for(HookTrigger::PreCherryPick));
+    }
+
+    /// # Run Hooks Simple With No Hooks
+    ///
+    /// Verifies that run_hooks_simple returns true when no hooks configured.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine without hooks
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns true (no hooks means success)
+    #[test]
+    fn test_run_hooks_simple_no_hooks() {
+        let engine = create_test_engine();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(result);
+    }
+
+    /// # Run Hooks Simple With Successful Hook
+    ///
+    /// Verifies that run_hooks_simple executes hooks and returns success.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with a simple echo hook
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns true for successful execution
+    #[test]
+    fn test_run_hooks_simple_success() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(result);
+    }
 }
