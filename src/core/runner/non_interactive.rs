@@ -12,8 +12,8 @@ use anyhow::{Context, Result, bail};
 use crate::api::AzureDevOpsClient;
 use crate::core::ExitCode;
 use crate::core::output::{
-    ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, ProgressEvent, ProgressSummary,
-    StatusInfo, SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
+    ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, PostMergeSummary, ProgressEvent,
+    ProgressSummary, StatusInfo, SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
 };
 use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 use crate::git;
@@ -161,7 +161,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
             Ok(None) => {
                 tracing::warn!("Another merge operation is in progress");
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(
                     ExitCode::Locked,
                     "Another merge operation is in progress",
@@ -246,6 +246,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             total_prs,
             version: self.config.version.clone(),
             target_branch: self.config.target_branch.clone(),
+            state_file_path: Some(state_path.clone()),
         });
 
         // Process cherry-picks using internal state manager
@@ -306,7 +307,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -320,7 +321,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -331,10 +335,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::AwaitingConflictResolution {
-            self.emit_error(&format!(
-                "Cannot continue: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot continue: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for continue");
         }
 
@@ -342,7 +346,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -353,8 +357,17 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Check if conflicts are resolved
         let conflicts_resolved = self.check_conflicts_resolved(&state.repo_path);
         if !conflicts_resolved {
-            self.emit_error("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.");
+            self.emit_error_with_code("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.", Some("conflicts_unresolved"));
             return RunResult::error(ExitCode::Conflict, "Conflicts not resolved");
+        }
+
+        // Finalize the cherry-pick commit
+        if let Err(e) = git::continue_cherry_pick(&state.repo_path) {
+            self.emit_error(&format!("Failed to finalize cherry-pick: {}", e));
+            return RunResult::error(
+                ExitCode::GeneralError,
+                format!("Failed to finalize cherry-pick: {}", e),
+            );
         }
 
         // Mark current item as success and advance
@@ -433,7 +446,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -447,7 +460,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -458,7 +474,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase (can't abort if already completed)
         if state.phase.is_terminal() {
-            self.emit_error(&format!("Cannot abort: merge is already '{}'", state.phase));
+            self.emit_error_with_code(
+                &format!("Cannot abort: merge is already '{}'", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for abort");
         }
 
@@ -466,7 +485,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -504,6 +523,144 @@ impl<W: Write> NonInteractiveRunner<W> {
         RunResult::success_with_message("Merge aborted")
     }
 
+    /// Skips the current conflicting PR and continues with remaining.
+    pub async fn skip(&mut self, repo_path: Option<&Path>) -> RunResult {
+        // Determine repo path
+        let repo_path = match self.find_repo_path(repo_path) {
+            Ok(path) => path,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Early lock check
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
+                return RunResult::error(ExitCode::NoStateFile, "No state file found");
+            }
+            Err(e) => {
+                self.emit_error(&format!("{}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Validate phase
+        if state.phase != MergePhase::AwaitingConflictResolution {
+            self.emit_error_with_code(
+                &format!("Cannot skip: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
+            return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for skip");
+        }
+
+        // Acquire lock
+        let _lock = match acquire_lock(&repo_path) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Abort the current cherry-pick
+        if let Err(e) = git::abort_cherry_pick(&state.repo_path) {
+            self.emit_error(&format!("Failed to abort cherry-pick: {}", e));
+            return RunResult::error(
+                ExitCode::GeneralError,
+                format!("Failed to abort cherry-pick: {}", e),
+            );
+        }
+
+        // Emit skip event for the current item
+        let current_item = &state.cherry_pick_items[state.current_index];
+        self.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: current_item.pr_id,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        // Mark current item as skipped and advance
+        state.cherry_pick_items[state.current_index].status = StateItemStatus::Skipped;
+        state.current_index += 1;
+        state.phase = MergePhase::CherryPicking;
+        state.conflicted_files = None;
+
+        // Create the engine
+        let client = match self.create_client() {
+            Ok(c) => c,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+        let mut engine = self.create_engine(client);
+
+        // Set the loaded state file on the engine's state manager
+        engine.state_manager_mut().set_state_file(state);
+
+        // Continue processing remaining cherry-picks
+        let conflict_info = engine.process_cherry_picks(|event| {
+            self.emit_event(event);
+        });
+
+        // Save state
+        let state_path = match engine.state_manager_mut().save() {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.emit_error("No state file to save");
+                return RunResult::error(ExitCode::GeneralError, "No state file to save");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        if let Some(conflict) = conflict_info {
+            if let Err(e) = self.output.write_conflict(&conflict) {
+                tracing::warn!("Warning: Failed to write conflict info: {}", e);
+            }
+            return RunResult::conflict(state_path);
+        }
+
+        // Get counts from state manager
+        let counts = engine
+            .state_manager()
+            .state_file()
+            .map(|state| engine.create_summary_counts(state))
+            .unwrap_or_else(|| SummaryCounts::new(0, 0, 0, 0));
+
+        self.emit_event(ProgressEvent::Complete {
+            successful: counts.successful,
+            failed: counts.failed,
+            skipped: counts.skipped,
+        });
+
+        if counts.failed > 0 || counts.skipped > 0 {
+            RunResult::partial_success("Completed with some skipped/failed items")
+                .with_state_file(state_path)
+        } else {
+            RunResult::success().with_state_file(state_path)
+        }
+    }
     /// Shows the current merge status.
     pub fn status(&mut self, repo_path: Option<&Path>) -> RunResult {
         // Determine repo path
@@ -633,7 +790,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -647,7 +804,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -658,10 +818,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::ReadyForCompletion {
-            self.emit_error(&format!(
-                "Cannot complete: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot complete: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for complete");
         }
 
@@ -669,7 +829,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -693,7 +853,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let engine = self.create_engine(client);
 
         // Run post-merge tasks
-        let (_success_count, failed_count) = match engine
+        let (success_count, failed_count) = match engine
             .run_post_merge(&state, next_state, |event| {
                 self.emit_event(event);
             })
@@ -726,7 +886,12 @@ impl<W: Write> NonInteractiveRunner<W> {
             target_branch: state.target_branch.clone(),
             counts,
             items: Some(items),
-            post_merge: None,
+            post_merge: Some(PostMergeSummary {
+                total_tasks: success_count + failed_count,
+                successful: success_count,
+                failed: failed_count,
+                tasks: None, // Individual task details not tracked at this level
+            }),
         };
 
         if let Err(e) = self.output.write_summary(&summary) {
@@ -777,14 +942,18 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
     }
 
-    fn emit_error(&mut self, message: &str) {
+    fn emit_error_with_code(&mut self, message: &str, code: Option<&str>) {
         let event = ProgressEvent::Error {
             message: message.to_string(),
-            code: None,
+            code: code.map(|c| c.to_string()),
         };
         if let Err(e) = self.output.write_event(&event) {
             tracing::warn!("Warning: Failed to write error: {}", e);
         }
+    }
+
+    fn emit_error(&mut self, message: &str) {
+        self.emit_error_with_code(message, None);
     }
 
     fn find_repo_path(&self, provided: Option<&Path>) -> Result<PathBuf> {
@@ -880,6 +1049,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         let output = String::from_utf8(buffer).unwrap();
@@ -971,6 +1141,7 @@ mod tests {
             total_prs: 3,
             version: "v2.0.0".to_string(),
             target_branch: "release".to_string(),
+            state_file_path: None,
         });
 
         // JSON format collects events and outputs at the end,
@@ -1000,6 +1171,7 @@ mod tests {
             total_prs: 2,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         runner.emit_event(ProgressEvent::CherryPickStart {
@@ -1323,5 +1495,53 @@ mod tests {
         assert_eq!(json["status"], "idle");
         assert_eq!(json["progress"]["total"], 0);
         assert_eq!(json["progress"]["completed"], 0);
+    }
+
+    /// # Error Emission With Code
+    ///
+    /// Verifies that errors with codes are emitted correctly in NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error with a code using NDJSON format
+    ///
+    /// ## Expected Outcome
+    /// - Error contains both message and code in JSON output
+    #[test]
+    fn test_error_emission_with_code() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Test locked error", Some("locked"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+        assert!(output.contains("Test locked error"));
+    }
+
+    /// # Error Emission Without Code
+    ///
+    /// Verifies that errors without codes omit the code field in NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error without a code using NDJSON format
+    ///
+    /// ## Expected Outcome
+    /// - Error contains message but no code field
+    #[test]
+    fn test_error_emission_without_code() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error("Generic error");
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Generic error"));
+        assert!(!output.contains("\"code\""));
     }
 }

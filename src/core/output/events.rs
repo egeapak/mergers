@@ -21,6 +21,9 @@ pub enum ProgressEvent {
         version: String,
         /// Target branch for the merge.
         target_branch: String,
+        /// Path to the state file for resume operations.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state_file_path: Option<PathBuf>,
     },
 
     /// Starting to cherry-pick a specific commit.
@@ -426,6 +429,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
@@ -677,6 +681,7 @@ mod tests {
                 total_prs: 1,
                 version: "v1".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             },
             ProgressEvent::CherryPickStart {
                 pr_id: 1,
@@ -730,5 +735,96 @@ mod tests {
                 json
             );
         }
+    }
+
+    /// # Start Event With State File Path
+    ///
+    /// Verifies Start event serializes state_file_path when present.
+    ///
+    /// ## Test Scenario
+    /// - Creates Start event with state_file_path
+    /// - Serializes to JSON
+    ///
+    /// ## Expected Outcome
+    /// - state_file_path is present in JSON when Some
+    /// - state_file_path is omitted when None
+    #[test]
+    fn test_start_event_state_file_path() {
+        let with_path = ProgressEvent::Start {
+            total_prs: 3,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state.json")),
+        };
+        let json = serde_json::to_string(&with_path).unwrap();
+        assert!(json.contains("\"state_file_path\":\"/tmp/state.json\""));
+
+        let without_path = ProgressEvent::Start {
+            total_prs: 3,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: None,
+        };
+        let json = serde_json::to_string(&without_path).unwrap();
+        assert!(!json.contains("state_file_path"));
+    }
+
+    /// # Error Event With Code
+    ///
+    /// Verifies Error event serializes code when present.
+    ///
+    /// ## Test Scenario
+    /// - Creates Error events with and without code
+    ///
+    /// ## Expected Outcome
+    /// - Code field present in JSON when Some
+    /// - Code field omitted when None
+    #[test]
+    fn test_error_event_with_code() {
+        let with_code = ProgressEvent::Error {
+            message: "test error".to_string(),
+            code: Some("locked".to_string()),
+        };
+        let json = serde_json::to_string(&with_code).unwrap();
+        assert!(json.contains("\"code\":\"locked\""));
+
+        let without_code = ProgressEvent::Error {
+            message: "test error".to_string(),
+            code: None,
+        };
+        let json = serde_json::to_string(&without_code).unwrap();
+        assert!(!json.contains("\"code\""));
+    }
+
+    /// # Post-Merge Summary Serialization
+    ///
+    /// Verifies PostMergeSummary serializes correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates PostMergeSummary with counts
+    /// - Creates SummaryInfo with post_merge populated
+    ///
+    /// ## Expected Outcome
+    /// - post_merge field present in JSON with correct counts
+    #[test]
+    fn test_post_merge_summary_serialization() {
+        let summary = SummaryInfo {
+            result: SummaryResult::Success,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            counts: SummaryCounts::new(3, 0, 0, 0),
+            items: None,
+            post_merge: Some(PostMergeSummary {
+                total_tasks: 6,
+                successful: 5,
+                failed: 1,
+                tasks: None,
+            }),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"post_merge\""));
+        assert!(json.contains("\"total_tasks\":6"));
+        assert!(json.contains("\"successful\":5"));
+        assert!(json.contains("\"failed\":1"));
     }
 }

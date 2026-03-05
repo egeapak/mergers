@@ -18,8 +18,8 @@ use mergers::{
     },
     logging::{init_logging, parse_early_log_config},
     models::{
-        MergeAbortArgs, MergeArgs, MergeCompleteArgs, MergeContinueArgs, MergeStatusArgs,
-        MergeSubcommand, ReleaseNotesArgs,
+        MergeAbortArgs, MergeArgs, MergeCompleteArgs, MergeContinueArgs, MergeSkipArgs,
+        MergeStatusArgs, MergeSubcommand, ReleaseNotesArgs,
     },
     parsed_property::ParsedProperty,
     ui::{App, run_app},
@@ -62,6 +62,10 @@ async fn main() -> Result<()> {
                 }
                 Some(MergeSubcommand::Complete(complete_args)) => {
                     let result = run_complete(complete_args).await;
+                    handle_run_result(result);
+                }
+                Some(MergeSubcommand::Skip(skip_args)) => {
+                    let result = run_skip(skip_args).await;
                     handle_run_result(result);
                 }
                 // No subcommand with -n flag → non-interactive merge mode
@@ -200,7 +204,7 @@ async fn run_continue(args: &MergeContinueArgs) -> RunResult {
 
 /// Aborts a merge operation.
 fn run_abort(args: &MergeAbortArgs) -> RunResult {
-    let config = match build_minimal_runner_config(args.output, false) {
+    let config = match build_minimal_runner_config(args.output, args.quiet) {
         Ok(c) => c,
         Err(e) => {
             return RunResult::error(
@@ -249,6 +253,23 @@ async fn run_complete(args: &MergeCompleteArgs) -> RunResult {
     runner
         .complete(repo_path.as_deref(), &args.next_state)
         .await
+}
+
+/// Skips the current conflicting PR and continues.
+async fn run_skip(args: &MergeSkipArgs) -> RunResult {
+    let config = match build_minimal_runner_config(args.output, args.quiet) {
+        Ok(c) => c,
+        Err(e) => {
+            return RunResult::error(
+                mergers::core::ExitCode::GeneralError,
+                format!("Configuration error: {}", e),
+            );
+        }
+    };
+
+    let repo_path = args.repo.as_ref().map(PathBuf::from);
+    let mut runner = NonInteractiveRunner::new(config);
+    runner.skip(repo_path.as_deref()).await
 }
 
 /// Builds MergeRunnerConfig from MergeArgs with full config resolution.

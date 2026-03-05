@@ -296,6 +296,7 @@ impl<W: Write> OutputWriter<W> {
                 total_prs,
                 version,
                 target_branch,
+                ..
             } => {
                 self.writeln("")?;
                 self.writeln(&format!(
@@ -468,6 +469,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         };
 
         writer.write_event(&event).unwrap();
@@ -499,6 +501,7 @@ mod tests {
                 total_prs: 3,
                 version: "v1.0.0".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             })
             .unwrap();
 
@@ -540,6 +543,7 @@ mod tests {
                 total_prs: 2,
                 version: "v1.0.0".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             })
             .unwrap();
 
