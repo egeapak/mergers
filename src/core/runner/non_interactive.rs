@@ -1119,18 +1119,20 @@ mod tests {
         assert!(output.contains("error") || output.contains("Error"));
     }
 
-    /// # JSON Output Format
+    /// # JSON Output Format Buffers Events
     ///
-    /// Verifies JSON output format produces valid JSON.
+    /// Verifies that JSON output format buffers events instead of writing
+    /// them immediately, since JSON mode collects all events and outputs
+    /// a single JSON object at the end via `write_summary`.
     ///
     /// ## Test Scenario
-    /// - Creates runner with JSON format
-    /// - Emits a progress event
+    /// - Creates runner with JSON output format
+    /// - Emits a Start event
     ///
     /// ## Expected Outcome
-    /// - Output is valid JSON
+    /// - Buffer remains empty after emitting events (events are buffered internally)
     #[test]
-    fn test_json_output_format() {
+    fn test_json_output_format_buffers_events() {
         let mut config = create_test_config();
         config.output_format = OutputFormat::Json;
 
@@ -1144,9 +1146,12 @@ mod tests {
             state_file_path: None,
         });
 
-        // JSON format collects events and outputs at the end,
-        // so we just verify no error occurred
-        assert!(buffer.is_empty() || !buffer.is_empty());
+        // JSON format collects events internally and only writes output
+        // when write_summary is called, so the buffer must be empty here.
+        assert!(
+            buffer.is_empty(),
+            "JSON format should buffer events, not write them immediately"
+        );
     }
 
     /// # NDJSON Output Format
@@ -1306,13 +1311,14 @@ mod tests {
 
     /// # Complete Event With Counts
     ///
-    /// Verifies the complete event shows correct counts.
+    /// Verifies the complete event shows all three counts (successful, failed,
+    /// skipped) in the text output so operators can see the merge outcome.
     ///
     /// ## Test Scenario
-    /// - Emits a complete event with mixed results
+    /// - Emits a Complete event with 5 successful, 2 failed, 1 skipped
     ///
     /// ## Expected Outcome
-    /// - Counts are shown in output
+    /// - Output contains all three numeric counts with their labels
     #[test]
     fn test_complete_event_with_counts() {
         let config = create_test_config();
@@ -1326,22 +1332,30 @@ mod tests {
         });
 
         let output = String::from_utf8(buffer).unwrap();
-        // Should show the counts in some form
         assert!(
-            output.contains("5") || output.contains("successful"),
-            "Should show successful count"
+            output.contains("5 successful"),
+            "Should show successful count: got '{output}'"
+        );
+        assert!(
+            output.contains("2 failed"),
+            "Should show failed count: got '{output}'"
+        );
+        assert!(
+            output.contains("1 skipped"),
+            "Should show skipped count: got '{output}'"
         );
     }
 
     /// # Conflict Event Details
     ///
-    /// Verifies conflict events include file details.
+    /// Verifies conflict events include the PR ID, conflicted file names,
+    /// and repository path in the text output.
     ///
     /// ## Test Scenario
-    /// - Emits a conflict event with file list
+    /// - Emits a cherry-pick conflict event with PR #42 and two conflicted files
     ///
     /// ## Expected Outcome
-    /// - Conflict files are listed
+    /// - Output contains the PR ID, each conflicted file name, and the repo path
     #[test]
     fn test_conflict_event_details() {
         let config = create_test_config();
@@ -1355,9 +1369,18 @@ mod tests {
         });
 
         let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("42"), "Should include the PR ID");
         assert!(
-            output.contains("conflict") || output.contains("Conflict"),
-            "Should mention conflict"
+            output.contains("src/main.rs"),
+            "Should list the first conflicted file"
+        );
+        assert!(
+            output.contains("Cargo.toml"),
+            "Should list the second conflicted file"
+        );
+        assert!(
+            output.contains("/test/repo"),
+            "Should include the repository path"
         );
     }
 
