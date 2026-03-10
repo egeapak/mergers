@@ -40,7 +40,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -200,8 +199,9 @@ pub struct HookTriggerConfig {
     #[serde(default)]
     pub execution: HookExecutionMode,
     /// Timeout in seconds per command (default: 300).
-    /// If a command exceeds this timeout, it will be killed and treated as a failure.
+    /// If a command exceeds this timeout, the process will be killed and treated as a failure.
     /// Set to 0 to disable timeout (commands can run indefinitely).
+    /// For fire-and-forget execution, use `execution = "async"` instead.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
@@ -895,17 +895,16 @@ fn run_shell_command(
         };
     }
 
-    // With timeout: spawn command and wait with timeout using a thread
-    let child_result = Command::new(shell)
+    // With timeout: spawn command and poll for completion
+    let mut child = match Command::new(shell)
         .arg(shell_arg)
         .arg(command)
         .current_dir(working_dir)
         .envs(env_vars)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn();
-
-    let child = match child_result {
+        .spawn()
+    {
         Ok(child) => child,
         Err(e) => {
             return HookCommandResult {
@@ -918,54 +917,65 @@ fn run_shell_command(
         }
     };
 
-    // Use a channel to receive the result with timeout
-    let (tx, rx) = mpsc::channel();
-
-    // Wait for the child process in a separate thread
-    thread::spawn(move || {
-        let result = child.wait_with_output();
-        let _ = tx.send(result);
-    });
-
-    // Wait for result with timeout
+    // Poll for completion with timeout
     let timeout = Duration::from_secs(timeout_secs);
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) => {
-            let exit_code = output.status.code();
-            HookCommandResult {
-                command: command.to_string(),
-                success: output.status.success(),
-                exit_code,
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    let poll_interval = Duration::from_millis(100);
+    let start = std::time::Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Process completed - read output
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+
+                if let Some(mut stdout_handle) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = stdout_handle.read_to_string(&mut stdout);
+                }
+                if let Some(mut stderr_handle) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = stderr_handle.read_to_string(&mut stderr);
+                }
+
+                return HookCommandResult {
+                    command: command.to_string(),
+                    success: status.success(),
+                    exit_code: status.code(),
+                    stdout,
+                    stderr,
+                };
+            }
+            Ok(None) => {
+                // Process still running - check timeout
+                if start.elapsed() >= timeout {
+                    // Timeout reached - kill the process
+                    let _ = child.kill();
+                    let _ = child.wait(); // Reap the zombie process
+                    return HookCommandResult {
+                        command: command.to_string(),
+                        success: false,
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: format!(
+                            "Command timed out after {} seconds and was killed",
+                            timeout_secs
+                        ),
+                    };
+                }
+                // Wait before polling again
+                thread::sleep(poll_interval);
+            }
+            Err(e) => {
+                return HookCommandResult {
+                    command: command.to_string(),
+                    success: false,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!("Failed to check command status: {}", e),
+                };
             }
         }
-        Ok(Err(e)) => HookCommandResult {
-            command: command.to_string(),
-            success: false,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: format!("Failed to wait for command: {}", e),
-        },
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            // Note: The child process may continue running in the background
-            // after timeout. Killing the process would require storing the Child
-            // handle differently. For now, we report timeout and let it run.
-            HookCommandResult {
-                command: command.to_string(),
-                success: false,
-                exit_code: None,
-                stdout: String::new(),
-                stderr: format!("Command timed out after {} seconds", timeout_secs),
-            }
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => HookCommandResult {
-            command: command.to_string(),
-            success: false,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: "Command execution thread terminated unexpectedly".to_string(),
-        },
     }
 }
 
@@ -1772,7 +1782,7 @@ on_failure = "continue"
         assert!(
             result.command_results[0]
                 .stderr
-                .contains("timed out after 1 seconds")
+                .contains("timed out after 1 seconds and was killed")
         );
 
         // Should complete in ~1 second, not 10 seconds
