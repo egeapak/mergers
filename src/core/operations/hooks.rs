@@ -201,7 +201,9 @@ pub struct HookTriggerConfig {
     /// Timeout in seconds per command (default: 300).
     /// If a command exceeds this timeout, the process will be killed and treated as a failure.
     /// Set to 0 to disable timeout (commands can run indefinitely).
-    /// For fire-and-forget execution, use `execution = "async"` instead.
+    ///
+    /// Note: This setting is ignored when `execution = "async"` since async mode
+    /// is fire-and-forget and does not monitor command completion.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
@@ -1958,5 +1960,43 @@ timeout_secs = 120
         );
         assert_eq!(config.post_checkout.execution, HookExecutionMode::Blocking);
         assert_eq!(config.post_checkout.timeout_secs, 120);
+    }
+
+    /// # Async Mode Ignores Timeout
+    ///
+    /// Verifies that timeout_secs is ignored when execution is async.
+    ///
+    /// ## Test Scenario
+    /// - Creates config with async execution and short timeout
+    /// - Runs a long-running command
+    ///
+    /// ## Expected Outcome
+    /// - Returns Async immediately (timeout not applied)
+    #[test]
+    fn test_async_mode_ignores_timeout() {
+        let config = HooksConfig {
+            post_merge: HookTriggerConfig {
+                commands: vec!["sleep 10".to_string()],
+                on_failure: None,
+                execution: HookExecutionMode::Async,
+                timeout_secs: 1, // Would timeout if blocking, but ignored in async
+            },
+            ..Default::default()
+        };
+        let executor = HookExecutor::new(config);
+        let temp_dir = TempDir::new().unwrap();
+        let context = HookContext::new();
+
+        let start = std::time::Instant::now();
+        let outcome = executor.run_hooks_with_outcome_simple(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+        );
+        let elapsed = start.elapsed();
+
+        // Should return Async immediately, not wait for timeout
+        assert!(matches!(outcome, HookOutcome::Async));
+        assert!(elapsed.as_millis() < 500);
     }
 }
