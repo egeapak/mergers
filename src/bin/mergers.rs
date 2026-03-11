@@ -382,6 +382,7 @@ fn build_runner_config_from_merge_args(args: &MergeArgs) -> Result<MergeRunnerCo
         run_hooks,
         output_format: args.ni.output,
         quiet: args.ni.quiet,
+        hooks_config: merged.hooks,
         max_concurrent_network,
         max_concurrent_processing,
         since,
@@ -453,6 +454,7 @@ fn build_minimal_runner_config(output: OutputFormat, quiet: bool) -> Result<Merg
         run_hooks,
         output_format: output,
         quiet,
+        hooks_config: merged.hooks,
         max_concurrent_network,
         max_concurrent_processing,
         since: None, // Not needed for continue/abort/status/complete

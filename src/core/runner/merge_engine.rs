@@ -12,6 +12,9 @@ use crate::api::AzureDevOpsClient;
 use crate::core::operations::cherry_pick::{
     CherryPickConfig, CherryPickOperation, CherryPickOutcome,
 };
+use crate::core::operations::hooks::{
+    HookContext, HookExecutor, HookFailureMode, HookOutcome, HookProgress, HookTrigger, HooksConfig,
+};
 use crate::core::operations::post_merge::{
     CompletedPRInfo, PostMergeConfig, PostMergeOperation, WorkItemInfo,
 };
@@ -25,6 +28,41 @@ use crate::core::state::{
 };
 use crate::git;
 use crate::models::PullRequestWithWorkItems;
+
+/// Result of processing cherry-picks.
+#[derive(Debug)]
+pub enum CherryPickProcessResult {
+    /// All cherry-picks completed successfully (may have skips/failures but no conflicts).
+    Complete,
+    /// A conflict was encountered that requires resolution.
+    Conflict(ConflictInfo),
+    /// A hook failed and was configured to abort the workflow.
+    HookAbort {
+        /// The hook trigger that failed.
+        trigger: HookTrigger,
+        /// The command that failed.
+        command: String,
+        /// Error message.
+        error: String,
+    },
+}
+
+impl CherryPickProcessResult {
+    /// Returns true if processing should stop.
+    pub fn should_stop(&self) -> bool {
+        !matches!(self, CherryPickProcessResult::Complete)
+    }
+
+    /// Returns true if this is a hook abort.
+    pub fn is_hook_abort(&self) -> bool {
+        matches!(self, CherryPickProcessResult::HookAbort { .. })
+    }
+
+    /// Returns true if this is a conflict.
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, CherryPickProcessResult::Conflict(_))
+    }
+}
 
 /// Core merge engine that orchestrates the merge workflow.
 ///
@@ -42,6 +80,7 @@ pub struct MergeEngine {
     work_item_state: String,
     run_hooks: bool,
     local_repo: Option<PathBuf>,
+    hooks_config: HooksConfig,
     /// Maximum concurrent network operations.
     max_concurrent_network: usize,
     /// Maximum concurrent processing operations.
@@ -67,6 +106,7 @@ impl MergeEngine {
         work_item_state: String,
         run_hooks: bool,
         local_repo: Option<PathBuf>,
+        hooks_config: Option<HooksConfig>,
         max_concurrent_network: usize,
         max_concurrent_processing: usize,
         since: Option<String>,
@@ -83,10 +123,169 @@ impl MergeEngine {
             work_item_state,
             run_hooks,
             local_repo,
+            hooks_config: hooks_config.unwrap_or_default(),
             max_concurrent_network,
             max_concurrent_processing,
             since,
             state_manager: StateManager::new(),
+        }
+    }
+
+    /// Returns the hooks configuration.
+    pub fn hooks_config(&self) -> &HooksConfig {
+        &self.hooks_config
+    }
+
+    /// Creates a base hook context with common fields populated.
+    fn create_hook_context(&self, repo_path: &Path) -> HookContext {
+        HookContext::new()
+            .with_version(&self.version)
+            .with_target_branch(&self.target_branch)
+            .with_dev_branch(&self.dev_branch)
+            .with_repo_path(repo_path.to_string_lossy())
+    }
+
+    /// Runs hooks for a given trigger point.
+    ///
+    /// # Arguments
+    ///
+    /// * `trigger` - The hook trigger point
+    /// * `repo_path` - Path to the repository (used as working directory)
+    /// * `context` - Hook context with environment variables
+    /// * `progress_callback` - Optional callback for progress updates
+    ///
+    /// # Returns
+    ///
+    /// True if all hooks succeeded or no hooks were configured, false otherwise.
+    pub fn run_hooks<F>(
+        &self,
+        trigger: HookTrigger,
+        repo_path: &Path,
+        context: &HookContext,
+        progress_callback: Option<F>,
+    ) -> bool
+    where
+        F: FnMut(HookProgress),
+    {
+        if !self.hooks_config.has_hooks_for(trigger) {
+            return true;
+        }
+
+        let executor = HookExecutor::new(self.hooks_config.clone());
+        let result = executor.run_hooks(trigger, repo_path, context, progress_callback);
+        result.all_succeeded
+    }
+
+    /// Runs hooks for a given trigger without progress callbacks.
+    pub fn run_hooks_simple(&self, trigger: HookTrigger, repo_path: &Path) -> bool {
+        let context = self.create_hook_context(repo_path);
+        self.run_hooks::<fn(HookProgress)>(trigger, repo_path, &context, None)
+    }
+
+    /// Runs hooks for a given trigger and emits ProgressEvents.
+    ///
+    /// This method is used during the merge workflow to run hooks and emit
+    /// corresponding progress events for output formatting.
+    ///
+    /// Returns a `HookOutcome` that indicates whether the workflow should continue,
+    /// abort, or if a warning was emitted and workflow continues.
+    pub fn run_hooks_with_events<F>(
+        &self,
+        trigger: HookTrigger,
+        repo_path: &Path,
+        context: &HookContext,
+        event_callback: &mut F,
+    ) -> HookOutcome
+    where
+        F: FnMut(ProgressEvent),
+    {
+        if !self.hooks_config.has_hooks_for(trigger) {
+            return HookOutcome::Success;
+        }
+
+        let trigger_name = trigger.description().to_string();
+        let commands = self.hooks_config.commands_for(trigger);
+        let trigger_config = self.hooks_config.config_for(trigger);
+
+        event_callback(ProgressEvent::HookStart {
+            trigger: trigger_name.clone(),
+            command_count: commands.len(),
+        });
+
+        let executor = HookExecutor::new(self.hooks_config.clone());
+        let result = executor.run_hooks(
+            trigger,
+            repo_path,
+            context,
+            Some(|progress: HookProgress| {
+                // We can't emit events here since we don't have access to event_callback
+                // The hook executor handles its own progress internally
+                let _ = progress;
+            }),
+        );
+
+        // Emit events for each command result
+        for (index, cmd_result) in result.command_results.iter().enumerate() {
+            event_callback(ProgressEvent::HookCommandComplete {
+                trigger: trigger_name.clone(),
+                command: cmd_result.command.clone(),
+                success: cmd_result.success,
+                index,
+            });
+        }
+
+        event_callback(ProgressEvent::HookComplete {
+            trigger: trigger_name.clone(),
+            all_succeeded: result.all_succeeded,
+        });
+
+        // If all hooks succeeded, return success
+        if result.all_succeeded {
+            return HookOutcome::Success;
+        }
+
+        // Get failure details
+        let failure = result.first_failure();
+        let (command, error) = match failure {
+            Some(f) => (
+                f.command.clone(),
+                if f.stderr.is_empty() {
+                    format!("Command failed with exit code {:?}", f.exit_code)
+                } else {
+                    f.stderr.clone()
+                },
+            ),
+            None => ("unknown".to_string(), "Unknown error".to_string()),
+        };
+
+        // Determine action based on failure mode
+        let failure_mode = trigger_config.failure_mode(trigger);
+
+        match failure_mode {
+            HookFailureMode::Abort => {
+                event_callback(ProgressEvent::HookFailed {
+                    trigger: trigger_name,
+                    command: command.clone(),
+                    error: error.clone(),
+                });
+                HookOutcome::Abort {
+                    trigger,
+                    command,
+                    error,
+                }
+            }
+            HookFailureMode::Continue => {
+                event_callback(ProgressEvent::HookFailed {
+                    trigger: trigger_name,
+                    command: command.clone(),
+                    error: error.clone(),
+                });
+                HookOutcome::ContinuedAfterFailure {
+                    trigger,
+                    command,
+                    error,
+                }
+            }
         }
     }
 
@@ -322,20 +521,20 @@ impl MergeEngine {
     /// The state file must have been created via `create_state_file` or set via
     /// `state_manager_mut().set_state_file()` before calling this method.
     ///
-    /// # Returns
-    ///
-    /// * `Some(ConflictInfo)` - If a conflict occurred
-    /// * `None` - If all cherry-picks completed successfully
+    /// Returns the result of processing:
+    /// - `Complete` if all cherry-picks finished (with possible skips/failures)
+    /// - `Conflict` if a conflict was encountered
+    /// - `HookAbort` if a hook failed and was configured to abort
     ///
     /// # Panics
     ///
     /// Panics if no state file is set in the internal StateManager.
-    pub fn process_cherry_picks<F>(&mut self, mut event_callback: F) -> Option<ConflictInfo>
+    pub fn process_cherry_picks<F>(&mut self, mut event_callback: F) -> CherryPickProcessResult
     where
         F: FnMut(ProgressEvent),
     {
         // Extract info from state file first to avoid borrow conflicts
-        let (total, repo_path) = {
+        let (total, repo_path, current_start_index) = {
             let state_file = self
                 .state_manager
                 .state_file()
@@ -343,8 +542,32 @@ impl MergeEngine {
             (
                 state_file.cherry_pick_items.len(),
                 state_file.repo_path.clone(),
+                state_file.current_index,
             )
         };
+
+        // Run pre-cherry-pick hooks (only if starting from the beginning)
+        if current_start_index == 0 && self.hooks_config.has_hooks_for(HookTrigger::PreCherryPick) {
+            let outcome = self.run_hooks_with_events(
+                HookTrigger::PreCherryPick,
+                &repo_path,
+                &self.create_hook_context(&repo_path),
+                &mut event_callback,
+            );
+
+            if let HookOutcome::Abort {
+                trigger,
+                command,
+                error,
+            } = outcome
+            {
+                return CherryPickProcessResult::HookAbort {
+                    trigger,
+                    command,
+                    error,
+                };
+            }
+        }
 
         loop {
             // Get current index and item info
@@ -399,7 +622,22 @@ impl MergeEngine {
                             repo_path: repo_path.clone(),
                         });
 
-                        return Some(ConflictInfo::new(
+                        // Run on-conflict hooks (always continue regardless of failure)
+                        if self.hooks_config.has_hooks_for(HookTrigger::OnConflict) {
+                            let context = self
+                                .create_hook_context(&repo_path)
+                                .with_pr_id(pr_id)
+                                .with_commit_id(&commit_id);
+                            // OnConflict hooks default to Continue, so we don't check the outcome
+                            let _ = self.run_hooks_with_events(
+                                HookTrigger::OnConflict,
+                                &repo_path,
+                                &context,
+                                &mut event_callback,
+                            );
+                        }
+
+                        return CherryPickProcessResult::Conflict(ConflictInfo::new(
                             pr_id,
                             pr_title,
                             commit_id,
@@ -427,13 +665,42 @@ impl MergeEngine {
 
                 state_file.current_index += 1;
             }
+
+            // Run post-cherry-pick hooks after successful cherry-pick (outside the mutable borrow)
+            if matches!(outcome, CherryPickOutcome::Success)
+                && self.hooks_config.has_hooks_for(HookTrigger::PostCherryPick)
+            {
+                let context = self
+                    .create_hook_context(&repo_path)
+                    .with_pr_id(pr_id)
+                    .with_commit_id(&commit_id);
+                // PostCherryPick hooks default to Continue, so we don't check the outcome
+                let _ = self.run_hooks_with_events(
+                    HookTrigger::PostCherryPick,
+                    &repo_path,
+                    &context,
+                    &mut event_callback,
+                );
+            }
         }
 
         // All cherry-picks complete
         if let Some(state_file) = self.state_manager.state_file_mut() {
             state_file.phase = MergePhase::ReadyForCompletion;
         }
-        None
+
+        // Run post-merge hooks (defaults to Continue, so we don't abort on failure)
+        if self.hooks_config.has_hooks_for(HookTrigger::PostMerge) {
+            // PostMerge hooks default to Continue, so we don't check the outcome
+            let _ = self.run_hooks_with_events(
+                HookTrigger::PostMerge,
+                &repo_path,
+                &self.create_hook_context(&repo_path),
+                &mut event_callback,
+            );
+        }
+
+        CherryPickProcessResult::Complete
     }
 
     /// Executes post-merge tasks (tagging PRs and updating work items).
@@ -685,6 +952,7 @@ mod tests {
             "Done".to_string(),
             false,
             None,
+            None,
             100,
             10,
             None,
@@ -932,6 +1200,7 @@ mod tests {
             "Done".to_string(),
             false,
             Some(std::path::PathBuf::from("/path/to/repo")),
+            None,
             100,
             10,
             None,
@@ -949,6 +1218,7 @@ mod tests {
             "merged-".to_string(),
             "Done".to_string(),
             true,
+            None,
             None,
             100,
             10,
@@ -987,6 +1257,7 @@ mod tests {
             "release-".to_string(),
             "Released".to_string(),
             true,
+            Some(std::path::PathBuf::from("/base/repo")),
             None,
             100,
             10,
@@ -1354,5 +1625,370 @@ mod tests {
         assert_eq!(prs_with_work_items.len(), 1);
         assert_eq!(prs_with_work_items[0].pr.id, 1);
         assert_eq!(prs_with_work_items[0].pr.title, "Ready PR");
+    }
+
+    // ==========================================================================
+    // CherryPickProcessResult Tests
+    // ==========================================================================
+
+    /// # CherryPickProcessResult Complete Variant
+    ///
+    /// Verifies the Complete variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates Complete variant
+    /// - Checks is_hook_abort returns false
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns false for Complete
+    #[test]
+    fn test_cherry_pick_result_complete() {
+        let result = CherryPickProcessResult::Complete;
+        assert!(!result.is_hook_abort());
+    }
+
+    /// # CherryPickProcessResult Conflict Variant
+    ///
+    /// Verifies the Conflict variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates Conflict variant with ConflictInfo
+    /// - Checks is_hook_abort returns false
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns false for Conflict
+    #[test]
+    fn test_cherry_pick_result_conflict() {
+        let conflict = ConflictInfo::new(
+            123,
+            "Test PR".to_string(),
+            "abc123".to_string(),
+            vec!["file.rs".to_string()],
+            std::path::PathBuf::from("/test/repo"),
+        );
+        let result = CherryPickProcessResult::Conflict(conflict);
+        assert!(!result.is_hook_abort());
+    }
+
+    /// # CherryPickProcessResult HookAbort Variant
+    ///
+    /// Verifies the HookAbort variant is correctly identified.
+    ///
+    /// ## Test Scenario
+    /// - Creates HookAbort variant with trigger, command, and error
+    /// - Checks is_hook_abort returns true
+    ///
+    /// ## Expected Outcome
+    /// - is_hook_abort() returns true for HookAbort
+    #[test]
+    fn test_cherry_pick_result_hook_abort() {
+        use crate::core::operations::HookTrigger;
+
+        let result = CherryPickProcessResult::HookAbort {
+            trigger: HookTrigger::PreCherryPick,
+            command: "failing-command".to_string(),
+            error: "Command failed with exit code 1".to_string(),
+        };
+        assert!(result.is_hook_abort());
+    }
+
+    // ==========================================================================
+    // Hook Context Tests
+    // ==========================================================================
+
+    /// # Create Hook Context
+    ///
+    /// Verifies that create_hook_context populates correct fields.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with specific version and branches
+    /// - Calls create_hook_context
+    ///
+    /// ## Expected Outcome
+    /// - Context has version, target_branch, dev_branch, and repo_path
+    #[test]
+    fn test_create_hook_context() {
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "develop".to_string(),
+            "release".to_string(),
+            "v2.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            None,
+            100,
+            10,
+            None,
+        );
+
+        let repo_path = std::path::PathBuf::from("/test/repo");
+        let context = engine.create_hook_context(&repo_path);
+        let env_vars = context.to_env_vars();
+
+        assert_eq!(env_vars.get("MERGERS_VERSION"), Some(&"v2.0.0".to_string()));
+        assert_eq!(
+            env_vars.get("MERGERS_TARGET_BRANCH"),
+            Some(&"release".to_string())
+        );
+        assert_eq!(
+            env_vars.get("MERGERS_DEV_BRANCH"),
+            Some(&"develop".to_string())
+        );
+        assert_eq!(
+            env_vars.get("MERGERS_REPO_PATH"),
+            Some(&"/test/repo".to_string())
+        );
+    }
+
+    /// # Hooks Config Accessor
+    ///
+    /// Verifies that hooks_config() returns the correct config.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with hooks config
+    /// - Calls hooks_config()
+    ///
+    /// ## Expected Outcome
+    /// - Returns the configured hooks config
+    #[test]
+    fn test_hooks_config_accessor() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let config = engine.hooks_config();
+        assert!(config.has_hooks_for(HookTrigger::PostMerge));
+        assert!(!config.has_hooks_for(HookTrigger::PreCherryPick));
+    }
+
+    /// # Run Hooks Simple With No Hooks
+    ///
+    /// Verifies that run_hooks_simple returns true when no hooks configured.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine without hooks
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns true (no hooks means success)
+    #[test]
+    fn test_run_hooks_simple_no_hooks() {
+        let engine = create_test_engine();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(result);
+    }
+
+    /// # Run Hooks Simple With Successful Hook
+    ///
+    /// Verifies that run_hooks_simple executes hooks and returns success.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with a simple echo hook
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns true for successful execution
+    #[test]
+    fn test_run_hooks_simple_success() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo test".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(result);
+    }
+
+    /// # Run Hooks Simple With Failing Hook
+    ///
+    /// Verifies that run_hooks_simple returns false for failed hooks.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with a failing hook
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for failed execution
+    #[test]
+    fn test_run_hooks_simple_failure() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["exit 1".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(!result);
+    }
+
+    /// # Run Hooks With Events
+    ///
+    /// Verifies that run_hooks_with_events emits correct progress events.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with hooks
+    /// - Calls run_hooks_with_events and collects events
+    ///
+    /// ## Expected Outcome
+    /// - Events include HookStart and HookComplete
+    #[test]
+    fn test_run_hooks_with_events() {
+        use crate::core::operations::{HookContext, HookTriggerConfig, HooksConfig};
+        use crate::core::output::ProgressEvent;
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo hello".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let context = HookContext::new();
+        let mut events = Vec::new();
+
+        let outcome = engine.run_hooks_with_events(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+            &mut |event: ProgressEvent| {
+                events.push(event);
+            },
+        );
+
+        assert!(outcome.is_success());
+        assert!(!events.is_empty());
+
+        // Should have HookStart
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::HookStart { .. }))
+        );
+
+        // Should have HookComplete
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::HookComplete { .. }))
+        );
+    }
+
+    /// # Run Hooks With Events No Hooks Configured
+    ///
+    /// Verifies that run_hooks_with_events returns Success when no hooks configured.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine without hooks
+    /// - Calls run_hooks_with_events
+    ///
+    /// ## Expected Outcome
+    /// - Returns HookOutcome::Success with no events
+    #[test]
+    fn test_run_hooks_with_events_no_hooks() {
+        use crate::core::operations::HookContext;
+        use crate::core::output::ProgressEvent;
+
+        let engine = create_test_engine();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let context = HookContext::new();
+        let mut events = Vec::new();
+
+        let outcome = engine.run_hooks_with_events(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+            &mut |event: ProgressEvent| {
+                events.push(event);
+            },
+        );
+
+        assert!(outcome.is_success());
+        assert!(events.is_empty());
     }
 }

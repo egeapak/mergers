@@ -14,7 +14,7 @@ pub mod non_interactive;
 pub mod release_notes;
 pub mod traits;
 
-pub use merge_engine::MergeEngine;
+pub use merge_engine::{CherryPickProcessResult, MergeEngine};
 pub use non_interactive::NonInteractiveRunner;
 pub use release_notes::{ReleaseNotesRunner, ReleaseNotesRunnerConfig};
 pub use traits::{MergeRunnerConfig, RunResult};

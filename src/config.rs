@@ -21,6 +21,7 @@
 //! let merged = config.merge(env_config);
 //! ```
 
+use crate::core::operations::{HookTriggerConfig, HooksConfig};
 use crate::{git_config, models::SharedArgs, parsed_property::ParsedProperty};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,9 @@ struct ConfigFile {
     // UI Settings
     pub show_dependency_highlights: Option<bool>,
     pub show_work_item_highlights: Option<bool>,
+    // Hooks - user-defined commands at various points in the merge workflow
+    #[serde(default)]
+    pub hooks: Option<HooksConfig>,
     // Release Notes Settings
     pub repo_aliases: Option<std::collections::HashMap<String, String>>,
 }
@@ -84,6 +88,8 @@ pub struct Config {
     pub show_dependency_highlights: Option<ParsedProperty<bool>>,
     /// Whether to highlight work item relationships in the TUI.
     pub show_work_item_highlights: Option<ParsedProperty<bool>>,
+    // Hooks - user-defined commands at various points in the merge workflow
+    pub hooks: Option<HooksConfig>,
     /// Repository aliases (e.g., "api" -> "/path/to/api-backend")
     pub repo_aliases: Option<ParsedProperty<std::collections::HashMap<String, String>>>,
 }
@@ -107,6 +113,8 @@ impl Default for Config {
             // UI Settings - both enabled by default
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            // Hooks - empty by default
+            hooks: None,
             // Release Notes Settings
             repo_aliases: None,
         }
@@ -175,6 +183,7 @@ impl Config {
             show_work_item_highlights: config_file
                 .show_work_item_highlights
                 .map(|v| ParsedProperty::File(v, config_path.clone(), v.to_string())),
+            hooks: config_file.hooks,
             repo_aliases: config_file
                 .repo_aliases
                 .map(|v| ParsedProperty::File(v.clone(), config_path.clone(), format!("{:?}", v))),
@@ -228,6 +237,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                hooks: None,
                 repo_aliases: None,
             };
         }
@@ -255,6 +265,7 @@ impl Config {
                 run_hooks: None,
                 show_dependency_highlights: None,
                 show_work_item_highlights: None,
+                hooks: None,
                 repo_aliases: None,
             };
         }
@@ -264,6 +275,41 @@ impl Config {
 
     /// Load configuration from environment variables
     pub fn load_from_env() -> Self {
+        // Helper to parse semicolon-separated commands from env var
+        fn parse_hook_commands(var_name: &str) -> Vec<String> {
+            std::env::var(var_name)
+                .ok()
+                .map(|v| {
+                    v.split(';')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+
+        // Build hooks from environment variables
+        let hooks_config = HooksConfig {
+            post_checkout: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_CHECKOUT",
+            )),
+            pre_cherry_pick: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_PRE_CHERRY_PICK",
+            )),
+            post_cherry_pick: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_CHERRY_PICK",
+            )),
+            post_merge: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_MERGE",
+            )),
+            on_conflict: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_ON_CONFLICT",
+            )),
+            post_complete: HookTriggerConfig::from_commands(parse_hook_commands(
+                "MERGERS_HOOKS_POST_COMPLETE",
+            )),
+        };
+
         Self {
             organization: std::env::var("MERGERS_ORGANIZATION")
                 .ok()
@@ -320,6 +366,11 @@ impl Config {
                         .ok()
                         .map(|v| ParsedProperty::Env(v, s.clone()))
                 }),
+            hooks: if hooks_config.has_hooks() {
+                Some(hooks_config)
+            } else {
+                None
+            },
             // repo_aliases is configured via file only, not environment variables
             repo_aliases: None,
         }
@@ -353,6 +404,14 @@ impl Config {
 
     /// Merge this config with another, preferring values from other when they exist
     pub fn merge(self, other: Self) -> Self {
+        // Merge hooks configs - if both exist, merge them; otherwise take whichever exists
+        let merged_hooks = match (self.hooks, other.hooks) {
+            (Some(base), Some(override_hooks)) => Some(base.merge(override_hooks)),
+            (None, Some(hooks)) => Some(hooks),
+            (Some(hooks), None) => Some(hooks),
+            (None, None) => None,
+        };
+
         Self {
             organization: other.organization.or(self.organization),
             project: other.project.or(self.project),
@@ -375,6 +434,7 @@ impl Config {
             show_work_item_highlights: other
                 .show_work_item_highlights
                 .or(self.show_work_item_highlights),
+            hooks: merged_hooks,
             repo_aliases: other.repo_aliases.or(self.repo_aliases),
         }
     }
@@ -432,6 +492,23 @@ show_dependency_highlights = true
 
 # Show work item relationship highlighting in PR selection (optional, defaults to true)
 show_work_item_highlights = true
+
+# Hooks - user-defined shell commands at various points in the merge workflow
+# Commands receive environment variables: MERGERS_VERSION, MERGERS_TARGET_BRANCH,
+# MERGERS_DEV_BRANCH, MERGERS_REPO_PATH, MERGERS_PR_ID, MERGERS_COMMIT_ID
+# [hooks]
+# Commands to run after repository checkout/setup
+# post_checkout = ["npm install", "cargo build"]
+# Commands to run before starting cherry-picks
+# pre_cherry_pick = []
+# Commands to run after each successful cherry-pick
+# post_cherry_pick = ["cargo fmt", "cargo clippy --fix --allow-dirty"]
+# Commands to run after all cherry-picks complete
+# post_merge = ["cargo test"]
+# Commands to run when a conflict is detected
+# on_conflict = ["git status"]
+# Commands to run after 'complete' command finishes (tagging, work item updates)
+# post_complete = ["./scripts/notify-slack.sh"]
 
 # Repository aliases for quick access
 # Maps short names to full paths (usable with any command)
@@ -537,6 +614,8 @@ show_work_item_highlights = true
             // UI settings: not set via CLI
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            // Hooks: not set via CLI, only via config file or env vars
+            hooks: None,
             // Repo aliases: not set via CLI
             repo_aliases: None,
         }
@@ -913,6 +992,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -932,6 +1012,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1014,6 +1095,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1033,6 +1115,7 @@ mod tests {
             run_hooks: None,
             show_dependency_highlights: None,
             show_work_item_highlights: None,
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1478,6 +1561,7 @@ invalid toml syntax here [
             run_hooks: Some(ParsedProperty::Default(false)),
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1794,6 +1878,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(true)),
             show_work_item_highlights: Some(ParsedProperty::Default(true)),
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1813,6 +1898,7 @@ show_work_item_highlights = true
             run_hooks: None,
             show_dependency_highlights: Some(ParsedProperty::Default(false)),
             show_work_item_highlights: None, // Should keep base value
+            hooks: None,
             repo_aliases: None,
         };
 
@@ -1926,5 +2012,164 @@ show_work_item_highlights = true
             "Error should mention path does not exist: {}",
             err_msg
         );
+    }
+
+    /// # Config With Hooks Simple Format
+    ///
+    /// Tests that hooks can be loaded from a config file using simple format.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with simple hook format (array of commands)
+    /// - Loads the config
+    ///
+    /// ## Expected Outcome
+    /// - Hooks are loaded correctly
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_config_with_hooks_simple_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("mergers");
+        std::fs::create_dir_all(&config_path).unwrap();
+
+        let config_content = r#"
+organization = "test-org"
+project = "test-project"
+
+[hooks]
+post_checkout = ["npm install", "cargo build"]
+post_merge = ["cargo test"]
+"#;
+
+        std::fs::write(config_path.join("config.toml"), config_content).unwrap();
+
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let config = Config::load_from_file().unwrap();
+
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(config.hooks.is_some());
+        let hooks = config.hooks.unwrap();
+        assert!(hooks.has_hooks());
+        assert_eq!(hooks.post_checkout.commands.len(), 2);
+        assert_eq!(hooks.post_merge.commands.len(), 1);
+    }
+
+    /// # Config With Hooks Extended Format
+    ///
+    /// Tests that hooks can be loaded from a config file using extended format.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with extended hook format (with on_failure, timeout)
+    /// - Loads the config
+    ///
+    /// ## Expected Outcome
+    /// - Hooks are loaded with all extended options
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_config_with_hooks_extended_format() {
+        use crate::core::operations::{HookExecutionMode, HookFailureMode};
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("mergers");
+        std::fs::create_dir_all(&config_path).unwrap();
+
+        let config_content = r#"
+organization = "test-org"
+
+[hooks.post_checkout]
+commands = ["npm install"]
+on_failure = "abort"
+timeout_secs = 120
+
+[hooks.post_merge]
+commands = ["cargo test"]
+on_failure = "continue"
+execution = "async"
+"#;
+
+        std::fs::write(config_path.join("config.toml"), config_content).unwrap();
+
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let config = Config::load_from_file().unwrap();
+
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(config.hooks.is_some());
+        let hooks = config.hooks.unwrap();
+
+        // Post-checkout checks
+        assert_eq!(hooks.post_checkout.commands, vec!["npm install"]);
+        assert_eq!(hooks.post_checkout.on_failure, Some(HookFailureMode::Abort));
+        assert_eq!(hooks.post_checkout.timeout_secs, 120);
+
+        // Post-merge checks
+        assert_eq!(hooks.post_merge.commands, vec!["cargo test"]);
+        assert_eq!(hooks.post_merge.on_failure, Some(HookFailureMode::Continue));
+        assert_eq!(hooks.post_merge.execution, HookExecutionMode::Async);
+    }
+
+    /// # Config Merge Preserves Hooks
+    ///
+    /// Tests that config merging preserves hooks from both sources.
+    ///
+    /// ## Test Scenario
+    /// - Creates two configs with different hooks
+    /// - Merges them
+    ///
+    /// ## Expected Outcome
+    /// - Merged config has hooks from both (with other taking precedence)
+    #[test]
+    fn test_config_merge_preserves_hooks() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let config1 = Config {
+            hooks: Some(HooksConfig {
+                post_checkout: HookTriggerConfig::from_commands(vec!["echo base".to_string()]),
+                post_merge: HookTriggerConfig::from_commands(vec!["echo base-merge".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let config2 = Config {
+            hooks: Some(HooksConfig {
+                post_checkout: HookTriggerConfig::from_commands(vec!["echo override".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let merged = config1.merge(config2);
+
+        assert!(merged.hooks.is_some());
+        let hooks = merged.hooks.unwrap();
+
+        // Post-checkout should be overridden
+        assert_eq!(hooks.post_checkout.commands, vec!["echo override"]);
+
+        // Post-merge should be preserved from config1
+        assert_eq!(hooks.post_merge.commands, vec!["echo base-merge"]);
     }
 }
