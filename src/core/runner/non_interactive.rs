@@ -12,8 +12,8 @@ use anyhow::{Context, Result, bail};
 use crate::api::AzureDevOpsClient;
 use crate::core::ExitCode;
 use crate::core::output::{
-    ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, ProgressEvent, ProgressSummary,
-    StatusInfo, SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
+    ConflictInfo, ItemStatus, OutputFormatter, OutputWriter, PostMergeSummary, ProgressEvent,
+    ProgressSummary, StatusInfo, SummaryCounts, SummaryInfo, SummaryItem, SummaryResult,
 };
 use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 use crate::git;
@@ -161,7 +161,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
             Ok(None) => {
                 tracing::warn!("Another merge operation is in progress");
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(
                     ExitCode::Locked,
                     "Another merge operation is in progress",
@@ -246,6 +246,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             total_prs,
             version: self.config.version.clone(),
             target_branch: self.config.target_branch.clone(),
+            state_file_path: Some(state_path.clone()),
         });
 
         // Process cherry-picks using internal state manager
@@ -306,7 +307,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -320,7 +321,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -331,10 +335,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::AwaitingConflictResolution {
-            self.emit_error(&format!(
-                "Cannot continue: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot continue: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for continue");
         }
 
@@ -342,7 +346,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -353,8 +357,17 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Check if conflicts are resolved
         let conflicts_resolved = self.check_conflicts_resolved(&state.repo_path);
         if !conflicts_resolved {
-            self.emit_error("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.");
+            self.emit_error_with_code("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.", Some("conflicts_unresolved"));
             return RunResult::error(ExitCode::Conflict, "Conflicts not resolved");
+        }
+
+        // Finalize the cherry-pick commit
+        if let Err(e) = git::continue_cherry_pick(&state.repo_path) {
+            self.emit_error(&format!("Failed to finalize cherry-pick: {}", e));
+            return RunResult::error(
+                ExitCode::GeneralError,
+                format!("Failed to finalize cherry-pick: {}", e),
+            );
         }
 
         // Mark current item as success and advance
@@ -433,7 +446,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -447,7 +460,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -458,7 +474,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase (can't abort if already completed)
         if state.phase.is_terminal() {
-            self.emit_error(&format!("Cannot abort: merge is already '{}'", state.phase));
+            self.emit_error_with_code(
+                &format!("Cannot abort: merge is already '{}'", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for abort");
         }
 
@@ -466,7 +485,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -504,6 +523,144 @@ impl<W: Write> NonInteractiveRunner<W> {
         RunResult::success_with_message("Merge aborted")
     }
 
+    /// Skips the current conflicting PR and continues with remaining.
+    pub async fn skip(&mut self, repo_path: Option<&Path>) -> RunResult {
+        // Determine repo path
+        let repo_path = match self.find_repo_path(repo_path) {
+            Ok(path) => path,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Early lock check
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
+                return RunResult::error(ExitCode::NoStateFile, "No state file found");
+            }
+            Err(e) => {
+                self.emit_error(&format!("{}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Validate phase
+        if state.phase != MergePhase::AwaitingConflictResolution {
+            self.emit_error_with_code(
+                &format!("Cannot skip: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
+            return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for skip");
+        }
+
+        // Acquire lock
+        let _lock = match acquire_lock(&repo_path) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Abort the current cherry-pick
+        if let Err(e) = git::abort_cherry_pick(&state.repo_path) {
+            self.emit_error(&format!("Failed to abort cherry-pick: {}", e));
+            return RunResult::error(
+                ExitCode::GeneralError,
+                format!("Failed to abort cherry-pick: {}", e),
+            );
+        }
+
+        // Emit skip event for the current item
+        let current_item = &state.cherry_pick_items[state.current_index];
+        self.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: current_item.pr_id,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        // Mark current item as skipped and advance
+        state.cherry_pick_items[state.current_index].status = StateItemStatus::Skipped;
+        state.current_index += 1;
+        state.phase = MergePhase::CherryPicking;
+        state.conflicted_files = None;
+
+        // Create the engine
+        let client = match self.create_client() {
+            Ok(c) => c,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+        let mut engine = self.create_engine(client);
+
+        // Set the loaded state file on the engine's state manager
+        engine.state_manager_mut().set_state_file(state);
+
+        // Continue processing remaining cherry-picks
+        let conflict_info = engine.process_cherry_picks(|event| {
+            self.emit_event(event);
+        });
+
+        // Save state
+        let state_path = match engine.state_manager_mut().save() {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.emit_error("No state file to save");
+                return RunResult::error(ExitCode::GeneralError, "No state file to save");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        if let Some(conflict) = conflict_info {
+            if let Err(e) = self.output.write_conflict(&conflict) {
+                tracing::warn!("Warning: Failed to write conflict info: {}", e);
+            }
+            return RunResult::conflict(state_path);
+        }
+
+        // Get counts from state manager
+        let counts = engine
+            .state_manager()
+            .state_file()
+            .map(|state| engine.create_summary_counts(state))
+            .unwrap_or_else(|| SummaryCounts::new(0, 0, 0, 0));
+
+        self.emit_event(ProgressEvent::Complete {
+            successful: counts.successful,
+            failed: counts.failed,
+            skipped: counts.skipped,
+        });
+
+        if counts.failed > 0 || counts.skipped > 0 {
+            RunResult::partial_success("Completed with some skipped/failed items")
+                .with_state_file(state_path)
+        } else {
+            RunResult::success().with_state_file(state_path)
+        }
+    }
     /// Shows the current merge status.
     pub fn status(&mut self, repo_path: Option<&Path>) -> RunResult {
         // Determine repo path
@@ -633,7 +790,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -647,7 +804,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -658,10 +818,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::ReadyForCompletion {
-            self.emit_error(&format!(
-                "Cannot complete: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot complete: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for complete");
         }
 
@@ -669,7 +829,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -693,7 +853,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let engine = self.create_engine(client);
 
         // Run post-merge tasks
-        let (_success_count, failed_count) = match engine
+        let (success_count, failed_count) = match engine
             .run_post_merge(&state, next_state, |event| {
                 self.emit_event(event);
             })
@@ -726,7 +886,12 @@ impl<W: Write> NonInteractiveRunner<W> {
             target_branch: state.target_branch.clone(),
             counts,
             items: Some(items),
-            post_merge: None,
+            post_merge: Some(PostMergeSummary {
+                total_tasks: success_count + failed_count,
+                successful: success_count,
+                failed: failed_count,
+                tasks: None, // Individual task details not tracked at this level
+            }),
         };
 
         if let Err(e) = self.output.write_summary(&summary) {
@@ -777,14 +942,18 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
     }
 
-    fn emit_error(&mut self, message: &str) {
+    fn emit_error_with_code(&mut self, message: &str, code: Option<&str>) {
         let event = ProgressEvent::Error {
             message: message.to_string(),
-            code: None,
+            code: code.map(|c| c.to_string()),
         };
         if let Err(e) = self.output.write_event(&event) {
             tracing::warn!("Warning: Failed to write error: {}", e);
         }
+    }
+
+    fn emit_error(&mut self, message: &str) {
+        self.emit_error_with_code(message, None);
     }
 
     fn find_repo_path(&self, provided: Option<&Path>) -> Result<PathBuf> {
@@ -880,6 +1049,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         let output = String::from_utf8(buffer).unwrap();
@@ -949,18 +1119,20 @@ mod tests {
         assert!(output.contains("error") || output.contains("Error"));
     }
 
-    /// # JSON Output Format
+    /// # JSON Output Format Buffers Events
     ///
-    /// Verifies JSON output format produces valid JSON.
+    /// Verifies that JSON output format buffers events instead of writing
+    /// them immediately, since JSON mode collects all events and outputs
+    /// a single JSON object at the end via `write_summary`.
     ///
     /// ## Test Scenario
-    /// - Creates runner with JSON format
-    /// - Emits a progress event
+    /// - Creates runner with JSON output format
+    /// - Emits a Start event
     ///
     /// ## Expected Outcome
-    /// - Output is valid JSON
+    /// - Buffer remains empty after emitting events (events are buffered internally)
     #[test]
-    fn test_json_output_format() {
+    fn test_json_output_format_buffers_events() {
         let mut config = create_test_config();
         config.output_format = OutputFormat::Json;
 
@@ -971,11 +1143,15 @@ mod tests {
             total_prs: 3,
             version: "v2.0.0".to_string(),
             target_branch: "release".to_string(),
+            state_file_path: None,
         });
 
-        // JSON format collects events and outputs at the end,
-        // so we just verify no error occurred
-        assert!(buffer.is_empty() || !buffer.is_empty());
+        // JSON format collects events internally and only writes output
+        // when write_summary is called, so the buffer must be empty here.
+        assert!(
+            buffer.is_empty(),
+            "JSON format should buffer events, not write them immediately"
+        );
     }
 
     /// # NDJSON Output Format
@@ -1000,6 +1176,7 @@ mod tests {
             total_prs: 2,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         runner.emit_event(ProgressEvent::CherryPickStart {
@@ -1134,13 +1311,14 @@ mod tests {
 
     /// # Complete Event With Counts
     ///
-    /// Verifies the complete event shows correct counts.
+    /// Verifies the complete event shows all three counts (successful, failed,
+    /// skipped) in the text output so operators can see the merge outcome.
     ///
     /// ## Test Scenario
-    /// - Emits a complete event with mixed results
+    /// - Emits a Complete event with 5 successful, 2 failed, 1 skipped
     ///
     /// ## Expected Outcome
-    /// - Counts are shown in output
+    /// - Output contains all three numeric counts with their labels
     #[test]
     fn test_complete_event_with_counts() {
         let config = create_test_config();
@@ -1154,22 +1332,30 @@ mod tests {
         });
 
         let output = String::from_utf8(buffer).unwrap();
-        // Should show the counts in some form
         assert!(
-            output.contains("5") || output.contains("successful"),
-            "Should show successful count"
+            output.contains("5 successful"),
+            "Should show successful count: got '{output}'"
+        );
+        assert!(
+            output.contains("2 failed"),
+            "Should show failed count: got '{output}'"
+        );
+        assert!(
+            output.contains("1 skipped"),
+            "Should show skipped count: got '{output}'"
         );
     }
 
     /// # Conflict Event Details
     ///
-    /// Verifies conflict events include file details.
+    /// Verifies conflict events include the PR ID, conflicted file names,
+    /// and repository path in the text output.
     ///
     /// ## Test Scenario
-    /// - Emits a conflict event with file list
+    /// - Emits a cherry-pick conflict event with PR #42 and two conflicted files
     ///
     /// ## Expected Outcome
-    /// - Conflict files are listed
+    /// - Output contains the PR ID, each conflicted file name, and the repo path
     #[test]
     fn test_conflict_event_details() {
         let config = create_test_config();
@@ -1183,9 +1369,18 @@ mod tests {
         });
 
         let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("42"), "Should include the PR ID");
         assert!(
-            output.contains("conflict") || output.contains("Conflict"),
-            "Should mention conflict"
+            output.contains("src/main.rs"),
+            "Should list the first conflicted file"
+        );
+        assert!(
+            output.contains("Cargo.toml"),
+            "Should list the second conflicted file"
+        );
+        assert!(
+            output.contains("/test/repo"),
+            "Should include the repository path"
         );
     }
 
@@ -1323,5 +1518,996 @@ mod tests {
         assert_eq!(json["status"], "idle");
         assert_eq!(json["progress"]["total"], 0);
         assert_eq!(json["progress"]["completed"], 0);
+    }
+
+    /// # Error Emission With Code
+    ///
+    /// Verifies that errors with codes are emitted correctly in NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error with a code using NDJSON format
+    ///
+    /// ## Expected Outcome
+    /// - Error contains both message and code in JSON output
+    #[test]
+    fn test_error_emission_with_code() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Test locked error", Some("locked"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+        assert!(output.contains("Test locked error"));
+    }
+
+    /// # Error Emission Without Code
+    ///
+    /// Verifies that errors without codes omit the code field in NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error without a code using NDJSON format
+    ///
+    /// ## Expected Outcome
+    /// - Error contains message but no code field
+    #[test]
+    fn test_error_emission_without_code() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error("Generic error");
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Generic error"));
+        assert!(!output.contains("\"code\""));
+    }
+
+    /// # Error Emission With All Code Variants
+    ///
+    /// Verifies all error code strings used across the runner
+    /// are correctly emitted in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits errors with each code used in the codebase:
+    ///   locked, no_state_file, invalid_phase, conflicts_unresolved
+    ///
+    /// ## Expected Outcome
+    /// - Each NDJSON line contains the correct code field
+    #[test]
+    fn test_error_emission_all_code_variants() {
+        let codes = [
+            "locked",
+            "no_state_file",
+            "invalid_phase",
+            "conflicts_unresolved",
+        ];
+
+        for code in &codes {
+            let mut config = create_test_config();
+            config.output_format = OutputFormat::Ndjson;
+
+            let mut buffer = Vec::new();
+            let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+            runner.emit_error_with_code(&format!("Error: {}", code), Some(code));
+
+            let output = String::from_utf8(buffer).unwrap();
+            let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+            assert_eq!(json["event"], "error", "event type should be error");
+            assert_eq!(
+                json["code"], *code,
+                "code should be '{}' but got '{}'",
+                code, json["code"]
+            );
+            assert!(
+                json["message"].as_str().unwrap().contains(code),
+                "message should contain code context"
+            );
+        }
+    }
+
+    /// # Error Emission in Text Format With Code
+    ///
+    /// Verifies that error codes are rendered in text output too.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error with code "locked" in Text format
+    ///
+    /// ## Expected Outcome
+    /// - Text output contains the error message
+    #[test]
+    fn test_error_emission_text_format_with_code() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("Another merge operation is in progress"),
+            "Text format should display the error message: got '{output}'"
+        );
+    }
+
+    /// # Start Event With State File Path
+    ///
+    /// Verifies the Start event correctly includes state_file_path in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a Start event with a state file path set
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output includes the state_file_path field
+    #[test]
+    fn test_start_event_with_state_file_path() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 3,
+            version: "v2.0.0".to_string(),
+            target_branch: "release".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state/merge.json")),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["event"], "start");
+        assert_eq!(json["total_prs"], 3);
+        assert_eq!(json["state_file_path"], "/tmp/state/merge.json");
+    }
+
+    /// # Start Event Without State File Path Omits Field
+    ///
+    /// Verifies the Start event omits state_file_path when None in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a Start event with state_file_path = None
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output does not include state_file_path field
+    #[test]
+    fn test_start_event_without_state_file_path() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 1,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: None,
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["event"], "start");
+        assert!(
+            json.get("state_file_path").is_none(),
+            "state_file_path should be omitted when None"
+        );
+    }
+
+    /// # RunResult Success With Message
+    ///
+    /// Verifies RunResult::success_with_message() sets exit code and message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a success result with a message
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Success, message is set
+    #[test]
+    fn test_run_result_success_with_message() {
+        let result = RunResult::success_with_message("Merge aborted");
+        assert!(result.is_success());
+        assert_eq!(result.exit_code, crate::core::ExitCode::Success);
+        assert_eq!(result.message, Some("Merge aborted".to_string()));
+    }
+
+    /// # RunResult With State File Builder
+    ///
+    /// Verifies RunResult::with_state_file() builder method chains correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates a partial success result and chains with_state_file
+    ///
+    /// ## Expected Outcome
+    /// - State file path is set, original fields preserved
+    #[test]
+    fn test_run_result_with_state_file() {
+        let result = RunResult::partial_success("3 of 5 succeeded")
+            .with_state_file(PathBuf::from("/state/merge.json"));
+        assert_eq!(result.exit_code, crate::core::ExitCode::PartialSuccess);
+        assert_eq!(result.message, Some("3 of 5 succeeded".to_string()));
+        assert_eq!(
+            result.state_file_path,
+            Some(PathBuf::from("/state/merge.json"))
+        );
+    }
+
+    /// # Quiet Mode Still Shows Errors
+    ///
+    /// Verifies quiet mode shows errors (since errors and conflicts
+    /// are always displayed even in quiet mode).
+    ///
+    /// ## Test Scenario
+    /// - Creates runner with quiet=true
+    /// - Emits error events with and without codes
+    ///
+    /// ## Expected Outcome
+    /// - Error output is still present (quiet only suppresses progress)
+    #[test]
+    fn test_quiet_mode_shows_errors() {
+        let mut config = create_test_config();
+        config.quiet = true;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Something locked", Some("locked"));
+        runner.emit_error("Generic failure");
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("Something locked"),
+            "Quiet mode should still show errors: got '{output}'"
+        );
+        assert!(
+            output.contains("Generic failure"),
+            "Quiet mode should still show errors: got '{output}'"
+        );
+    }
+
+    /// # Full Merge Event Flow in NDJSON
+    ///
+    /// Simulates a realistic merge flow: start → cherry-pick → conflict →
+    /// skip → cherry-pick → success → complete. Validates all events appear
+    /// as valid NDJSON and in correct order.
+    ///
+    /// ## Test Scenario
+    /// - Emits the sequence of events a real merge + skip flow would produce
+    ///
+    /// ## Expected Outcome
+    /// - Each line is valid JSON with the expected event type
+    /// - Events appear in the correct order
+    #[test]
+    fn test_full_merge_flow_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        // Start
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 2,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state.json")),
+        });
+
+        // First PR conflicts
+        runner.emit_event(ProgressEvent::CherryPickStart {
+            pr_id: 100,
+            commit_id: "aaa111".to_string(),
+            index: 0,
+            total: 2,
+        });
+        runner.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: 100,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        // Second PR succeeds
+        runner.emit_event(ProgressEvent::CherryPickStart {
+            pr_id: 200,
+            commit_id: "bbb222".to_string(),
+            index: 1,
+            total: 2,
+        });
+        runner.emit_event(ProgressEvent::CherryPickSuccess {
+            pr_id: 200,
+            commit_id: "bbb222".to_string(),
+        });
+
+        // Complete
+        runner.emit_event(ProgressEvent::Complete {
+            successful: 1,
+            failed: 0,
+            skipped: 1,
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("Invalid JSON line: {}", l)))
+            .collect();
+
+        assert_eq!(lines.len(), 6, "Should have 6 NDJSON events");
+        assert_eq!(lines[0]["event"], "start");
+        assert_eq!(lines[0]["state_file_path"], "/tmp/state.json");
+        assert_eq!(lines[1]["event"], "cherry_pick_start");
+        assert_eq!(lines[1]["pr_id"], 100);
+        assert_eq!(lines[2]["event"], "cherry_pick_skipped");
+        assert_eq!(lines[2]["pr_id"], 100);
+        assert_eq!(lines[3]["event"], "cherry_pick_start");
+        assert_eq!(lines[3]["pr_id"], 200);
+        assert_eq!(lines[4]["event"], "cherry_pick_success");
+        assert_eq!(lines[4]["pr_id"], 200);
+        assert_eq!(lines[5]["event"], "complete");
+        assert_eq!(lines[5]["successful"], 1);
+        assert_eq!(lines[5]["skipped"], 1);
+    }
+
+    /// # Error Event in JSON Format Is Buffered
+    ///
+    /// Verifies that errors are also buffered in JSON mode (not written immediately).
+    ///
+    /// ## Test Scenario
+    /// - Emits error events in JSON format
+    ///
+    /// ## Expected Outcome
+    /// - Buffer remains empty since JSON buffers all events
+    #[test]
+    fn test_error_event_buffered_in_json_mode() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Json;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Locked", Some("locked"));
+        runner.emit_error("Generic error");
+
+        assert!(
+            buffer.is_empty(),
+            "JSON format should buffer error events too"
+        );
+    }
+
+    /// # Skip Event in Text Format
+    ///
+    /// Verifies CherryPickSkipped events display correctly in text output
+    /// including the PR ID and skip reason.
+    ///
+    /// ## Test Scenario
+    /// - Emits a CherryPickSkipped event with a reason
+    ///
+    /// ## Expected Outcome
+    /// - Output mentions the PR being skipped
+    #[test]
+    fn test_skip_event_text_format() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: 42,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("42"),
+            "Should mention the PR ID: got '{output}'"
+        );
+    }
+
+    /// # Multiple Errors With Different Codes in NDJSON
+    ///
+    /// Verifies that emitting multiple errors produces separate NDJSON lines,
+    /// each with the correct code.
+    ///
+    /// ## Test Scenario
+    /// - Emits three errors: locked (with code), generic (no code), invalid_phase (with code)
+    ///
+    /// ## Expected Outcome
+    /// - Three NDJSON lines, each valid JSON with correct fields
+    #[test]
+    fn test_multiple_errors_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Locked", Some("locked"));
+        runner.emit_error("Something went wrong");
+        runner.emit_error_with_code("Wrong phase", Some("invalid_phase"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["code"], "locked");
+        assert!(lines[1].get("code").is_none());
+        assert_eq!(lines[2]["code"], "invalid_phase");
+    }
+
+    /// # Status Idle in NDJSON Format
+    ///
+    /// Verifies that idle status is properly formatted in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Creates a runner with NDJSON output format
+    /// - Calls status with no state file
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output is valid JSON with idle fields
+    #[test]
+    fn test_status_idle_ndjson_format() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = runner.status(Some(temp_dir.path()));
+
+        assert!(result.is_success());
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["phase"], "idle");
+        assert_eq!(json["status"], "idle");
+    }
+
+    /// # Dependency Analysis Events in NDJSON
+    ///
+    /// Verifies dependency analysis events serialize correctly.
+    ///
+    /// ## Test Scenario
+    /// - Emits DependencyAnalysisStart, DependencyAnalysisComplete,
+    ///   and DependencyWarning events
+    ///
+    /// ## Expected Outcome
+    /// - All events produce valid NDJSON with correct fields
+    #[test]
+    fn test_dependency_analysis_events_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::DependencyAnalysisStart { pr_count: 5 });
+        runner.emit_event(ProgressEvent::DependencyAnalysisComplete {
+            independent: 3,
+            partial: 1,
+            dependent: 1,
+        });
+        runner.emit_event(ProgressEvent::DependencyWarning {
+            selected_pr_id: 100,
+            selected_pr_title: "Feature A".to_string(),
+            unselected_pr_id: 200,
+            unselected_pr_title: "Feature B".to_string(),
+            is_critical: true,
+            shared_files: vec!["src/lib.rs".to_string()],
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["event"], "dependency_analysis_start");
+        assert_eq!(lines[0]["pr_count"], 5);
+        assert_eq!(lines[1]["event"], "dependency_analysis_complete");
+        assert_eq!(lines[1]["independent"], 3);
+        assert_eq!(lines[2]["event"], "dependency_warning");
+        assert!(lines[2]["is_critical"].as_bool().unwrap());
+    }
+
+    /// # Aborted Event in NDJSON
+    ///
+    /// Verifies Aborted event serializes correctly with and without message.
+    ///
+    /// ## Test Scenario
+    /// - Emits Aborted events with success=true and success=false
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON contains correct success and message fields
+    #[test]
+    fn test_aborted_event_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Aborted {
+            success: true,
+            message: None,
+        });
+        runner.emit_event(ProgressEvent::Aborted {
+            success: false,
+            message: Some("Failed to clean up".to_string()),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["event"], "aborted");
+        assert!(lines[0]["success"].as_bool().unwrap());
+        assert!(lines[0].get("message").is_none());
+        assert_eq!(lines[1]["event"], "aborted");
+        assert!(!lines[1]["success"].as_bool().unwrap());
+        assert_eq!(lines[1]["message"], "Failed to clean up");
+    }
+
+    /// # Cherry-pick Failed Event in Text Format
+    ///
+    /// Verifies CherryPickFailed events display the error in text output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a CherryPickFailed event
+    ///
+    /// ## Expected Outcome
+    /// - Output includes the PR ID and error message
+    #[test]
+    fn test_cherry_pick_failed_event_text() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::CherryPickFailed {
+            pr_id: 99,
+            error: "Commit abc123 not found".to_string(),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("99"), "Should include PR ID");
+        assert!(
+            output.contains("not found") || output.contains("abc123"),
+            "Should include error details: got '{output}'"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Stateful tests (require MERGERS_STATE_DIR env, serialized execution)
+    // -----------------------------------------------------------------------
+
+    use crate::core::state::{LockGuard, MergePhase, MergeStateFile, STATE_DIR_ENV};
+    use serial_test::file_serial;
+    use std::fs;
+
+    /// Helper: sets up a temp state dir + repo dir, sets MERGERS_STATE_DIR env var.
+    /// Returns (state_dir, repo_dir) as TempDir handles (kept alive for RAII).
+    fn setup_state_env() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo_dir = temp.path().join("repo");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::create_dir_all(&repo_dir).unwrap();
+        unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+        (temp, repo_dir)
+    }
+
+    fn teardown_state_env() {
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// Creates and saves a state file for the given repo_dir with the given phase.
+    fn create_state_file_with_phase(repo_dir: &Path, phase: MergePhase) {
+        let mut state = MergeStateFile::new(
+            repo_dir.to_path_buf(),
+            None,
+            false,
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "Done".to_string(),
+            "merged-".to_string(),
+            false,
+        );
+        state.phase = phase;
+        state.save_for_repo().unwrap();
+    }
+
+    /// # Abort Returns NoStateFile When No State Exists
+    ///
+    /// Verifies abort returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls abort with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Abort Returns InvalidPhase When Already Completed
+    ///
+    /// Verifies abort returns invalid_phase when the merge is already terminal.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with Completed phase
+    /// - Calls abort
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::Completed);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+        assert!(output.contains("Completed"));
+
+        teardown_state_env();
+    }
+
+    /// # Abort Returns Locked When Lock Is Held
+    ///
+    /// Verifies abort returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls abort
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        // Acquire lock before calling abort
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns NoStateFile When No State Exists
+    ///
+    /// Verifies skip returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls skip with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns InvalidPhase When Not Awaiting Conflict
+    ///
+    /// Verifies skip returns invalid_phase when the merge is not in
+    /// AwaitingConflictResolution phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls skip
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns Locked When Lock Is Held
+    ///
+    /// Verifies skip returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls skip
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns NoStateFile When No State Exists
+    ///
+    /// Verifies continue_merge returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls continue_merge with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns InvalidPhase When Not Awaiting Conflict
+    ///
+    /// Verifies continue_merge returns invalid_phase when the merge is not in
+    /// AwaitingConflictResolution phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls continue_merge
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns Locked When Lock Is Held
+    ///
+    /// Verifies continue_merge returns locked error when another operation
+    /// holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls continue_merge
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns NoStateFile When No State Exists
+    ///
+    /// Verifies complete returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls complete with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns InvalidPhase When Not Ready
+    ///
+    /// Verifies complete returns invalid_phase when the merge is not in
+    /// ReadyForCompletion phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls complete
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns Locked When Lock Is Held
+    ///
+    /// Verifies complete returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls complete
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
     }
 }
