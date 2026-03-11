@@ -2088,4 +2088,426 @@ mod tests {
             "Should include error details: got '{output}'"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Stateful tests (require MERGERS_STATE_DIR env, serialized execution)
+    // -----------------------------------------------------------------------
+
+    use crate::core::state::{LockGuard, MergePhase, MergeStateFile, STATE_DIR_ENV};
+    use serial_test::file_serial;
+    use std::fs;
+
+    /// Helper: sets up a temp state dir + repo dir, sets MERGERS_STATE_DIR env var.
+    /// Returns (state_dir, repo_dir) as TempDir handles (kept alive for RAII).
+    fn setup_state_env() -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo_dir = temp.path().join("repo");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::create_dir_all(&repo_dir).unwrap();
+        unsafe { std::env::set_var(STATE_DIR_ENV, &state_dir) };
+        (temp, repo_dir)
+    }
+
+    fn teardown_state_env() {
+        unsafe { std::env::remove_var(STATE_DIR_ENV) };
+    }
+
+    /// Creates and saves a state file for the given repo_dir with the given phase.
+    fn create_state_file_with_phase(repo_dir: &Path, phase: MergePhase) {
+        let mut state = MergeStateFile::new(
+            repo_dir.to_path_buf(),
+            None,
+            false,
+            "org".to_string(),
+            "project".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "Done".to_string(),
+            "merged-".to_string(),
+            false,
+        );
+        state.phase = phase;
+        state.save_for_repo().unwrap();
+    }
+
+    /// # Abort Returns NoStateFile When No State Exists
+    ///
+    /// Verifies abort returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls abort with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Abort Returns InvalidPhase When Already Completed
+    ///
+    /// Verifies abort returns invalid_phase when the merge is already terminal.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with Completed phase
+    /// - Calls abort
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::Completed);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+        assert!(output.contains("Completed"));
+
+        teardown_state_env();
+    }
+
+    /// # Abort Returns Locked When Lock Is Held
+    ///
+    /// Verifies abort returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls abort
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[test]
+    #[file_serial(state_env)]
+    fn test_abort_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        // Acquire lock before calling abort
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.abort(Some(&repo_dir));
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns NoStateFile When No State Exists
+    ///
+    /// Verifies skip returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls skip with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns InvalidPhase When Not Awaiting Conflict
+    ///
+    /// Verifies skip returns invalid_phase when the merge is not in
+    /// AwaitingConflictResolution phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls skip
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Skip Returns Locked When Lock Is Held
+    ///
+    /// Verifies skip returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls skip
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_skip_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.skip(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns NoStateFile When No State Exists
+    ///
+    /// Verifies continue_merge returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls continue_merge with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns InvalidPhase When Not Awaiting Conflict
+    ///
+    /// Verifies continue_merge returns invalid_phase when the merge is not in
+    /// AwaitingConflictResolution phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls continue_merge
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Continue Returns Locked When Lock Is Held
+    ///
+    /// Verifies continue_merge returns locked error when another operation
+    /// holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls continue_merge
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_continue_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.continue_merge(Some(&repo_dir)).await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns NoStateFile When No State Exists
+    ///
+    /// Verifies complete returns the correct error when no state file is found.
+    ///
+    /// ## Test Scenario
+    /// - Sets up temp state dir with no state file
+    /// - Calls complete with a repo path
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is NoStateFile
+    /// - NDJSON output contains "no_state_file" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_no_state_file() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::NoStateFile);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"no_state_file\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns InvalidPhase When Not Ready
+    ///
+    /// Verifies complete returns invalid_phase when the merge is not in
+    /// ReadyForCompletion phase.
+    ///
+    /// ## Test Scenario
+    /// - Creates a state file with CherryPicking phase
+    /// - Calls complete
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is InvalidPhase
+    /// - NDJSON output contains "invalid_phase" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_invalid_phase() {
+        let (_temp, repo_dir) = setup_state_env();
+        create_state_file_with_phase(&repo_dir, MergePhase::CherryPicking);
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::InvalidPhase);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"invalid_phase\""));
+
+        teardown_state_env();
+    }
+
+    /// # Complete Returns Locked When Lock Is Held
+    ///
+    /// Verifies complete returns locked error when another operation holds the lock.
+    ///
+    /// ## Test Scenario
+    /// - Acquires a lock on the repo
+    /// - Calls complete
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Locked
+    /// - NDJSON output contains "locked" code
+    #[tokio::test]
+    #[file_serial(state_env)]
+    async fn test_complete_locked() {
+        let (_temp, repo_dir) = setup_state_env();
+
+        let _lock = LockGuard::acquire(&repo_dir).unwrap();
+
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let result = runner.complete(Some(&repo_dir), "Done").await;
+
+        assert_eq!(result.exit_code, ExitCode::Locked);
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("\"code\":\"locked\""));
+
+        teardown_state_env();
+    }
 }
