@@ -1567,4 +1567,525 @@ mod tests {
         assert!(output.contains("Generic error"));
         assert!(!output.contains("\"code\""));
     }
+
+    /// # Error Emission With All Code Variants
+    ///
+    /// Verifies all error code strings used across the runner
+    /// are correctly emitted in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits errors with each code used in the codebase:
+    ///   locked, no_state_file, invalid_phase, conflicts_unresolved
+    ///
+    /// ## Expected Outcome
+    /// - Each NDJSON line contains the correct code field
+    #[test]
+    fn test_error_emission_all_code_variants() {
+        let codes = [
+            "locked",
+            "no_state_file",
+            "invalid_phase",
+            "conflicts_unresolved",
+        ];
+
+        for code in &codes {
+            let mut config = create_test_config();
+            config.output_format = OutputFormat::Ndjson;
+
+            let mut buffer = Vec::new();
+            let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+            runner.emit_error_with_code(&format!("Error: {}", code), Some(code));
+
+            let output = String::from_utf8(buffer).unwrap();
+            let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+            assert_eq!(json["event"], "error", "event type should be error");
+            assert_eq!(
+                json["code"], *code,
+                "code should be '{}' but got '{}'",
+                code, json["code"]
+            );
+            assert!(
+                json["message"].as_str().unwrap().contains(code),
+                "message should contain code context"
+            );
+        }
+    }
+
+    /// # Error Emission in Text Format With Code
+    ///
+    /// Verifies that error codes are rendered in text output too.
+    ///
+    /// ## Test Scenario
+    /// - Emits an error with code "locked" in Text format
+    ///
+    /// ## Expected Outcome
+    /// - Text output contains the error message
+    #[test]
+    fn test_error_emission_text_format_with_code() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("Another merge operation is in progress"),
+            "Text format should display the error message: got '{output}'"
+        );
+    }
+
+    /// # Start Event With State File Path
+    ///
+    /// Verifies the Start event correctly includes state_file_path in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a Start event with a state file path set
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output includes the state_file_path field
+    #[test]
+    fn test_start_event_with_state_file_path() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 3,
+            version: "v2.0.0".to_string(),
+            target_branch: "release".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state/merge.json")),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["event"], "start");
+        assert_eq!(json["total_prs"], 3);
+        assert_eq!(json["state_file_path"], "/tmp/state/merge.json");
+    }
+
+    /// # Start Event Without State File Path Omits Field
+    ///
+    /// Verifies the Start event omits state_file_path when None in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a Start event with state_file_path = None
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output does not include state_file_path field
+    #[test]
+    fn test_start_event_without_state_file_path() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 1,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: None,
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["event"], "start");
+        assert!(
+            json.get("state_file_path").is_none(),
+            "state_file_path should be omitted when None"
+        );
+    }
+
+    /// # RunResult Success With Message
+    ///
+    /// Verifies RunResult::success_with_message() sets exit code and message.
+    ///
+    /// ## Test Scenario
+    /// - Creates a success result with a message
+    ///
+    /// ## Expected Outcome
+    /// - Exit code is Success, message is set
+    #[test]
+    fn test_run_result_success_with_message() {
+        let result = RunResult::success_with_message("Merge aborted");
+        assert!(result.is_success());
+        assert_eq!(result.exit_code, crate::core::ExitCode::Success);
+        assert_eq!(result.message, Some("Merge aborted".to_string()));
+    }
+
+    /// # RunResult With State File Builder
+    ///
+    /// Verifies RunResult::with_state_file() builder method chains correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates a partial success result and chains with_state_file
+    ///
+    /// ## Expected Outcome
+    /// - State file path is set, original fields preserved
+    #[test]
+    fn test_run_result_with_state_file() {
+        let result = RunResult::partial_success("3 of 5 succeeded")
+            .with_state_file(PathBuf::from("/state/merge.json"));
+        assert_eq!(result.exit_code, crate::core::ExitCode::PartialSuccess);
+        assert_eq!(result.message, Some("3 of 5 succeeded".to_string()));
+        assert_eq!(
+            result.state_file_path,
+            Some(PathBuf::from("/state/merge.json"))
+        );
+    }
+
+    /// # Quiet Mode Still Shows Errors
+    ///
+    /// Verifies quiet mode shows errors (since errors and conflicts
+    /// are always displayed even in quiet mode).
+    ///
+    /// ## Test Scenario
+    /// - Creates runner with quiet=true
+    /// - Emits error events with and without codes
+    ///
+    /// ## Expected Outcome
+    /// - Error output is still present (quiet only suppresses progress)
+    #[test]
+    fn test_quiet_mode_shows_errors() {
+        let mut config = create_test_config();
+        config.quiet = true;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Something locked", Some("locked"));
+        runner.emit_error("Generic failure");
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("Something locked"),
+            "Quiet mode should still show errors: got '{output}'"
+        );
+        assert!(
+            output.contains("Generic failure"),
+            "Quiet mode should still show errors: got '{output}'"
+        );
+    }
+
+    /// # Full Merge Event Flow in NDJSON
+    ///
+    /// Simulates a realistic merge flow: start → cherry-pick → conflict →
+    /// skip → cherry-pick → success → complete. Validates all events appear
+    /// as valid NDJSON and in correct order.
+    ///
+    /// ## Test Scenario
+    /// - Emits the sequence of events a real merge + skip flow would produce
+    ///
+    /// ## Expected Outcome
+    /// - Each line is valid JSON with the expected event type
+    /// - Events appear in the correct order
+    #[test]
+    fn test_full_merge_flow_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        // Start
+        runner.emit_event(ProgressEvent::Start {
+            total_prs: 2,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state.json")),
+        });
+
+        // First PR conflicts
+        runner.emit_event(ProgressEvent::CherryPickStart {
+            pr_id: 100,
+            commit_id: "aaa111".to_string(),
+            index: 0,
+            total: 2,
+        });
+        runner.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: 100,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        // Second PR succeeds
+        runner.emit_event(ProgressEvent::CherryPickStart {
+            pr_id: 200,
+            commit_id: "bbb222".to_string(),
+            index: 1,
+            total: 2,
+        });
+        runner.emit_event(ProgressEvent::CherryPickSuccess {
+            pr_id: 200,
+            commit_id: "bbb222".to_string(),
+        });
+
+        // Complete
+        runner.emit_event(ProgressEvent::Complete {
+            successful: 1,
+            failed: 0,
+            skipped: 1,
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("Invalid JSON line: {}", l)))
+            .collect();
+
+        assert_eq!(lines.len(), 6, "Should have 6 NDJSON events");
+        assert_eq!(lines[0]["event"], "start");
+        assert_eq!(lines[0]["state_file_path"], "/tmp/state.json");
+        assert_eq!(lines[1]["event"], "cherry_pick_start");
+        assert_eq!(lines[1]["pr_id"], 100);
+        assert_eq!(lines[2]["event"], "cherry_pick_skipped");
+        assert_eq!(lines[2]["pr_id"], 100);
+        assert_eq!(lines[3]["event"], "cherry_pick_start");
+        assert_eq!(lines[3]["pr_id"], 200);
+        assert_eq!(lines[4]["event"], "cherry_pick_success");
+        assert_eq!(lines[4]["pr_id"], 200);
+        assert_eq!(lines[5]["event"], "complete");
+        assert_eq!(lines[5]["successful"], 1);
+        assert_eq!(lines[5]["skipped"], 1);
+    }
+
+    /// # Error Event in JSON Format Is Buffered
+    ///
+    /// Verifies that errors are also buffered in JSON mode (not written immediately).
+    ///
+    /// ## Test Scenario
+    /// - Emits error events in JSON format
+    ///
+    /// ## Expected Outcome
+    /// - Buffer remains empty since JSON buffers all events
+    #[test]
+    fn test_error_event_buffered_in_json_mode() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Json;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Locked", Some("locked"));
+        runner.emit_error("Generic error");
+
+        assert!(
+            buffer.is_empty(),
+            "JSON format should buffer error events too"
+        );
+    }
+
+    /// # Skip Event in Text Format
+    ///
+    /// Verifies CherryPickSkipped events display correctly in text output
+    /// including the PR ID and skip reason.
+    ///
+    /// ## Test Scenario
+    /// - Emits a CherryPickSkipped event with a reason
+    ///
+    /// ## Expected Outcome
+    /// - Output mentions the PR being skipped
+    #[test]
+    fn test_skip_event_text_format() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: 42,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(
+            output.contains("42"),
+            "Should mention the PR ID: got '{output}'"
+        );
+    }
+
+    /// # Multiple Errors With Different Codes in NDJSON
+    ///
+    /// Verifies that emitting multiple errors produces separate NDJSON lines,
+    /// each with the correct code.
+    ///
+    /// ## Test Scenario
+    /// - Emits three errors: locked (with code), generic (no code), invalid_phase (with code)
+    ///
+    /// ## Expected Outcome
+    /// - Three NDJSON lines, each valid JSON with correct fields
+    #[test]
+    fn test_multiple_errors_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_error_with_code("Locked", Some("locked"));
+        runner.emit_error("Something went wrong");
+        runner.emit_error_with_code("Wrong phase", Some("invalid_phase"));
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["code"], "locked");
+        assert!(lines[1].get("code").is_none());
+        assert_eq!(lines[2]["code"], "invalid_phase");
+    }
+
+    /// # Status Idle in NDJSON Format
+    ///
+    /// Verifies that idle status is properly formatted in NDJSON output.
+    ///
+    /// ## Test Scenario
+    /// - Creates a runner with NDJSON output format
+    /// - Calls status with no state file
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON output is valid JSON with idle fields
+    #[test]
+    fn test_status_idle_ndjson_format() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let result = runner.status(Some(temp_dir.path()));
+
+        assert!(result.is_success());
+
+        let output = String::from_utf8(buffer).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(json["phase"], "idle");
+        assert_eq!(json["status"], "idle");
+    }
+
+    /// # Dependency Analysis Events in NDJSON
+    ///
+    /// Verifies dependency analysis events serialize correctly.
+    ///
+    /// ## Test Scenario
+    /// - Emits DependencyAnalysisStart, DependencyAnalysisComplete,
+    ///   and DependencyWarning events
+    ///
+    /// ## Expected Outcome
+    /// - All events produce valid NDJSON with correct fields
+    #[test]
+    fn test_dependency_analysis_events_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::DependencyAnalysisStart { pr_count: 5 });
+        runner.emit_event(ProgressEvent::DependencyAnalysisComplete {
+            independent: 3,
+            partial: 1,
+            dependent: 1,
+        });
+        runner.emit_event(ProgressEvent::DependencyWarning {
+            selected_pr_id: 100,
+            selected_pr_title: "Feature A".to_string(),
+            unselected_pr_id: 200,
+            unselected_pr_title: "Feature B".to_string(),
+            is_critical: true,
+            shared_files: vec!["src/lib.rs".to_string()],
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["event"], "dependency_analysis_start");
+        assert_eq!(lines[0]["pr_count"], 5);
+        assert_eq!(lines[1]["event"], "dependency_analysis_complete");
+        assert_eq!(lines[1]["independent"], 3);
+        assert_eq!(lines[2]["event"], "dependency_warning");
+        assert!(lines[2]["is_critical"].as_bool().unwrap());
+    }
+
+    /// # Aborted Event in NDJSON
+    ///
+    /// Verifies Aborted event serializes correctly with and without message.
+    ///
+    /// ## Test Scenario
+    /// - Emits Aborted events with success=true and success=false
+    ///
+    /// ## Expected Outcome
+    /// - NDJSON contains correct success and message fields
+    #[test]
+    fn test_aborted_event_ndjson() {
+        let mut config = create_test_config();
+        config.output_format = OutputFormat::Ndjson;
+
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::Aborted {
+            success: true,
+            message: None,
+        });
+        runner.emit_event(ProgressEvent::Aborted {
+            success: false,
+            message: Some("Failed to clean up".to_string()),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        let lines: Vec<serde_json::Value> = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["event"], "aborted");
+        assert!(lines[0]["success"].as_bool().unwrap());
+        assert!(lines[0].get("message").is_none());
+        assert_eq!(lines[1]["event"], "aborted");
+        assert!(!lines[1]["success"].as_bool().unwrap());
+        assert_eq!(lines[1]["message"], "Failed to clean up");
+    }
+
+    /// # Cherry-pick Failed Event in Text Format
+    ///
+    /// Verifies CherryPickFailed events display the error in text output.
+    ///
+    /// ## Test Scenario
+    /// - Emits a CherryPickFailed event
+    ///
+    /// ## Expected Outcome
+    /// - Output includes the PR ID and error message
+    #[test]
+    fn test_cherry_pick_failed_event_text() {
+        let config = create_test_config();
+        let mut buffer = Vec::new();
+        let mut runner = NonInteractiveRunner::with_writer(config, &mut buffer);
+
+        runner.emit_event(ProgressEvent::CherryPickFailed {
+            pr_id: 99,
+            error: "Commit abc123 not found".to_string(),
+        });
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("99"), "Should include PR ID");
+        assert!(
+            output.contains("not found") || output.contains("abc123"),
+            "Should include error details: got '{output}'"
+        );
+    }
 }
