@@ -1847,4 +1847,148 @@ mod tests {
         let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
         assert!(result);
     }
+
+    /// # Run Hooks Simple With Failing Hook
+    ///
+    /// Verifies that run_hooks_simple returns false for failed hooks.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with a failing hook
+    /// - Calls run_hooks_simple
+    ///
+    /// ## Expected Outcome
+    /// - Returns false for failed execution
+    #[test]
+    fn test_run_hooks_simple_failure() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["exit 1".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let result = engine.run_hooks_simple(HookTrigger::PostMerge, temp_dir.path());
+        assert!(!result);
+    }
+
+    /// # Run Hooks With Events
+    ///
+    /// Verifies that run_hooks_with_events emits correct progress events.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine with hooks
+    /// - Calls run_hooks_with_events and collects events
+    ///
+    /// ## Expected Outcome
+    /// - Events include HookStart and HookComplete
+    #[test]
+    fn test_run_hooks_with_events() {
+        use crate::core::operations::{HookContext, HookTriggerConfig, HooksConfig};
+        use crate::core::output::ProgressEvent;
+
+        let hooks = HooksConfig {
+            post_merge: HookTriggerConfig::from_commands(vec!["echo hello".to_string()]),
+            ..Default::default()
+        };
+
+        let engine = MergeEngine::new(
+            create_mock_client(),
+            "org".to_string(),
+            "proj".to_string(),
+            "repo".to_string(),
+            "dev".to_string(),
+            "main".to_string(),
+            "v1.0.0".to_string(),
+            "merged-".to_string(),
+            "Done".to_string(),
+            false,
+            None,
+            Some(hooks),
+            100,
+            10,
+            None,
+        );
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let context = HookContext::new();
+        let mut events = Vec::new();
+
+        let outcome = engine.run_hooks_with_events(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+            &mut |event: ProgressEvent| {
+                events.push(event);
+            },
+        );
+
+        assert!(outcome.is_success());
+        assert!(!events.is_empty());
+
+        // Should have HookStart
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::HookStart { .. }))
+        );
+
+        // Should have HookComplete
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::HookComplete { .. }))
+        );
+    }
+
+    /// # Run Hooks With Events No Hooks Configured
+    ///
+    /// Verifies that run_hooks_with_events returns Success when no hooks configured.
+    ///
+    /// ## Test Scenario
+    /// - Creates engine without hooks
+    /// - Calls run_hooks_with_events
+    ///
+    /// ## Expected Outcome
+    /// - Returns HookOutcome::Success with no events
+    #[test]
+    fn test_run_hooks_with_events_no_hooks() {
+        use crate::core::operations::HookContext;
+        use crate::core::output::ProgressEvent;
+
+        let engine = create_test_engine();
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let context = HookContext::new();
+        let mut events = Vec::new();
+
+        let outcome = engine.run_hooks_with_events(
+            HookTrigger::PostMerge,
+            temp_dir.path(),
+            &context,
+            &mut |event: ProgressEvent| {
+                events.push(event);
+            },
+        );
+
+        assert!(outcome.is_success());
+        assert!(events.is_empty());
+    }
 }

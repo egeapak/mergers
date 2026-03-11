@@ -2013,4 +2013,163 @@ show_work_item_highlights = true
             err_msg
         );
     }
+
+    /// # Config With Hooks Simple Format
+    ///
+    /// Tests that hooks can be loaded from a config file using simple format.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with simple hook format (array of commands)
+    /// - Loads the config
+    ///
+    /// ## Expected Outcome
+    /// - Hooks are loaded correctly
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_config_with_hooks_simple_format() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("mergers");
+        std::fs::create_dir_all(&config_path).unwrap();
+
+        let config_content = r#"
+organization = "test-org"
+project = "test-project"
+
+[hooks]
+post_checkout = ["npm install", "cargo build"]
+post_merge = ["cargo test"]
+"#;
+
+        std::fs::write(config_path.join("config.toml"), config_content).unwrap();
+
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let config = Config::load_from_file().unwrap();
+
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(config.hooks.is_some());
+        let hooks = config.hooks.unwrap();
+        assert!(hooks.has_hooks());
+        assert_eq!(hooks.post_checkout.commands.len(), 2);
+        assert_eq!(hooks.post_merge.commands.len(), 1);
+    }
+
+    /// # Config With Hooks Extended Format
+    ///
+    /// Tests that hooks can be loaded from a config file using extended format.
+    ///
+    /// ## Test Scenario
+    /// - Creates a config file with extended hook format (with on_failure, timeout)
+    /// - Loads the config
+    ///
+    /// ## Expected Outcome
+    /// - Hooks are loaded with all extended options
+    #[test]
+    #[file_serial(env_tests)]
+    fn test_config_with_hooks_extended_format() {
+        use crate::core::operations::{HookExecutionMode, HookFailureMode};
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("mergers");
+        std::fs::create_dir_all(&config_path).unwrap();
+
+        let config_content = r#"
+organization = "test-org"
+
+[hooks.post_checkout]
+commands = ["npm install"]
+on_failure = "abort"
+timeout_secs = 120
+
+[hooks.post_merge]
+commands = ["cargo test"]
+on_failure = "continue"
+execution = "async"
+"#;
+
+        std::fs::write(config_path.join("config.toml"), config_content).unwrap();
+
+        let original_xdg = env::var("XDG_CONFIG_HOME").ok();
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp_dir.path());
+        }
+
+        let config = Config::load_from_file().unwrap();
+
+        match original_xdg {
+            Some(val) => unsafe {
+                env::set_var("XDG_CONFIG_HOME", val);
+            },
+            None => unsafe {
+                env::remove_var("XDG_CONFIG_HOME");
+            },
+        }
+
+        assert!(config.hooks.is_some());
+        let hooks = config.hooks.unwrap();
+
+        // Post-checkout checks
+        assert_eq!(hooks.post_checkout.commands, vec!["npm install"]);
+        assert_eq!(hooks.post_checkout.on_failure, Some(HookFailureMode::Abort));
+        assert_eq!(hooks.post_checkout.timeout_secs, 120);
+
+        // Post-merge checks
+        assert_eq!(hooks.post_merge.commands, vec!["cargo test"]);
+        assert_eq!(hooks.post_merge.on_failure, Some(HookFailureMode::Continue));
+        assert_eq!(hooks.post_merge.execution, HookExecutionMode::Async);
+    }
+
+    /// # Config Merge Preserves Hooks
+    ///
+    /// Tests that config merging preserves hooks from both sources.
+    ///
+    /// ## Test Scenario
+    /// - Creates two configs with different hooks
+    /// - Merges them
+    ///
+    /// ## Expected Outcome
+    /// - Merged config has hooks from both (with other taking precedence)
+    #[test]
+    fn test_config_merge_preserves_hooks() {
+        use crate::core::operations::{HookTriggerConfig, HooksConfig};
+
+        let config1 = Config {
+            hooks: Some(HooksConfig {
+                post_checkout: HookTriggerConfig::from_commands(vec!["echo base".to_string()]),
+                post_merge: HookTriggerConfig::from_commands(vec!["echo base-merge".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let config2 = Config {
+            hooks: Some(HooksConfig {
+                post_checkout: HookTriggerConfig::from_commands(vec!["echo override".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let merged = config1.merge(config2);
+
+        assert!(merged.hooks.is_some());
+        let hooks = merged.hooks.unwrap();
+
+        // Post-checkout should be overridden
+        assert_eq!(hooks.post_checkout.commands, vec!["echo override"]);
+
+        // Post-merge should be preserved from config1
+        assert_eq!(hooks.post_merge.commands, vec!["echo base-merge"]);
+    }
 }
