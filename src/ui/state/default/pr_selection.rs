@@ -345,6 +345,25 @@ impl PullRequestSelectionState {
         self.update_scrollbar_state(app.pull_requests().len());
     }
 
+    fn next_no_wrap(&mut self, app: &MergeApp) {
+        if app.pull_requests().is_empty() {
+            return;
+        }
+        let i = match self.table_state.selected() {
+            Some(i) => {
+                if i >= app.pull_requests().len() - 1 {
+                    return;
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.table_state.select(Some(i));
+        self.work_item_index = 0;
+        self.update_scrollbar_state(app.pull_requests().len());
+    }
+
     fn previous(&mut self, app: &MergeApp) {
         if app.pull_requests().is_empty() {
             return;
@@ -361,6 +380,25 @@ impl PullRequestSelectionState {
         };
         self.table_state.select(Some(i));
         self.work_item_index = 0; // Reset work item selection when PR changes
+        self.update_scrollbar_state(app.pull_requests().len());
+    }
+
+    fn previous_no_wrap(&mut self, app: &MergeApp) {
+        if app.pull_requests().is_empty() {
+            return;
+        }
+        let i = match self.table_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    return;
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.table_state.select(Some(i));
+        self.work_item_index = 0;
         self.update_scrollbar_state(app.pull_requests().len());
     }
 
@@ -2518,13 +2556,13 @@ impl ModeState for PullRequestSelectionState {
         match event.kind {
             MouseEventKind::ScrollUp => {
                 if self.is_in_table(event.column, event.row) {
-                    self.previous(app);
+                    self.previous_no_wrap(app);
                 }
                 StateChange::Keep
             }
             MouseEventKind::ScrollDown => {
                 if self.is_in_table(event.column, event.row) {
-                    self.next(app);
+                    self.next_no_wrap(app);
                 }
                 StateChange::Keep
             }
@@ -3512,6 +3550,100 @@ mod tests {
 
             assert_snapshot!("mouse_scroll_up", harness.backend());
         });
+    }
+
+    /// # PR Selection State - Mouse Scroll Down Does Not Wrap
+    ///
+    /// Tests that scrolling down with mouse wheel at the last item does not wrap to the first.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - Starts with last item selected (index 2)
+    /// - Simulates mouse scroll down event within table bounds
+    ///
+    /// ## Expected Outcome
+    /// - Selection should remain on the last item (index 2)
+    /// - No wrap to the beginning of the list
+    #[test]
+    fn test_mouse_scroll_down_no_wrap() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut inner_state = PullRequestSelectionState::new();
+        inner_state.table_state.select(Some(2)); // Start at last item
+
+        let mut state = MergeState::PullRequestSelection(inner_state);
+
+        // First render to populate table_area
+        harness.render_merge_state(&mut state);
+
+        // Simulate scroll down within table area
+        let event = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        tokio_test::block_on(async {
+            let app = harness.merge_app_mut();
+            state.process_mouse(event, app).await;
+        });
+
+        // Selection should stay at last item, not wrap to 0
+        if let MergeState::PullRequestSelection(inner) = &state {
+            assert_eq!(inner.table_state.selected(), Some(2));
+        } else {
+            panic!("Expected PullRequestSelection state");
+        }
+    }
+
+    /// # PR Selection State - Mouse Scroll Up Does Not Wrap
+    ///
+    /// Tests that scrolling up with mouse wheel at the first item does not wrap to the last.
+    ///
+    /// ## Test Scenario
+    /// - Creates a PR selection state with PRs loaded
+    /// - Starts with first item selected (index 0)
+    /// - Simulates mouse scroll up event within table bounds
+    ///
+    /// ## Expected Outcome
+    /// - Selection should remain on the first item (index 0)
+    /// - No wrap to the end of the list
+    #[test]
+    fn test_mouse_scroll_up_no_wrap() {
+        let config = create_test_config_default();
+        let mut harness = TuiTestHarness::with_config(config);
+        *harness.app.pull_requests_mut() = create_test_pull_requests();
+
+        let mut inner_state = PullRequestSelectionState::new();
+        inner_state.table_state.select(Some(0)); // Start at first item
+
+        let mut state = MergeState::PullRequestSelection(inner_state);
+
+        // First render to populate table_area
+        harness.render_merge_state(&mut state);
+
+        // Simulate scroll up within table area
+        let event = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+
+        tokio_test::block_on(async {
+            let app = harness.merge_app_mut();
+            state.process_mouse(event, app).await;
+        });
+
+        // Selection should stay at first item, not wrap to last
+        if let MergeState::PullRequestSelection(inner) = &state {
+            assert_eq!(inner.table_state.selected(), Some(0));
+        } else {
+            panic!("Expected PullRequestSelection state");
+        }
     }
 
     /// # PR Selection State - Mouse Click Highlight
