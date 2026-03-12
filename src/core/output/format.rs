@@ -296,6 +296,7 @@ impl<W: Write> OutputWriter<W> {
                 total_prs,
                 version,
                 target_branch,
+                ..
             } => {
                 self.writeln("")?;
                 self.writeln(&format!(
@@ -428,6 +429,56 @@ impl<W: Write> OutputWriter<W> {
                     .unwrap_or_default();
                 self.writeln(&format!("Error{}: {}", code_str, message))?;
             }
+            ProgressEvent::HookStart {
+                trigger,
+                command_count,
+            } => {
+                self.writeln(&format!(
+                    "Running {} hook ({} command{})...",
+                    trigger,
+                    command_count,
+                    if *command_count == 1 { "" } else { "s" }
+                ))?;
+            }
+            ProgressEvent::HookCommandStart {
+                trigger: _,
+                command,
+                index: _,
+            } => {
+                self.writeln(&format!("  → {}", command))?;
+            }
+            ProgressEvent::HookCommandComplete {
+                trigger: _,
+                command: _,
+                success,
+                index: _,
+            } => {
+                if *success {
+                    self.writeln("    ✓ completed")?;
+                } else {
+                    self.writeln("    ✗ failed")?;
+                }
+            }
+            ProgressEvent::HookComplete {
+                trigger,
+                all_succeeded,
+            } => {
+                if *all_succeeded {
+                    self.writeln(&format!("  ✓ {} hooks completed", trigger))?;
+                } else {
+                    self.writeln(&format!("  ✗ {} hooks failed", trigger))?;
+                }
+            }
+            ProgressEvent::HookFailed {
+                trigger,
+                command,
+                error,
+            } => {
+                self.writeln(&format!("Hook {} failed: {}", trigger, command))?;
+                if !error.is_empty() {
+                    self.writeln(&format!("  Error: {}", error))?;
+                }
+            }
         }
         Ok(())
     }
@@ -468,6 +519,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         };
 
         writer.write_event(&event).unwrap();
@@ -499,6 +551,7 @@ mod tests {
                 total_prs: 3,
                 version: "v1.0.0".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             })
             .unwrap();
 
@@ -540,6 +593,7 @@ mod tests {
                 total_prs: 2,
                 version: "v1.0.0".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             })
             .unwrap();
 
@@ -746,5 +800,520 @@ mod tests {
         assert!(output.contains("Successful: 3"));
         assert!(output.contains("Failed:     1"));
         assert!(output.contains("Skipped:    1"));
+    }
+
+    /// # Post-Merge Status Symbols
+    ///
+    /// Verifies post-merge status symbols are correct.
+    ///
+    /// ## Test Scenario
+    /// - Checks each post-merge status variant
+    ///
+    /// ## Expected Outcome
+    /// - Each status has a unique symbol
+    #[test]
+    fn test_post_merge_status_symbols() {
+        assert_eq!(
+            OutputWriter::<Vec<u8>>::post_merge_status_symbol(&PostMergeStatus::Pending),
+            "○"
+        );
+        assert_eq!(
+            OutputWriter::<Vec<u8>>::post_merge_status_symbol(&PostMergeStatus::Success),
+            "✓"
+        );
+        assert_eq!(
+            OutputWriter::<Vec<u8>>::post_merge_status_symbol(&PostMergeStatus::Failed {
+                error: "test".to_string()
+            }),
+            "✗"
+        );
+        assert_eq!(
+            OutputWriter::<Vec<u8>>::post_merge_status_symbol(&PostMergeStatus::Skipped),
+            "⊘"
+        );
+    }
+
+    /// # Cherry Pick Events Text Formatting
+    ///
+    /// Verifies cherry-pick events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes various cherry-pick events
+    ///
+    /// ## Expected Outcome
+    /// - Output contains expected text for each event type
+    #[test]
+    fn test_cherry_pick_events_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        // CherryPickSuccess
+        writer
+            .write_event(&ProgressEvent::CherryPickSuccess {
+                pr_id: 123,
+                commit_id: "abc123".to_string(),
+            })
+            .unwrap();
+
+        // CherryPickFailed
+        writer
+            .write_event(&ProgressEvent::CherryPickFailed {
+                pr_id: 456,
+                error: "merge conflict".to_string(),
+            })
+            .unwrap();
+
+        // CherryPickSkipped
+        writer
+            .write_event(&ProgressEvent::CherryPickSkipped {
+                pr_id: 789,
+                reason: Some("already applied".to_string()),
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("PR #123 applied"));
+        assert!(output.contains("PR #456 failed"));
+        assert!(output.contains("merge conflict"));
+        assert!(output.contains("PR #789 skipped"));
+        assert!(output.contains("already applied"));
+    }
+
+    /// # Dependency Events Text Formatting
+    ///
+    /// Verifies dependency analysis events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes dependency analysis events
+    ///
+    /// ## Expected Outcome
+    /// - Output contains expected text
+    #[test]
+    fn test_dependency_events_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::DependencyAnalysisStart { pr_count: 5 })
+            .unwrap();
+
+        writer
+            .write_event(&ProgressEvent::DependencyAnalysisComplete {
+                independent: 3,
+                partial: 1,
+                dependent: 1,
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Analyzing dependencies for 5 PRs"));
+        assert!(output.contains("3 independent"));
+        assert!(output.contains("1 partial"));
+        assert!(output.contains("1 overlapping"));
+    }
+
+    /// # Hook Events Text Formatting
+    ///
+    /// Verifies hook events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes various hook events
+    ///
+    /// ## Expected Outcome
+    /// - Output contains expected text for each event type
+    #[test]
+    fn test_hook_events_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::HookStart {
+                trigger: "post_merge".to_string(),
+                command_count: 2,
+            })
+            .unwrap();
+
+        writer
+            .write_event(&ProgressEvent::HookCommandStart {
+                trigger: "post_merge".to_string(),
+                command: "cargo test".to_string(),
+                index: 0,
+            })
+            .unwrap();
+
+        writer
+            .write_event(&ProgressEvent::HookCommandComplete {
+                trigger: "post_merge".to_string(),
+                command: "cargo test".to_string(),
+                success: true,
+                index: 0,
+            })
+            .unwrap();
+
+        writer
+            .write_event(&ProgressEvent::HookComplete {
+                trigger: "post_merge".to_string(),
+                all_succeeded: true,
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Running post_merge hook"));
+        assert!(output.contains("2 commands"));
+        assert!(output.contains("cargo test"));
+        assert!(output.contains("completed"));
+    }
+
+    /// # Summary Result Types Text Formatting
+    ///
+    /// Verifies different summary result types format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes summaries with different result types
+    ///
+    /// ## Expected Outcome
+    /// - Each result type has correct heading
+    #[test]
+    fn test_summary_result_types_text_formatting() {
+        use super::super::events::{SummaryCounts, SummaryInfo, SummaryResult};
+
+        let test_cases = [
+            (SummaryResult::Success, "SUCCESS"),
+            (SummaryResult::PartialSuccess, "PARTIAL SUCCESS"),
+            (SummaryResult::Failed, "FAILED"),
+            (SummaryResult::Aborted, "ABORTED"),
+            (SummaryResult::Conflict, "CONFLICT"),
+        ];
+
+        for (result, expected_text) in test_cases {
+            let mut buffer = Vec::new();
+            let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+            let summary = SummaryInfo {
+                result: result.clone(),
+                version: "v1.0.0".to_string(),
+                target_branch: "main".to_string(),
+                counts: SummaryCounts::new(1, 0, 0, 0),
+                items: None,
+                post_merge: None,
+            };
+
+            writer.write_summary(&summary).unwrap();
+
+            let output = String::from_utf8(buffer).unwrap();
+            assert!(
+                output.contains(expected_text),
+                "Expected '{}' in output for {:?}",
+                expected_text,
+                result
+            );
+        }
+    }
+
+    /// # Summary With Post-Merge Tasks
+    ///
+    /// Verifies summary includes post-merge task counts.
+    ///
+    /// ## Test Scenario
+    /// - Writes summary with post_merge field set
+    ///
+    /// ## Expected Outcome
+    /// - Output contains post-merge task counts
+    #[test]
+    fn test_summary_with_post_merge_tasks() {
+        use super::super::events::{PostMergeSummary, SummaryCounts, SummaryInfo, SummaryResult};
+
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        let summary = SummaryInfo {
+            result: SummaryResult::Success,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            counts: SummaryCounts::new(3, 0, 0, 0),
+            items: None,
+            post_merge: Some(PostMergeSummary {
+                total_tasks: 3,
+                successful: 2,
+                failed: 1,
+                tasks: None,
+            }),
+        };
+
+        writer.write_summary(&summary).unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Post-merge tasks:"));
+        assert!(output.contains("Successful: 2"));
+        assert!(output.contains("Failed:     1"));
+    }
+
+    /// # NDJSON Conflict Info
+    ///
+    /// Verifies conflict info formats as NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Writes conflict info with NDJSON formatter
+    ///
+    /// ## Expected Outcome
+    /// - Output is valid JSON
+    #[test]
+    fn test_ndjson_conflict_info() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Ndjson, false);
+
+        let conflict = ConflictInfo::new(
+            123,
+            "Test PR".to_string(),
+            "abc123".to_string(),
+            vec!["file1.rs".to_string()],
+            PathBuf::from("/tmp/repo"),
+        );
+
+        writer.write_conflict(&conflict).unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["pr_id"], 123);
+    }
+
+    /// # NDJSON Summary
+    ///
+    /// Verifies summary formats as NDJSON.
+    ///
+    /// ## Test Scenario
+    /// - Writes summary with NDJSON formatter
+    ///
+    /// ## Expected Outcome
+    /// - Output is valid JSON on single line
+    #[test]
+    fn test_ndjson_summary() {
+        use super::super::events::{SummaryCounts, SummaryInfo, SummaryResult};
+
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Ndjson, false);
+
+        let summary = SummaryInfo {
+            result: SummaryResult::Success,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            counts: SummaryCounts::new(3, 0, 0, 0),
+            items: None,
+            post_merge: None,
+        };
+
+        writer.write_summary(&summary).unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["result"], "success");
+        assert_eq!(parsed["version"], "v1.0.0");
+    }
+
+    /// # Complete Event Text Formatting
+    ///
+    /// Verifies complete event formats correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes complete event
+    ///
+    /// ## Expected Outcome
+    /// - Output contains counts
+    #[test]
+    fn test_complete_event_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::Complete {
+                successful: 5,
+                failed: 2,
+                skipped: 1,
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("5 successful"));
+        assert!(output.contains("2 failed"));
+        assert!(output.contains("1 skipped"));
+    }
+
+    /// # Error Event Text Formatting
+    ///
+    /// Verifies error events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes error events with and without code
+    ///
+    /// ## Expected Outcome
+    /// - Output contains error message and code when present
+    #[test]
+    fn test_error_event_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::Error {
+                message: "Something went wrong".to_string(),
+                code: Some("E001".to_string()),
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Error"));
+        assert!(output.contains("[E001]"));
+        assert!(output.contains("Something went wrong"));
+    }
+
+    /// # Aborted Event Text Formatting
+    ///
+    /// Verifies aborted events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes aborted events (success and failure)
+    ///
+    /// ## Expected Outcome
+    /// - Output contains appropriate message
+    #[test]
+    fn test_aborted_event_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::Aborted {
+                success: true,
+                message: Some("User requested abort".to_string()),
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("aborted successfully"));
+        assert!(output.contains("User requested abort"));
+    }
+
+    /// # Hook Failed Event Text Formatting
+    ///
+    /// Verifies hook failed events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes hook failed event
+    ///
+    /// ## Expected Outcome
+    /// - Output contains trigger, command, and error
+    #[test]
+    fn test_hook_failed_event_text_formatting() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::HookFailed {
+                trigger: "post_merge".to_string(),
+                command: "cargo test".to_string(),
+                error: "tests failed".to_string(),
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("Hook post_merge failed"));
+        assert!(output.contains("cargo test"));
+        assert!(output.contains("tests failed"));
+    }
+
+    /// # Flush Operation
+    ///
+    /// Verifies flush doesn't error.
+    ///
+    /// ## Test Scenario
+    /// - Calls flush on writer
+    ///
+    /// ## Expected Outcome
+    /// - No error returned
+    #[test]
+    fn test_flush_operation() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+        assert!(writer.flush().is_ok());
+    }
+
+    /// # Format and Quiet Getters
+    ///
+    /// Verifies format() and is_quiet() getters work.
+    ///
+    /// ## Test Scenario
+    /// - Creates writers with different settings
+    ///
+    /// ## Expected Outcome
+    /// - Getters return correct values
+    #[test]
+    fn test_format_and_quiet_getters() {
+        let mut buffer = Vec::new();
+        let writer = OutputWriter::new(&mut buffer, OutputFormat::Json, true);
+
+        assert!(matches!(writer.format(), OutputFormat::Json));
+        assert!(writer.is_quiet());
+    }
+
+    /// # Post-Merge Progress Event
+    ///
+    /// Verifies post-merge progress events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes post-merge progress events with different statuses
+    ///
+    /// ## Expected Outcome
+    /// - Output contains task type, status, and target ID
+    #[test]
+    fn test_post_merge_progress_event() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::PostMergeStart { task_count: 3 })
+            .unwrap();
+
+        writer
+            .write_event(&ProgressEvent::PostMergeProgress {
+                task_type: "tag_pr".to_string(),
+                target_id: 123,
+                status: PostMergeStatus::Success,
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("3 post-merge tasks"));
+        assert!(output.contains("tag_pr"));
+        assert!(output.contains("123"));
+    }
+
+    /// # Dependency Warning Event
+    ///
+    /// Verifies dependency warning events format correctly.
+    ///
+    /// ## Test Scenario
+    /// - Writes dependency warning event
+    ///
+    /// ## Expected Outcome
+    /// - Output contains warning details
+    #[test]
+    fn test_dependency_warning_event() {
+        let mut buffer = Vec::new();
+        let mut writer = OutputWriter::new(&mut buffer, OutputFormat::Text, false);
+
+        writer
+            .write_event(&ProgressEvent::DependencyWarning {
+                selected_pr_id: 100,
+                selected_pr_title: "Feature PR".to_string(),
+                unselected_pr_id: 200,
+                unselected_pr_title: "Important dependency PR".to_string(),
+                is_critical: true,
+                shared_files: vec!["src/lib.rs".to_string()],
+            })
+            .unwrap();
+
+        let output = String::from_utf8(buffer).unwrap();
+        assert!(output.contains("CRITICAL"));
+        assert!(output.contains("PR #100"));
+        assert!(output.contains("PR #200"));
+        assert!(output.contains("src/lib.rs"));
     }
 }

@@ -21,6 +21,9 @@ pub enum ProgressEvent {
         version: String,
         /// Target branch for the merge.
         target_branch: String,
+        /// Path to the state file for resume operations.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state_file_path: Option<PathBuf>,
     },
 
     /// Starting to cherry-pick a specific commit.
@@ -147,6 +150,54 @@ pub enum ProgressEvent {
         /// Optional error code.
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<String>,
+    },
+
+    /// User-defined hook is starting.
+    HookStart {
+        /// The trigger point (e.g., "post_checkout", "post_merge").
+        trigger: String,
+        /// Number of commands to run.
+        command_count: usize,
+    },
+
+    /// A hook command is starting.
+    HookCommandStart {
+        /// The trigger point.
+        trigger: String,
+        /// The command being run.
+        command: String,
+        /// Zero-based index of the command.
+        index: usize,
+    },
+
+    /// A hook command completed.
+    HookCommandComplete {
+        /// The trigger point.
+        trigger: String,
+        /// The command that ran.
+        command: String,
+        /// Whether it succeeded.
+        success: bool,
+        /// Zero-based index of the command.
+        index: usize,
+    },
+
+    /// All hooks for a trigger completed.
+    HookComplete {
+        /// The trigger point.
+        trigger: String,
+        /// Whether all commands succeeded.
+        all_succeeded: bool,
+    },
+
+    /// A hook failed and the operation is stopping.
+    HookFailed {
+        /// The trigger point.
+        trigger: String,
+        /// The command that failed.
+        command: String,
+        /// Error output from the command.
+        error: String,
     },
 }
 
@@ -426,6 +477,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         };
 
         let json = serde_json::to_string(&event).unwrap();
@@ -677,6 +729,7 @@ mod tests {
                 total_prs: 1,
                 version: "v1".to_string(),
                 target_branch: "main".to_string(),
+                state_file_path: None,
             },
             ProgressEvent::CherryPickStart {
                 pr_id: 1,
@@ -720,6 +773,30 @@ mod tests {
                 message: "err".to_string(),
                 code: None,
             },
+            ProgressEvent::HookStart {
+                trigger: "post_checkout".to_string(),
+                command_count: 2,
+            },
+            ProgressEvent::HookCommandStart {
+                trigger: "post_checkout".to_string(),
+                command: "npm install".to_string(),
+                index: 0,
+            },
+            ProgressEvent::HookCommandComplete {
+                trigger: "post_checkout".to_string(),
+                command: "npm install".to_string(),
+                success: true,
+                index: 0,
+            },
+            ProgressEvent::HookComplete {
+                trigger: "post_checkout".to_string(),
+                all_succeeded: true,
+            },
+            ProgressEvent::HookFailed {
+                trigger: "post_merge".to_string(),
+                command: "cargo test".to_string(),
+                error: "test failed".to_string(),
+            },
         ];
 
         for event in events {
@@ -730,5 +807,96 @@ mod tests {
                 json
             );
         }
+    }
+
+    /// # Start Event With State File Path
+    ///
+    /// Verifies Start event serializes state_file_path when present.
+    ///
+    /// ## Test Scenario
+    /// - Creates Start event with state_file_path
+    /// - Serializes to JSON
+    ///
+    /// ## Expected Outcome
+    /// - state_file_path is present in JSON when Some
+    /// - state_file_path is omitted when None
+    #[test]
+    fn test_start_event_state_file_path() {
+        let with_path = ProgressEvent::Start {
+            total_prs: 3,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: Some(PathBuf::from("/tmp/state.json")),
+        };
+        let json = serde_json::to_string(&with_path).unwrap();
+        assert!(json.contains("\"state_file_path\":\"/tmp/state.json\""));
+
+        let without_path = ProgressEvent::Start {
+            total_prs: 3,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            state_file_path: None,
+        };
+        let json = serde_json::to_string(&without_path).unwrap();
+        assert!(!json.contains("state_file_path"));
+    }
+
+    /// # Error Event With Code
+    ///
+    /// Verifies Error event serializes code when present.
+    ///
+    /// ## Test Scenario
+    /// - Creates Error events with and without code
+    ///
+    /// ## Expected Outcome
+    /// - Code field present in JSON when Some
+    /// - Code field omitted when None
+    #[test]
+    fn test_error_event_with_code() {
+        let with_code = ProgressEvent::Error {
+            message: "test error".to_string(),
+            code: Some("locked".to_string()),
+        };
+        let json = serde_json::to_string(&with_code).unwrap();
+        assert!(json.contains("\"code\":\"locked\""));
+
+        let without_code = ProgressEvent::Error {
+            message: "test error".to_string(),
+            code: None,
+        };
+        let json = serde_json::to_string(&without_code).unwrap();
+        assert!(!json.contains("\"code\""));
+    }
+
+    /// # Post-Merge Summary Serialization
+    ///
+    /// Verifies PostMergeSummary serializes correctly.
+    ///
+    /// ## Test Scenario
+    /// - Creates PostMergeSummary with counts
+    /// - Creates SummaryInfo with post_merge populated
+    ///
+    /// ## Expected Outcome
+    /// - post_merge field present in JSON with correct counts
+    #[test]
+    fn test_post_merge_summary_serialization() {
+        let summary = SummaryInfo {
+            result: SummaryResult::Success,
+            version: "v1.0.0".to_string(),
+            target_branch: "main".to_string(),
+            counts: SummaryCounts::new(3, 0, 0, 0),
+            items: None,
+            post_merge: Some(PostMergeSummary {
+                total_tasks: 6,
+                successful: 5,
+                failed: 1,
+                tasks: None,
+            }),
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"post_merge\""));
+        assert!(json.contains("\"total_tasks\":6"));
+        assert!(json.contains("\"successful\":5"));
+        assert!(json.contains("\"failed\":1"));
     }
 }

@@ -59,6 +59,7 @@ pub use models::{
     MergeArgs,
     MergeCompleteArgs,
     MergeContinueArgs,
+    MergeSkipArgs,
     MergeStatusArgs,
     MergeSubcommand,
     MigrateArgs,

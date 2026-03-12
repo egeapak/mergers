@@ -503,6 +503,26 @@ pub struct MergeAbortArgs {
     /// Output format: text, json, ndjson
     #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
     pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
+}
+
+/// Arguments for the `merge skip` subcommand.
+#[derive(ClapArgs, Clone, Debug)]
+pub struct MergeSkipArgs {
+    /// Repository path (auto-detected if in repo)
+    #[arg(long, help_heading = "Repository")]
+    pub repo: Option<String>,
+
+    /// Output format: text, json, ndjson
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text, help_heading = "Output Options")]
+    pub output: OutputFormat,
+
+    /// Suppress progress output
+    #[arg(short, long, help_heading = "Output Options")]
+    pub quiet: bool,
 }
 
 /// Arguments for the `merge status` subcommand.
@@ -574,6 +594,15 @@ pub enum MergeSubcommand {
             to the specified next state."
     )]
     Complete(MergeCompleteArgs),
+
+    /// Skip the current conflicting PR and continue with remaining
+    #[command(
+        about = "Skip the current conflicting PR and continue",
+        long_about = "Skip the currently conflicting PR in a merge operation.\n\n\
+            This aborts the current cherry-pick, marks the PR as skipped,\n\
+            and continues processing the remaining PRs."
+    )]
+    Skip(MergeSkipArgs),
 }
 
 /// Trait to extract shared arguments from command-specific argument structs
@@ -6662,5 +6691,81 @@ mod tests {
         } else {
             panic!("Expected Merge command");
         }
+    }
+
+    /// # Merge Skip Subcommand Parsing
+    ///
+    /// Tests that `merge skip` subcommand parses correctly with all its flags.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge skip --repo /path --output json -q`
+    ///
+    /// ## Expected Outcome
+    /// - Subcommand is Skip variant with correct fields
+    #[test]
+    fn test_merge_skip_subcommand_parsing() {
+        let args = Args::parse_from([
+            "mergers",
+            "merge",
+            "skip",
+            "--repo",
+            "/path/to/repo",
+            "--output",
+            "json",
+            "-q",
+        ]);
+        let Some(Commands::Merge(merge_args)) = args.command else {
+            panic!("Expected Merge command");
+        };
+        let Some(MergeSubcommand::Skip(skip_args)) = merge_args.subcommand else {
+            panic!("Expected Skip subcommand");
+        };
+        assert_eq!(skip_args.repo, Some("/path/to/repo".to_string()));
+        assert_eq!(skip_args.output, OutputFormat::Json);
+        assert!(skip_args.quiet);
+    }
+
+    /// # Merge Skip Subcommand Defaults
+    ///
+    /// Tests that `merge skip` without flags uses defaults.
+    ///
+    /// ## Test Scenario
+    /// - Parses `mergers merge skip` with no extra flags
+    ///
+    /// ## Expected Outcome
+    /// - repo is None, output defaults to Text, quiet is false
+    #[test]
+    fn test_merge_skip_subcommand_defaults() {
+        let args = Args::parse_from(["mergers", "merge", "skip"]);
+        let Some(Commands::Merge(merge_args)) = args.command else {
+            panic!("Expected Merge command");
+        };
+        let Some(MergeSubcommand::Skip(skip_args)) = merge_args.subcommand else {
+            panic!("Expected Skip subcommand");
+        };
+        assert_eq!(skip_args.repo, None);
+        assert_eq!(skip_args.output, OutputFormat::Text);
+        assert!(!skip_args.quiet);
+    }
+
+    /// # Quiet Flag on Abort Subcommand
+    ///
+    /// Tests that -q works on merge abort subcommand.
+    ///
+    /// ## Test Scenario
+    /// - Parses `merge abort -q`
+    ///
+    /// ## Expected Outcome
+    /// - quiet is true on the abort args
+    #[test]
+    fn test_quiet_flag_on_abort() {
+        let args = Args::parse_from(["mergers", "merge", "abort", "-q"]);
+        let Some(Commands::Merge(merge_args)) = args.command else {
+            panic!("Expected Merge command");
+        };
+        let Some(MergeSubcommand::Abort(abort_args)) = merge_args.subcommand else {
+            panic!("Expected Abort subcommand");
+        };
+        assert!(abort_args.quiet);
     }
 }

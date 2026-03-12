@@ -18,7 +18,7 @@ use crate::core::output::{
 use crate::core::state::{LockGuard, MergePhase, MergeStateFile, MergeStatus, StateItemStatus};
 use crate::git;
 
-use super::merge_engine::{MergeEngine, acquire_lock};
+use super::merge_engine::{CherryPickProcessResult, MergeEngine, acquire_lock};
 use super::traits::{MergeRunnerConfig, RunResult};
 
 /// Non-interactive merge runner.
@@ -228,10 +228,11 @@ impl<W: Write> NonInteractiveRunner<W> {
             total_prs,
             version: self.config.version.clone(),
             target_branch: self.config.target_branch.clone(),
+            state_file_path: Some(state_path.clone()),
         });
 
         // Process cherry-picks using internal state manager
-        let conflict_info = engine.process_cherry_picks(|event| {
+        let process_result = engine.process_cherry_picks(|event| {
             self.emit_event(event);
         });
 
@@ -241,13 +242,24 @@ impl<W: Write> NonInteractiveRunner<W> {
             return RunResult::error(ExitCode::GeneralError, e.to_string());
         }
 
-        if let Some(conflict) = conflict_info {
-            // Output conflict info
-            if let Err(e) = self.output.write_conflict(&conflict) {
-                tracing::warn!("Warning: Failed to write conflict info: {}", e);
+        match process_result {
+            CherryPickProcessResult::Conflict(conflict) => {
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    tracing::warn!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
             }
-
-            return RunResult::conflict(state_path);
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
         }
 
         // All cherry-picks complete - get counts from state manager
@@ -288,7 +300,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -302,7 +314,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -313,10 +328,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::AwaitingConflictResolution {
-            self.emit_error(&format!(
-                "Cannot continue: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot continue: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for continue");
         }
 
@@ -324,7 +339,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -335,7 +350,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Check if conflicts are resolved
         let conflicts_resolved = self.check_conflicts_resolved(&state.repo_path);
         if !conflicts_resolved {
-            self.emit_error("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.");
+            self.emit_error_with_code("Conflicts are not fully resolved. Please resolve all conflicts and stage the files.", Some("conflicts_unresolved"));
             return RunResult::error(ExitCode::Conflict, "Conflicts not resolved");
         }
 
@@ -366,7 +381,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         engine.state_manager_mut().set_state_file(state);
 
         // Continue processing using internal state manager
-        let conflict_info = engine.process_cherry_picks(|event| {
+        let process_result = engine.process_cherry_picks(|event| {
             self.emit_event(event);
         });
 
@@ -382,11 +397,24 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        if let Some(conflict) = conflict_info {
-            if let Err(e) = self.output.write_conflict(&conflict) {
-                tracing::warn!("Warning: Failed to write conflict info: {}", e);
+        match process_result {
+            CherryPickProcessResult::Conflict(conflict) => {
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    tracing::warn!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
             }
-            return RunResult::conflict(state_path);
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
         }
 
         // Get counts from state manager
@@ -409,8 +437,8 @@ impl<W: Write> NonInteractiveRunner<W> {
         }
     }
 
-    /// Aborts the current merge operation.
-    pub fn abort(&mut self, repo_path: Option<&Path>) -> RunResult {
+    /// Skips the current conflicting PR and continues processing remaining PRs.
+    pub async fn skip(&mut self, repo_path: Option<&Path>) -> RunResult {
         // Determine repo path
         let repo_path = match self.find_repo_path(repo_path) {
             Ok(path) => path,
@@ -419,10 +447,10 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        // Early lock check (before loading state)
+        // Early lock check
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -436,7 +464,162 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
+                return RunResult::error(ExitCode::NoStateFile, "No state file found");
+            }
+            Err(e) => {
+                self.emit_error(&format!("{}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Validate phase
+        if state.phase != MergePhase::AwaitingConflictResolution {
+            self.emit_error_with_code(
+                &format!("Cannot skip: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
+            return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for skip");
+        }
+
+        // Acquire lock
+        let _lock = match acquire_lock(&repo_path) {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Abort the current cherry-pick
+        if let Err(e) = git::abort_cherry_pick(&state.repo_path) {
+            self.emit_error(&format!("Failed to abort cherry-pick: {}", e));
+            return RunResult::error(
+                ExitCode::GeneralError,
+                format!("Failed to abort cherry-pick: {}", e),
+            );
+        }
+
+        // Emit skip event for the current item
+        let current_item = &state.cherry_pick_items[state.current_index];
+        self.emit_event(ProgressEvent::CherryPickSkipped {
+            pr_id: current_item.pr_id,
+            reason: Some("Skipped by user due to unresolvable conflict".to_string()),
+        });
+
+        // Mark current item as skipped and advance
+        state.cherry_pick_items[state.current_index].status = StateItemStatus::Skipped;
+        state.current_index += 1;
+        state.phase = MergePhase::CherryPicking;
+        state.conflicted_files = None;
+
+        // Create the engine
+        let client = match self.create_client() {
+            Ok(c) => c,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+        let mut engine = self.create_engine(client);
+
+        // Set the loaded state file on the engine's state manager
+        engine.state_manager_mut().set_state_file(state);
+
+        // Continue processing remaining cherry-picks
+        let process_result = engine.process_cherry_picks(|event| {
+            self.emit_event(event);
+        });
+
+        // Save state
+        let state_path = match engine.state_manager_mut().save() {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                self.emit_error("No state file to save");
+                return RunResult::error(ExitCode::GeneralError, "No state file to save");
+            }
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        match process_result {
+            CherryPickProcessResult::Conflict(conflict) => {
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    tracing::warn!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
+            }
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
+        }
+
+        // Get counts from state manager
+        let counts = engine
+            .state_manager()
+            .state_file()
+            .map(|state| engine.create_summary_counts(state))
+            .unwrap_or_else(|| SummaryCounts::new(0, 0, 0, 0));
+
+        self.emit_event(ProgressEvent::Complete {
+            successful: counts.successful,
+            failed: counts.failed,
+            skipped: counts.skipped,
+        });
+
+        if counts.failed > 0 || counts.skipped > 0 {
+            RunResult::partial_success("Completed with some skipped/failed items")
+                .with_state_file(state_path)
+        } else {
+            RunResult::success().with_state_file(state_path)
+        }
+    }
+
+    /// Aborts the current merge operation.
+    pub fn abort(&mut self, repo_path: Option<&Path>) -> RunResult {
+        // Determine repo path
+        let repo_path = match self.find_repo_path(repo_path) {
+            Ok(path) => path,
+            Err(e) => {
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+        };
+
+        // Early lock check (before loading state)
+        match LockGuard::is_locked(&repo_path) {
+            Ok(true) => {
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
+                return RunResult::error(ExitCode::Locked, "Locked");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to check lock: {}", e));
+                return RunResult::error(ExitCode::GeneralError, e.to_string());
+            }
+            Ok(false) => {}
+        }
+
+        // Load and validate state file
+        let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
+            Ok(Some(state)) => state,
+            Ok(None) => {
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -447,7 +630,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase (can't abort if already completed)
         if state.phase.is_terminal() {
-            self.emit_error(&format!("Cannot abort: merge is already '{}'", state.phase));
+            self.emit_error_with_code(
+                &format!("Cannot abort: merge is already '{}'", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for abort");
         }
 
@@ -455,7 +641,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -622,7 +808,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         // Early lock check (before loading state)
         match LockGuard::is_locked(&repo_path) {
             Ok(true) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -636,7 +822,10 @@ impl<W: Write> NonInteractiveRunner<W> {
         let mut state = match MergeStateFile::load_and_validate_for_repo(&repo_path) {
             Ok(Some(state)) => state,
             Ok(None) => {
-                self.emit_error("No state file found for this repository");
+                self.emit_error_with_code(
+                    "No state file found for this repository",
+                    Some("no_state_file"),
+                );
                 return RunResult::error(ExitCode::NoStateFile, "No state file found");
             }
             Err(e) => {
@@ -647,10 +836,10 @@ impl<W: Write> NonInteractiveRunner<W> {
 
         // Validate phase
         if state.phase != MergePhase::ReadyForCompletion {
-            self.emit_error(&format!(
-                "Cannot complete: merge is in '{}' phase",
-                state.phase
-            ));
+            self.emit_error_with_code(
+                &format!("Cannot complete: merge is in '{}' phase", state.phase),
+                Some("invalid_phase"),
+            );
             return RunResult::error(ExitCode::InvalidPhase, "Invalid phase for complete");
         }
 
@@ -658,7 +847,7 @@ impl<W: Write> NonInteractiveRunner<W> {
         let _lock = match acquire_lock(&repo_path) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                self.emit_error("Another merge operation is in progress");
+                self.emit_error_with_code("Another merge operation is in progress", Some("locked"));
                 return RunResult::error(ExitCode::Locked, "Locked");
             }
             Err(e) => {
@@ -754,6 +943,7 @@ impl<W: Write> NonInteractiveRunner<W> {
             self.config.work_item_state.clone(),
             self.config.run_hooks,
             self.config.local_repo.clone(),
+            self.config.hooks_config.clone(),
             self.config.max_concurrent_network,
             self.config.max_concurrent_processing,
             self.config.since.clone(),
@@ -767,9 +957,13 @@ impl<W: Write> NonInteractiveRunner<W> {
     }
 
     fn emit_error(&mut self, message: &str) {
+        self.emit_error_with_code(message, None);
+    }
+
+    fn emit_error_with_code(&mut self, message: &str, code: Option<&str>) {
         let event = ProgressEvent::Error {
             message: message.to_string(),
-            code: None,
+            code: code.map(|c| c.to_string()),
         };
         if let Err(e) = self.output.write_event(&event) {
             tracing::warn!("Warning: Failed to write error: {}", e);
@@ -824,6 +1018,7 @@ mod tests {
             select_by_states: None,
             local_repo: None,
             run_hooks: false,
+            hooks_config: None,
             output_format: OutputFormat::Text,
             quiet: false,
             max_concurrent_network: 100,
@@ -869,6 +1064,7 @@ mod tests {
             total_prs: 5,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         let output = String::from_utf8(buffer).unwrap();
@@ -960,6 +1156,7 @@ mod tests {
             total_prs: 3,
             version: "v2.0.0".to_string(),
             target_branch: "release".to_string(),
+            state_file_path: None,
         });
 
         // JSON format collects events and outputs at the end,
@@ -989,6 +1186,7 @@ mod tests {
             total_prs: 2,
             version: "v1.0.0".to_string(),
             target_branch: "main".to_string(),
+            state_file_path: None,
         });
 
         runner.emit_event(ProgressEvent::CherryPickStart {
