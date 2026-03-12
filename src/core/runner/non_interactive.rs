@@ -685,11 +685,25 @@ impl<W: Write> NonInteractiveRunner<W> {
             }
         };
 
-        if let Some(conflict) = conflict_info {
-            if let Err(e) = self.output.write_conflict(&conflict) {
-                tracing::warn!("Warning: Failed to write conflict info: {}", e);
+        // Handle process result
+        match conflict_info {
+            CherryPickProcessResult::Conflict(conflict) => {
+                if let Err(e) = self.output.write_conflict(&conflict) {
+                    tracing::warn!("Warning: Failed to write conflict info: {}", e);
+                }
+                return RunResult::conflict(state_path);
             }
-            return RunResult::conflict(state_path);
+            CherryPickProcessResult::HookAbort { command, error, .. } => {
+                self.emit_error(&format!("Hook aborted: {} - {}", command, error));
+                return RunResult::error(
+                    ExitCode::HookFailed,
+                    format!("Hook '{}' failed: {}", command, error),
+                )
+                .with_state_file(state_path);
+            }
+            CherryPickProcessResult::Complete => {
+                // Continue to completion
+            }
         }
 
         // Get counts from state manager
