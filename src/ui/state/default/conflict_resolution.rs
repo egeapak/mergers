@@ -6,6 +6,7 @@ use crate::{
     ui::apps::MergeApp,
     ui::state::typed::{ModeState, StateChange},
     ui::state::{AbortingState, CherryPickContinueState, CherryPickState},
+    utils::html_to_lines,
 };
 use async_trait::async_trait;
 use crossterm::event::KeyCode;
@@ -170,6 +171,15 @@ impl ConflictResolutionState {
 
             pr_text.push(Line::from(""));
             pr_text.push(Line::from(vec![Span::raw("Title: "), Span::raw(&pr.title)]));
+
+            // Show PR description if available
+            if let Some(description) = &pr.description {
+                if !description.is_empty() {
+                    pr_text.push(Line::from(""));
+                    let desc_lines = html_to_lines(description);
+                    pr_text.extend(desc_lines);
+                }
+            }
         } else {
             pr_text.push(Line::from("PR details not found"));
         }
@@ -186,6 +196,42 @@ impl ConflictResolutionState {
         area: ratatui::layout::Rect,
         work_items: &[crate::models::WorkItem],
     ) {
+        // Collect description content strings upfront so they live long enough
+        // for html_to_lines to borrow them.
+        let descriptions: Vec<Option<String>> = work_items
+            .iter()
+            .map(|wi| {
+                let work_item_type = wi.fields.work_item_type.as_deref().unwrap_or("Item");
+                match work_item_type.to_lowercase().as_str() {
+                    "bug" => {
+                        if let Some(repro_steps) = &wi.fields.repro_steps {
+                            if !repro_steps.is_empty() {
+                                Some(repro_steps.clone())
+                            } else {
+                                wi.fields
+                                    .description
+                                    .as_ref()
+                                    .filter(|d| !d.is_empty())
+                                    .cloned()
+                            }
+                        } else {
+                            wi.fields
+                                .description
+                                .as_ref()
+                                .filter(|d| !d.is_empty())
+                                .cloned()
+                        }
+                    }
+                    _ => wi
+                        .fields
+                        .description
+                        .as_ref()
+                        .filter(|d| !d.is_empty())
+                        .cloned(),
+                }
+            })
+            .collect();
+
         let mut wi_text = vec![];
 
         if work_items.is_empty() {
@@ -198,21 +244,29 @@ impl ConflictResolutionState {
                     wi_text.push(Line::from(""));
                 }
 
+                let work_item_type = wi.fields.work_item_type.as_deref().unwrap_or("Item");
+                let type_color = get_work_item_type_color(work_item_type);
+
                 wi_text.push(Line::from(vec![
                     Span::styled(
-                        wi.fields.work_item_type.as_deref().unwrap_or("Item"),
-                        Style::default()
-                            .fg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD),
+                        work_item_type,
+                        Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(" #"),
                     Span::styled(format!("{}", wi.id), Style::default().fg(Color::Cyan)),
                 ]));
 
                 if let Some(state) = &wi.fields.state {
+                    let state_color = get_state_color(state);
                     wi_text.push(Line::from(vec![
-                        Span::raw("State: "),
-                        Span::styled(state, Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            "●",
+                            Style::default()
+                                .fg(state_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" State: "),
+                        Span::styled(state, Style::default().fg(state_color)),
                     ]));
                 }
 
@@ -226,6 +280,12 @@ impl ConflictResolutionState {
                 if let Some(title) = &wi.fields.title {
                     wi_text.push(Line::from(""));
                     wi_text.push(Line::from(vec![Span::raw("Title: "), Span::raw(title)]));
+                }
+
+                if let Some(content) = &descriptions[i] {
+                    wi_text.push(Line::from(""));
+                    let desc_lines = html_to_lines(content);
+                    wi_text.extend(desc_lines);
                 }
             }
         }
@@ -326,7 +386,11 @@ impl ModeState for ConflictResolutionState {
                 Span::styled("s", key_style),
                 Span::raw(": Skip commit | "),
                 Span::styled("a", key_style),
-                Span::raw(": Abort (cleanup)"),
+                Span::raw(": Abort (cleanup) | "),
+                Span::styled("p", key_style),
+                Span::raw(": Open PR | "),
+                Span::styled("w", key_style),
+                Span::raw(": Open Work Item"),
             ]),
         ];
 
@@ -388,12 +452,57 @@ impl ModeState for ConflictResolutionState {
                     target_branch,
                 )))
             }
+            KeyCode::Char('p') => {
+                // Open current PR in browser
+                let current_item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
+                app.open_pr_in_browser(current_item.pr_id);
+                StateChange::Keep
+            }
+            KeyCode::Char('w') => {
+                // Open work items for current PR in browser
+                let current_item = &app.cherry_pick_items()[app.current_cherry_pick_index()];
+                if let Some(pr) = app
+                    .pull_requests()
+                    .iter()
+                    .find(|pr| pr.pr.id == current_item.pr_id)
+                {
+                    if !pr.work_items.is_empty() {
+                        app.open_work_items_in_browser(&pr.work_items);
+                    }
+                }
+                StateChange::Keep
+            }
             _ => StateChange::Keep,
         }
     }
 
     fn name(&self) -> &'static str {
         "ConflictResolution"
+    }
+}
+
+fn get_work_item_type_color(work_item_type: &str) -> Color {
+    match work_item_type.to_lowercase().as_str() {
+        "task" => Color::Yellow,
+        "bug" => Color::Red,
+        "user story" => Color::Blue,
+        "feature" => Color::Green,
+        _ => Color::White,
+    }
+}
+
+fn get_state_color(state: &str) -> Color {
+    match state {
+        "Dev Closed" => Color::LightGreen,
+        "Closed" => Color::Green,
+        "Resolved" => Color::Rgb(255, 165, 0),
+        "In Review" => Color::Yellow,
+        "New" => Color::Gray,
+        "Active" => Color::Blue,
+        "Next Merged" => Color::Red,
+        "Next Closed" => Color::Magenta,
+        "Hold" => Color::Cyan,
+        _ => Color::White,
     }
 }
 

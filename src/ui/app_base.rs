@@ -406,6 +406,7 @@ mod tests {
             pr: PullRequest {
                 id: 1,
                 title: "PR 1".to_string(),
+                description: None,
                 closed_date: Some("2024-01-01T10:00:00Z".to_string()),
                 created_by: created_by.clone(),
                 last_merge_commit: None,
@@ -418,6 +419,7 @@ mod tests {
             pr: PullRequest {
                 id: 2,
                 title: "PR 2".to_string(),
+                description: None,
                 closed_date: Some("2024-01-02T10:00:00Z".to_string()),
                 created_by: created_by.clone(),
                 last_merge_commit: None,
@@ -430,6 +432,7 @@ mod tests {
             pr: PullRequest {
                 id: 3,
                 title: "PR 3".to_string(),
+                description: None,
                 closed_date: Some("2024-01-03T10:00:00Z".to_string()),
                 created_by,
                 last_merge_commit: None,

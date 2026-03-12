@@ -1209,6 +1209,7 @@ mod tests {
             pr: PullRequest {
                 id: 100,
                 title: "Test PR".to_string(),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test".to_string(),
@@ -1407,6 +1408,7 @@ mod tests {
         PullRequest {
             id,
             title: format!("PR {}", id),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1619,6 +1621,7 @@ mod tests {
         let pr_no_labels = PullRequest {
             id: 1,
             title: "PR without labels".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1630,6 +1633,7 @@ mod tests {
         let pr_with_other_label = PullRequest {
             id: 2,
             title: "PR with other label".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1643,6 +1647,7 @@ mod tests {
         let pr_with_merged_tag = PullRequest {
             id: 3,
             title: "PR with merged tag".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1656,6 +1661,7 @@ mod tests {
         let pr_with_mixed_labels = PullRequest {
             id: 4,
             title: "PR with mixed labels".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1717,6 +1723,7 @@ mod tests {
         let pr1 = PullRequest {
             id: 1,
             title: "PR 1".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),
@@ -1730,6 +1737,7 @@ mod tests {
         let pr2 = PullRequest {
             id: 2,
             title: "PR 2".to_string(),
+            description: None,
             closed_date: None,
             created_by: CreatedBy {
                 display_name: "Test".to_string(),

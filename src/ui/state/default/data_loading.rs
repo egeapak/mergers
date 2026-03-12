@@ -2458,6 +2458,7 @@ mod tests {
             pr: crate::models::PullRequest {
                 id,
                 title: format!("Test PR #{}", id),
+                description: None,
                 closed_date: None,
                 created_by: crate::models::CreatedBy {
                     display_name: "Test".to_string(),
