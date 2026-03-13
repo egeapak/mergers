@@ -510,7 +510,10 @@ fn get_state_color(state: &str) -> Color {
 mod tests {
     use super::*;
     use crate::{
-        models::{CherryPickItem, CherryPickStatus},
+        models::{
+            CherryPickItem, CherryPickStatus, CreatedBy, MergeCommit, PullRequest,
+            PullRequestWithWorkItems, WorkItem, WorkItemFields,
+        },
         ui::{
             snapshot_testing::with_settings_and_module_path,
             testing::{TuiTestHarness, create_test_cherry_pick_items, create_test_config_default},
@@ -863,6 +866,210 @@ mod tests {
             harness.render_state(&mut state);
 
             assert_snapshot!("multiple_files", harness.backend());
+        });
+    }
+
+    /// # Conflict Resolution - PR with Description
+    ///
+    /// Tests that PR description is rendered on the conflict resolution screen.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state with a PR that has a description
+    /// - Sets up pull_requests on the harness with matching PR id
+    ///
+    /// ## Expected Outcome
+    /// - Should display the PR description below the title
+    /// - Should show PR details (id, date, author, title)
+    #[test]
+    fn test_conflict_resolution_pr_description() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Fix login bug".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "Fix login bug".to_string(),
+                    description: Some(
+                        "<div>This PR fixes the login button not responding on the main page.</div>"
+                            .to_string(),
+                    ),
+                    closed_date: Some("2024-01-10T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Alice Johnson".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "abc123".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![],
+                selected: false,
+            }];
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+            harness.app.set_current_cherry_pick_index(0);
+
+            let conflicted_files = vec!["src/auth/login.rs".to_string()];
+            let mut state = ConflictResolutionState::new(conflicted_files);
+            harness.render_state(&mut state);
+
+            assert_snapshot!("pr_description", harness.backend());
+        });
+    }
+
+    /// # Conflict Resolution - Bug Work Item with Repro Steps
+    ///
+    /// Tests that bug work items show repro steps and use correct colors.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state with a Bug work item that has repro steps
+    /// - Bug type should render in red, state should use correct color
+    ///
+    /// ## Expected Outcome
+    /// - Bug type should be displayed in red (bold)
+    /// - State should show colored bullet indicator
+    /// - Repro steps should be rendered as description
+    #[test]
+    fn test_conflict_resolution_bug_work_item() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
+                commit_id: "abc123".to_string(),
+                pr_id: 100,
+                pr_title: "Fix login bug".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 100,
+                    title: "Fix login bug".to_string(),
+                    description: None,
+                    closed_date: Some("2024-01-10T09:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Alice Johnson".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "abc123".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![WorkItem {
+                    id: 1001,
+                    fields: WorkItemFields {
+                        title: Some("Login button not responding".to_string()),
+                        state: Some("Closed".to_string()),
+                        work_item_type: Some("Bug".to_string()),
+                        assigned_to: Some(CreatedBy {
+                            display_name: "Alice Johnson".to_string(),
+                        }),
+                        iteration_path: Some("Project\\Sprint 4".to_string()),
+                        description: Some(
+                            "<div>Users unable to click login button</div>".to_string(),
+                        ),
+                        repro_steps: Some("<div>1. Navigate to login page<br>2. Click login button<br>3. Nothing happens</div>".to_string()),
+                        state_color: None,
+                    },
+                    history: vec![],
+                }],
+                selected: false,
+            }];
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+            harness.app.set_current_cherry_pick_index(0);
+
+            let conflicted_files = vec!["src/auth/login.rs".to_string()];
+            let mut state = ConflictResolutionState::new(conflicted_files);
+            harness.render_state(&mut state);
+
+            assert_snapshot!("bug_work_item", harness.backend());
+        });
+    }
+
+    /// # Conflict Resolution - Task Work Item with Description
+    ///
+    /// Tests that task work items use yellow color and show description.
+    ///
+    /// ## Test Scenario
+    /// - Creates a conflict resolution state with a Task work item
+    /// - Task type should render in yellow, with Active state in blue
+    ///
+    /// ## Expected Outcome
+    /// - Task type should be displayed in yellow (bold)
+    /// - Active state should show blue colored bullet
+    /// - Description should be rendered below the title
+    #[test]
+    fn test_conflict_resolution_task_work_item() {
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+
+            *harness.app.cherry_pick_items_mut() = vec![CherryPickItem {
+                commit_id: "def456".to_string(),
+                pr_id: 200,
+                pr_title: "Add caching layer".to_string(),
+                status: CherryPickStatus::Conflict,
+            }];
+            *harness.app.pull_requests_mut() = vec![PullRequestWithWorkItems {
+                pr: PullRequest {
+                    id: 200,
+                    title: "Add caching layer".to_string(),
+                    description: Some(
+                        "<div>Implements Redis caching for API responses</div>".to_string(),
+                    ),
+                    closed_date: Some("2024-02-15T11:00:00Z".to_string()),
+                    created_by: CreatedBy {
+                        display_name: "Bob Wilson".to_string(),
+                    },
+                    last_merge_commit: Some(MergeCommit {
+                        commit_id: "def456".to_string(),
+                    }),
+                    labels: None,
+                },
+                work_items: vec![WorkItem {
+                    id: 2001,
+                    fields: WorkItemFields {
+                        title: Some("Implement caching for user endpoints".to_string()),
+                        state: Some("Active".to_string()),
+                        work_item_type: Some("Task".to_string()),
+                        assigned_to: Some(CreatedBy {
+                            display_name: "Bob Wilson".to_string(),
+                        }),
+                        iteration_path: Some("Project\\Sprint 6".to_string()),
+                        description: Some(
+                            "<div>Add Redis caching with TTL of 5 minutes for user API endpoints to reduce database load.</div>"
+                                .to_string(),
+                        ),
+                        repro_steps: None,
+                        state_color: None,
+                    },
+                    history: vec![],
+                }],
+                selected: false,
+            }];
+            harness
+                .app
+                .set_repo_path(Some(PathBuf::from("/path/to/repo")));
+            harness.app.set_current_cherry_pick_index(0);
+
+            let conflicted_files = vec![
+                "src/cache/redis.rs".to_string(),
+                "src/api/users.rs".to_string(),
+            ];
+            let mut state = ConflictResolutionState::new(conflicted_files);
+            harness.render_state(&mut state);
+
+            assert_snapshot!("task_work_item", harness.backend());
         });
     }
 }
