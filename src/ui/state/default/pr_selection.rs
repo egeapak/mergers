@@ -3566,37 +3566,44 @@ mod tests {
     /// - No wrap to the beginning of the list
     #[test]
     fn test_mouse_scroll_down_no_wrap() {
-        let config = create_test_config_default();
-        let mut harness = TuiTestHarness::with_config(config);
-        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-        let mut inner_state = PullRequestSelectionState::new();
-        inner_state.table_state.select(Some(2)); // Start at last item
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(2)); // Start at last item
 
-        let mut state = MergeState::PullRequestSelection(inner_state);
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
-        // First render to populate table_area
-        harness.render_merge_state(&mut state);
+            // First render to populate table_area
+            harness.render_merge_state(&mut state);
 
-        // Simulate scroll down within table area
-        let event = MouseEvent {
-            kind: MouseEventKind::ScrollDown,
-            column: 10,
-            row: 5,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        };
+            // Simulate scroll down within table area
+            let event = MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 10,
+                row: 5,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
 
-        tokio_test::block_on(async {
-            let app = harness.merge_app_mut();
-            state.process_mouse(event, app).await;
+            tokio_test::block_on(async {
+                let app = harness.merge_app_mut();
+                state.process_mouse(event, app).await;
+            });
+
+            // Re-render after mouse event
+            harness.render_merge_state(&mut state);
+
+            // Selection should stay at last item, not wrap to 0
+            if let MergeState::PullRequestSelection(inner) = &state {
+                assert_eq!(inner.table_state.selected(), Some(2));
+            } else {
+                panic!("Expected PullRequestSelection state");
+            }
+
+            assert_snapshot!("mouse_scroll_down_no_wrap", harness.backend());
         });
-
-        // Selection should stay at last item, not wrap to 0
-        if let MergeState::PullRequestSelection(inner) = &state {
-            assert_eq!(inner.table_state.selected(), Some(2));
-        } else {
-            panic!("Expected PullRequestSelection state");
-        }
     }
 
     /// # PR Selection State - Mouse Scroll Up Does Not Wrap
@@ -3613,37 +3620,44 @@ mod tests {
     /// - No wrap to the end of the list
     #[test]
     fn test_mouse_scroll_up_no_wrap() {
-        let config = create_test_config_default();
-        let mut harness = TuiTestHarness::with_config(config);
-        *harness.app.pull_requests_mut() = create_test_pull_requests();
+        with_settings_and_module_path(module_path!(), || {
+            let config = create_test_config_default();
+            let mut harness = TuiTestHarness::with_config(config);
+            *harness.app.pull_requests_mut() = create_test_pull_requests();
 
-        let mut inner_state = PullRequestSelectionState::new();
-        inner_state.table_state.select(Some(0)); // Start at first item
+            let mut inner_state = PullRequestSelectionState::new();
+            inner_state.table_state.select(Some(0)); // Start at first item
 
-        let mut state = MergeState::PullRequestSelection(inner_state);
+            let mut state = MergeState::PullRequestSelection(inner_state);
 
-        // First render to populate table_area
-        harness.render_merge_state(&mut state);
+            // First render to populate table_area
+            harness.render_merge_state(&mut state);
 
-        // Simulate scroll up within table area
-        let event = MouseEvent {
-            kind: MouseEventKind::ScrollUp,
-            column: 10,
-            row: 5,
-            modifiers: crossterm::event::KeyModifiers::NONE,
-        };
+            // Simulate scroll up within table area
+            let event = MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 10,
+                row: 5,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
 
-        tokio_test::block_on(async {
-            let app = harness.merge_app_mut();
-            state.process_mouse(event, app).await;
+            tokio_test::block_on(async {
+                let app = harness.merge_app_mut();
+                state.process_mouse(event, app).await;
+            });
+
+            // Re-render after mouse event
+            harness.render_merge_state(&mut state);
+
+            // Selection should stay at first item, not wrap to last
+            if let MergeState::PullRequestSelection(inner) = &state {
+                assert_eq!(inner.table_state.selected(), Some(0));
+            } else {
+                panic!("Expected PullRequestSelection state");
+            }
+
+            assert_snapshot!("mouse_scroll_up_no_wrap", harness.backend());
         });
-
-        // Selection should stay at first item, not wrap to last
-        if let MergeState::PullRequestSelection(inner) = &state {
-            assert_eq!(inner.table_state.selected(), Some(0));
-        } else {
-            panic!("Expected PullRequestSelection state");
-        }
     }
 
     /// # PR Selection State - Mouse Click Highlight
