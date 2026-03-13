@@ -1342,6 +1342,8 @@ pub struct PullRequest {
     #[serde(rename = "pullRequestId")]
     pub id: i32,
     pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(rename = "closedDate")]
     pub closed_date: Option<String>,
     #[serde(rename = "createdBy")]
@@ -1604,6 +1606,7 @@ mod tests {
         PullRequest {
             id: 123,
             title: "Test PR".to_string(),
+            description: None,
             closed_date: Some("2024-01-15T10:30:00Z".to_string()),
             created_by: CreatedBy {
                 display_name: "Test User".to_string(),

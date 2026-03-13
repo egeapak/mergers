@@ -154,6 +154,7 @@ mod tests {
             pr: PullRequest {
                 id,
                 title: format!("PR {}", id),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "user".to_string(),

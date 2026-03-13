@@ -263,6 +263,7 @@ mod tests {
         PullRequest {
             id,
             title: title.to_string(),
+            description: None,
             closed_date: Some("2023-01-01T00:00:00Z".to_string()),
             created_by: CreatedBy {
                 display_name: "Test User".to_string(),

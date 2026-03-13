@@ -4790,6 +4790,7 @@ mod tests {
                 pr: PullRequest {
                     id: 100,
                     title: "Backend fix for login".to_string(),
+                    description: None,
                     closed_date: Some("2024-01-10T09:00:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Alice".to_string(),
@@ -4820,6 +4821,7 @@ mod tests {
                 pr: PullRequest {
                     id: 101,
                     title: "Frontend fix for login".to_string(),
+                    description: None,
                     closed_date: Some("2024-01-11T09:00:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Bob".to_string(),
@@ -4866,6 +4868,7 @@ mod tests {
                 pr: PullRequest {
                     id: 102,
                     title: "Auth module refactor".to_string(),
+                    description: None,
                     closed_date: Some("2024-01-12T09:00:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Charlie".to_string(),
@@ -4896,6 +4899,7 @@ mod tests {
                 pr: PullRequest {
                     id: 103,
                     title: "Independent feature".to_string(),
+                    description: None,
                     closed_date: Some("2024-01-13T09:00:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Diana".to_string(),

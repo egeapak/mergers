@@ -590,6 +590,7 @@ mod tests {
                 pr: PullRequest {
                     id: 1,
                     title: "PR 1".to_string(),
+                    description: None,
                     closed_date: None,
                     created_by: CreatedBy {
                         display_name: "user".to_string(),
@@ -617,6 +618,7 @@ mod tests {
                 pr: PullRequest {
                     id: 2,
                     title: "PR 2".to_string(),
+                    description: None,
                     closed_date: None,
                     created_by: CreatedBy {
                         display_name: "user".to_string(),

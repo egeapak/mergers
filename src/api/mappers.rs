@@ -16,6 +16,7 @@ impl From<git_models::GitPullRequest> for PullRequest {
         PullRequest {
             id: pr.pull_request_id,
             title: pr.title.unwrap_or_default(),
+            description: pr.description,
             closed_date: pr.closed_date.map(|d| {
                 // Convert time::OffsetDateTime to RFC3339 string for compatibility
                 d.format(&time::format_description::well_known::Rfc3339)
