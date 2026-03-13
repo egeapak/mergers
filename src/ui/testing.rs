@@ -611,6 +611,7 @@ pub fn create_test_pull_request() -> PullRequest {
     PullRequest {
         id: 12345,
         title: "Add new feature for user authentication".to_string(),
+        description: None,
         closed_date: Some("2024-01-15T10:30:00Z".to_string()),
         created_by: CreatedBy {
             display_name: "John Doe".to_string(),
@@ -658,6 +659,7 @@ pub fn create_test_pull_requests() -> Vec<PullRequestWithWorkItems> {
             pr: PullRequest {
                 id: 100,
                 title: "Fix login bug".to_string(),
+            description: None,
                 closed_date: Some("2024-01-10T09:00:00Z".to_string()),
                 created_by: CreatedBy {
                     display_name: "Alice Johnson".to_string(),
@@ -691,6 +693,7 @@ pub fn create_test_pull_requests() -> Vec<PullRequestWithWorkItems> {
             pr: PullRequest {
                 id: 101,
                 title: "Update user profile page design".to_string(),
+            description: None,
                 closed_date: Some("2024-01-12T14:30:00Z".to_string()),
                 created_by: CreatedBy {
                     display_name: "Bob Wilson".to_string(),
@@ -732,6 +735,7 @@ pub fn create_test_pull_requests() -> Vec<PullRequestWithWorkItems> {
             pr: PullRequest {
                 id: 102,
                 title: "Add analytics tracking".to_string(),
+            description: None,
                 closed_date: Some("2024-01-14T11:00:00Z".to_string()),
                 created_by: CreatedBy {
                     display_name: "Carol Martinez".to_string(),
@@ -905,6 +909,7 @@ pub fn create_large_pr_list() -> Vec<PullRequestWithWorkItems> {
                     1000 + i,
                     i
                 ),
+                description: None,
                 closed_date: Some("2024-01-15T10:30:00Z".to_string()),
                 created_by: CreatedBy {
                     display_name: format!("Developer {}", i % 10),

@@ -1361,6 +1361,7 @@ mod tests {
             PullRequest {
                 id,
                 title: format!("PR {}", id),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test User".to_string(),
@@ -1413,6 +1414,7 @@ mod tests {
             PullRequest {
                 id,
                 title: format!("PR {}", id),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test User".to_string(),
@@ -1464,6 +1466,7 @@ mod tests {
             PullRequest {
                 id: 1,
                 title: "PR 1".to_string(),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test".to_string(),
@@ -1478,6 +1481,7 @@ mod tests {
             PullRequest {
                 id: 2,
                 title: "PR 2".to_string(),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test".to_string(),
@@ -1514,6 +1518,7 @@ mod tests {
             PullRequest {
                 id: 1,
                 title: "PR 1".to_string(),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test".to_string(),
@@ -1528,6 +1533,7 @@ mod tests {
             PullRequest {
                 id: 2,
                 title: "PR 2".to_string(),
+                description: None,
                 closed_date: None,
                 created_by: CreatedBy {
                     display_name: "Test".to_string(),
@@ -1573,6 +1579,7 @@ mod tests {
             PullRequest {
                 id: 1,
                 title: "Ready PR".to_string(),
+                description: None,
                 closed_date: Some("2024-01-01".to_string()),
                 created_by: CreatedBy {
                     display_name: "Dev".to_string(),
@@ -1587,6 +1594,7 @@ mod tests {
             PullRequest {
                 id: 2,
                 title: "Already Merged PR".to_string(),
+                description: None,
                 closed_date: Some("2024-01-01".to_string()),
                 created_by: CreatedBy {
                     display_name: "Dev".to_string(),

@@ -488,6 +488,7 @@ mod tests {
                 pr: crate::models::PullRequest {
                     id: 100,
                     title: "Fix authentication vulnerability".to_string(),
+                    description: None,
                     closed_date: Some("2024-01-16T14:20:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "John Doe".to_string(),
@@ -561,6 +562,7 @@ mod tests {
                 pr: crate::models::PullRequest {
                     id: 200,
                     title: "Add new feature for user management".to_string(),
+                    description: None,
                     closed_date: Some("2024-02-11T16:45:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Jane Smith".to_string(),
@@ -634,6 +636,7 @@ mod tests {
                 pr: crate::models::PullRequest {
                     id: 300,
                     title: "Update database schema for performance".to_string(),
+                    description: None,
                     closed_date: Some("2024-03-06T13:10:00Z".to_string()),
                     created_by: CreatedBy {
                         display_name: "Bob Wilson".to_string(),
